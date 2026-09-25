@@ -70,6 +70,7 @@ class Client {
       case 'welcome':
         this.playerId = msg.player_id;
         this.tiers = msg.tiers ?? [];
+        this.maps = msg.maps ?? [];
         this.onWelcome?.(msg);
         break;
       case 'rejected':
@@ -122,9 +123,13 @@ for (let i = 0; i < playerCount; i += 1) {
 
 const table = (clients[0].tiers ?? []).slice().sort((a, b) => a.dollars - b.dollars)[0];
 if (!table) fail('the server named no tables');
+// A table is a map *and* a stake, and a queue without the map is refused as
+// undecodable. Which map does not matter to a client that stands still.
+const map = clients[0].maps?.[0]?.name;
+if (!map) fail('the server named no maps');
 const ENTRY_FEE = table.entry_fee_micro_usd;
-console.log(`>> ${clients.length} clients queueing for the $${table.dollars} table`);
-for (const client of clients) client.send({ t: 'queue', tier_dollars: table.dollars });
+console.log(`>> ${clients.length} clients queueing for the $${table.dollars} table on ${map}`);
+for (const client of clients) client.send({ t: 'queue', map, tier_dollars: table.dollars });
 
 // Generous, because a short line waits before starting and the entry fees are
 // a database round trip - neither of which this process controls.

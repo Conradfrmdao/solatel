@@ -126,6 +126,7 @@ class Client {
       case 'welcome':
         this.playerId = msg.player_id;
         this.tiers = msg.tiers ?? [];
+        this.maps = msg.maps ?? [];
         this.onWelcome?.(msg);
         break;
       case 'rejected':
@@ -239,10 +240,17 @@ console.log(`>> ${clients.length} clients on protocol ${protocolVersion}`);
 // the matchmaker has no reason to split them across matches.
 const table = (clients[0].tiers ?? []).slice().sort((a, b) => a.dollars - b.dollars)[0];
 if (!table) fail('the server named no tables');
+// A table is a map *and* a stake, and a queue without the map is refused as
+// undecodable. The arena, when the server runs it: it is the smaller ground,
+// and this needs people close enough to find each other and shoot.
+const maps = clients[0].maps ?? [];
+const map = (maps.find((m) => m.name === 'arena') ?? maps[0])?.name;
+if (!map) fail('the server named no maps');
 const ENTRY_FEE = table.entry_fee_micro_usd;
 const KILL_REWARD = table.kill_reward_micro_usd;
-console.log(`>> queueing for the $${table.dollars} table`);
-for (const client of clients) client.send({ t: 'queue', tier_dollars: table.dollars });
+const queue = { t: 'queue', map, tier_dollars: table.dollars };
+console.log(`>> queueing for the $${table.dollars} table on ${map}`);
+for (const client of clients) client.send(queue);
 
 // Wait for everyone to be alive, which is not the same as being in a
 // snapshot: a body stays in the world while its owner reconnects, and a
@@ -311,7 +319,7 @@ const killer = clients.find((c) => c.playerId === kill.killer);
 if (!victim.eliminated) fail('the victim was never told they were out');
 const diedIn = killer.matchId;
 for (let i = 0; i < 40; i += 1) {
-  victim.send({ t: 'queue', tier_dollars: table.dollars });
+  victim.send(queue);
   await sleep(100);
 }
 // One life per match: however many times they ask, they must not be let back
