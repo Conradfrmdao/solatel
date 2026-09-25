@@ -44,9 +44,11 @@ export const RIFLE = {
   },
 
   /** From the hip: down and out into the corner, turned in so the muzzle
-   *  points near the crosshair. Rotation is [pitch, yaw, roll]. */
+   *  points near the crosshair. Rotation is [pitch, yaw, roll]. High enough
+   *  that the support hand and its forearm are in the frame: any lower and
+   *  the bottom of the screen cuts the arm off at the wrist. */
   hip: {
-    position: [0.32, -0.3, -0.44],
+    position: [0.27, -0.25, -0.45],
     rotation: [-0.03, 0.085, 0],
   },
 
@@ -154,6 +156,21 @@ export const RIFLE = {
   flashSeconds: 0.04,
 
   /**
+   * The arms, in the viewmodel camera's space (metres; +X right, +Y up, -Z
+   * ahead). Each hangs from `shoulder` - below the bottom of the screen, so
+   * no shoulder or upper arm is ever seen and the forearm comes up into the
+   * frame - and bends its elbow towards `elbow`. The hands close on the
+   * rifle the way the third-person soldier's do.
+   */
+  arms: {
+    right: { shoulder: [0.3, -0.5, 0.02], elbow: [0.9, -0.7, 0.3] },
+    left: { shoulder: [0.06, -0.5, -0.25], elbow: [-0.7, -0.8, 0.1] },
+    /** Where the left palm closes, in model units: under the handguard,
+     *  towards its back, where a real support hand sits. */
+    leftPalm: [0, -0.2, -0.75],
+  },
+
+  /**
    * Spent cases, thrown out of the ejection port to the right and a little
    * up and back, the way a rifle of this pattern throws them. They fly in
    * the world rather than on the screen - turn and they are left behind -
@@ -161,8 +178,8 @@ export const RIFLE = {
    */
   casings: {
     /** The ejection port, in model units: right side of the receiver,
-     *  level with the bore, just behind the magazine well. */
-    port: [0.08, 0.08, 0.15],
+     *  level with the bore, over the magazine well. */
+    port: [0.08, 0.08, 0.0],
     /** Metres per second out to the right, and up: a range, so no two
      *  cases take the same path. More up than out, so a case arcs up into
      *  view past the receiver rather than leaving the screen at its edge. */

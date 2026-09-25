@@ -77,6 +77,24 @@ const _w = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _spin = new THREE.Quaternion();
 const _euler = new THREE.Euler();
+const _basisFrom = new THREE.Matrix4();
+const _basisTo = new THREE.Matrix4();
+const _parentTurn = new THREE.Quaternion();
+const _inverse = new THREE.Matrix4();
+const _target = new THREE.Matrix4();
+const _wrist = new THREE.Vector3();
+const _grip = new THREE.Quaternion();
+const _shoulder = new THREE.Vector3();
+const _elbow = new THREE.Vector3();
+const _reach = new THREE.Vector3();
+const _bend = new THREE.Vector3();
+const _upper = new THREE.Vector3();
+const _lower = new THREE.Vector3();
+const _hinge = new THREE.Vector3();
+const _armTurn = new THREE.Quaternion();
+const _foreTurn = new THREE.Quaternion();
+const _roll = new THREE.Quaternion();
+const _scaleOut = new THREE.Vector3();
 
 /**
  * A soft grey puff, drawn into a canvas once.
@@ -171,24 +189,33 @@ export function flashTexture() {
 const ARM = /(Left|Right)(Arm|ForeArm|Hand)/;
 
 /**
- * The same geometry, drawing only the triangles that belong to the arms.
+ * The same geometry, drawing only the arms, and moved by nothing else.
  *
  * A triangle is kept when all three of its corners are skinned mostly to an
- * arm bone. The attributes are shared with the original rather than copied;
- * only the index is new, so this costs a few hundred kilobytes of indices
- * and not a second soldier.
+ * arm bone. Each kept corner's weights are then given wholly to the arm
+ * bones it was already weighted to: the torso is never drawn and is not
+ * where the arms hang from in first person, and a corner still partly
+ * weighted to it would be dragged back towards it - which is what turned the
+ * straps at the top of each sleeve into hooks. Positions, normals and
+ * texture coordinates are shared with the original; only the index and the
+ * weights are new.
  */
 function armsOnly(geometry, skeleton) {
   const arm = skeleton.bones.map((bone) => ARM.test(bone.name));
   const joints = geometry.getAttribute('skinIndex');
   const weights = geometry.getAttribute('skinWeight');
   const onArm = new Uint8Array(joints.count);
+  const armWeights = new Float32Array(joints.count * 4);
   for (let v = 0; v < joints.count; v += 1) {
-    let weight = 0;
+    let total = 0;
     for (let k = 0; k < 4; k += 1) {
-      if (arm[joints.getComponent(v, k)]) weight += weights.getComponent(v, k);
+      if (arm[joints.getComponent(v, k)]) total += weights.getComponent(v, k);
     }
-    onArm[v] = weight >= 0.5 ? 1 : 0;
+    onArm[v] = total >= 0.5 ? 1 : 0;
+    for (let k = 0; k < 4; k += 1) {
+      const w = arm[joints.getComponent(v, k)] ? weights.getComponent(v, k) : 0;
+      armWeights[v * 4 + k] = total > 0 ? w / total : weights.getComponent(v, k);
+    }
   }
   const index = geometry.getIndex();
   const kept = [];
@@ -202,9 +229,31 @@ function armsOnly(geometry, skeleton) {
   for (const [name, attribute] of Object.entries(geometry.attributes)) {
     out.setAttribute(name, attribute);
   }
+  out.setAttribute('skinWeight', new THREE.BufferAttribute(armWeights, 4));
   out.setIndex(kept);
   return out;
 }
+
+/** The rotation that carries one frame - a direction and a normal to it -
+ *  onto another. Both pairs must be at right angles. */
+function alignFrames(u0, n0, u1, n1, out) {
+  _basisFrom.makeBasis(u0, n0, _w.crossVectors(u0, n0));
+  _basisTo.makeBasis(u1, n1, _v.crossVectors(u1, n1));
+  _basisTo.multiply(_basisFrom.transpose());
+  return out.setFromRotationMatrix(_basisTo);
+}
+
+/** Sets a bone's rotation so its rotation in the world is `world`. */
+function setWorldRotation(bone, world) {
+  bone.parent.getWorldQuaternion(_parentTurn);
+  bone.quaternion.copy(_parentTurn.invert().multiply(world));
+  bone.updateMatrixWorld(true);
+}
+
+/** How much of the hand's roll the forearm takes, turning about its own
+ *  length. A real forearm turns the wrist that way; a rig without one
+ *  wrings the wrist into a twisted rope instead. */
+const FOREARM_ROLL = 0.5;
 
 /**
  * A tube red-dot sight, in the rifle model's own units.
@@ -398,7 +447,9 @@ export class Viewmodel {
     const key = new THREE.DirectionalLight(0xffffff, 2.4);
     key.position.set(-0.6, 1.0, 0.4);
     this.scene.add(key);
-    this.scene.add(new THREE.HemisphereLight(0x9ec4ff, 0x30281f, 1.1));
+    // Enough fill that dark camouflage and black gloves still read as cloth
+    // and leather rather than as holes in the picture.
+    this.scene.add(new THREE.HemisphereLight(0xb4c8e6, 0x3a3228, 1.7));
   }
 
   _buildFlash() {
@@ -611,14 +662,16 @@ export class Viewmodel {
    *
    * `template` is the loaded soldier and `pose` the clip its upper body is
    * posed with to shoulder a rifle - the same clip, and the same model, the
-   * other players' view of this one is drawn from. Posed once and never
-   * animated: the weapon's sway, bob and kick are the viewmodel's own, and
-   * the arms ride along with it because they are attached to it.
-   *
-   * Placed by working out where the posed soldier would hold a rifle -
-   * `holdMatrix`, exactly as `remotes.js` does - and then moving the whole
-   * soldier so that rifle lands on this one. The hands are therefore on the
-   * grip and the handguard wherever the viewmodel's rifle is tuned to sit.
+   * other players' view of this one is drawn from. The pose supplies the
+   * hands: how each one closes on the rifle, fingers and all, measured
+   * against the rifle it would be holding (`holdMatrix`, as `remotes.js`
+   * does). Where the arms come from does not come from the pose, because a
+   * third-person body bolted to a first-person rifle puts its shoulders in
+   * front of the camera and its sleeves up through the bottom of the screen.
+   * Each arm instead hangs from a point just below the frame and is solved
+   * every frame to reach its hand - `_poseArms` - which is how a shooter's
+   * arms are drawn: forearms coming up into view onto the weapon, and
+   * nothing of the shoulders ever seen.
    */
   setArms(template, pose) {
     const body = cloneSkinned(template);
@@ -628,12 +681,63 @@ export class Viewmodel {
     });
     const hands = {};
     for (const [key, name] of Object.entries(HAND)) hands[key] = bones[name];
-    if (!hands.handR || !hands.handL) return;
+    if (!hands.handR || !hands.handL || !this.rifle) return;
 
     const mixer = new THREE.AnimationMixer(body);
     mixer.clipAction(pose).play();
     mixer.update(0);
     body.updateMatrixWorld(true);
+
+    // The rifle the posed soldier would be holding, in the soldier's space.
+    const right = new THREE.Vector3();
+    const left = new THREE.Vector3();
+    palms(hands, right, left);
+    const forward = left.clone().sub(right).normalize();
+    const held = holdMatrix(right, forward, new THREE.Vector3(0, 1, 0),
+      this.config.scale, new THREE.Matrix4());
+    const unheld = held.clone().invert();
+
+    const { arms } = this.config;
+    this.arms = [];
+    for (const [side, prefix] of [['right', 'Right'], ['left', 'Left']]) {
+      const arm = bones[`mixamorig${prefix}Arm`];
+      const fore = bones[`mixamorig${prefix}ForeArm`];
+      const hand = bones[`mixamorig${prefix}Hand`];
+      if (!arm || !fore || !hand) return;
+      const a = arm.getWorldPosition(new THREE.Vector3());
+      const b = fore.getWorldPosition(new THREE.Vector3());
+      const c = hand.getWorldPosition(new THREE.Vector3());
+      // The hand against the rifle: this is the grip, and it is kept.
+      const grip = unheld.clone().multiply(hand.matrixWorld);
+      if (side === 'left') {
+        // Moved back along the rifle onto the handguard. The pose holds it
+        // out by the front sight, which a first-person arm cannot reach
+        // without the shoulder coming into view; how it holds is unchanged.
+        const palm = left.clone().applyMatrix4(unheld);
+        const [x, y, z] = arms.leftPalm;
+        grip.premultiply(new THREE.Matrix4().makeTranslation(x - palm.x, y - palm.y, z - palm.z));
+      }
+      const upper = b.clone().sub(a);
+      const lower = c.clone().sub(b);
+      const hinge = upper.clone().cross(lower).normalize();
+      this.arms.push({
+        arm,
+        fore,
+        hand,
+        grip,
+        upperLength: upper.length(),
+        lowerLength: lower.length(),
+        upper: upper.normalize(),
+        lower: lower.normalize(),
+        hinge,
+        armTurn: arm.getWorldQuaternion(new THREE.Quaternion()),
+        foreTurn: fore.getWorldQuaternion(new THREE.Quaternion()),
+        // Which way the forearm runs, in its own space: along the hand.
+        foreAxis: hand.position.clone().normalize(),
+        shoulder: new THREE.Vector3(...arms[side].shoulder),
+        elbow: new THREE.Vector3(...arms[side].elbow).normalize(),
+      });
+    }
 
     body.traverse((node) => {
       if (!node.isSkinnedMesh) return;
@@ -643,21 +747,73 @@ export class Viewmodel {
       node.castShadow = false;
       node.receiveShadow = false;
     });
+    // In the camera's space, not on the weapon: the arms hang from the
+    // player, and it is the solve that carries the hands along with the
+    // weapon's sway and kick.
+    this.scene.add(body);
+    this.body = body;
+    this._poseArms();
+  }
 
-    const right = new THREE.Vector3();
-    const left = new THREE.Vector3();
-    palms(hands, right, left);
-    const forward = left.clone().sub(right).normalize();
-    const held = holdMatrix(right, forward, new THREE.Vector3(0, 1, 0),
-      this.config.scale, new THREE.Matrix4());
-    const drawn = new THREE.Matrix4().compose(
-      this.modelOffset,
-      new THREE.Quaternion(),
-      new THREE.Vector3().setScalar(this.config.scale),
-    );
-    drawn.multiply(held.invert()).decompose(body.position, body.quaternion, body.scale);
-    this.root.add(body);
-    this.arms = body;
+  /**
+   * Both arms, onto the rifle where it is this frame.
+   *
+   * A two-bone solve from the shoulder to the wrist, with the elbow bent
+   * towards `elbow`. The upper arm and forearm are turned as whole frames -
+   * direction and the plane they bend in - from how the pose held them, so
+   * the elbow hinges the way it did in the clip rather than whichever way
+   * the shortest rotation happens to leave it. The hand is then set to how
+   * the pose held the rifle, and half its roll is handed back to the
+   * forearm.
+   */
+  _poseArms() {
+    if (!this.arms || !this.rifle) return;
+    this.root.updateMatrixWorld(true);
+    const rifle = this.rifle.matrixWorld;
+    for (const limb of this.arms) {
+      _target.multiplyMatrices(rifle, limb.grip);
+      _target.decompose(_wrist, _grip, _scaleOut);
+
+      const reach = limb.upperLength + limb.lowerLength;
+      _shoulder.copy(limb.shoulder);
+      _reach.subVectors(_wrist, _shoulder);
+      let distance = _reach.length();
+      // Out of reach: the shoulder comes forward rather than the hand
+      // leaving the rifle.
+      if (distance > reach * 0.995) {
+        _shoulder.addScaledVector(_reach, 1 - (reach * 0.995) / distance);
+        _reach.subVectors(_wrist, _shoulder);
+        distance = _reach.length();
+      }
+      _reach.divideScalar(distance);
+      const l1 = limb.upperLength;
+      const l2 = limb.lowerLength;
+      const cos = Math.max(-1, Math.min(1, (l1 * l1 + distance * distance - l2 * l2) / (2 * l1 * distance)));
+      const sin = Math.sqrt(1 - cos * cos);
+      _bend.copy(limb.elbow).addScaledVector(_reach, -limb.elbow.dot(_reach)).normalize();
+      _elbow.copy(_shoulder).addScaledVector(_reach, l1 * cos).addScaledVector(_bend, l1 * sin);
+
+      _upper.subVectors(_elbow, _shoulder).normalize();
+      _lower.subVectors(_wrist, _elbow).normalize();
+      _hinge.crossVectors(_upper, _lower);
+      if (_hinge.lengthSq() < 1e-8) _hinge.crossVectors(_upper, _bend);
+      _hinge.normalize();
+
+      alignFrames(limb.upper, limb.hinge, _upper, _hinge, _armTurn).multiply(limb.armTurn);
+      alignFrames(limb.lower, limb.hinge, _lower, _hinge, _foreTurn).multiply(limb.foreTurn);
+      // Half the hand's roll about the forearm goes to the forearm.
+      _roll.copy(_foreTurn).invert().multiply(_grip);
+      const along = _roll.x * limb.foreAxis.x + _roll.y * limb.foreAxis.y + _roll.z * limb.foreAxis.z;
+      const twist = 2 * Math.atan2(along, _roll.w);
+      _foreTurn.multiply(_roll.setFromAxisAngle(limb.foreAxis, twist * FOREARM_ROLL));
+
+      const { arm, fore, hand } = limb;
+      arm.parent.updateWorldMatrix(true, false);
+      arm.position.copy(_shoulder).applyMatrix4(_inverse.copy(arm.parent.matrixWorld).invert());
+      setWorldRotation(arm, _armTurn);
+      setWorldRotation(fore, _foreTurn);
+      setWorldRotation(hand, _grip);
+    }
   }
 
   /** The player is holding the aim button, or has let go. */
@@ -810,6 +966,7 @@ export class Viewmodel {
     }
     this.flashLight.intensity = lit ? 9 * (this.flash / c.flashSeconds) : 0;
 
+    this._poseArms();
     this._updateDebris(dt);
   }
 

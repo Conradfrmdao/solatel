@@ -515,15 +515,22 @@ enforced by the server, and a client-only version would be a lie a cheater
 removes in one line. They are Conrad's decision and server work first.
 
 **The arms are the soldier's own.** `setArms` clones the same Mixamo soldier
-other players are drawn with, keeps only the triangles skinned to the arm
-bones (upper arm, forearm, hand), poses it once with the same shouldered clip
-`remotes.js` uses, and moves the whole soldier so the rifle its hands would
-hold lands on the viewmodel's rifle. Where the palm closes on the rifle, and
-how a rifle is laid along the hands, is in `grip.js`, which both modules
-use - so what a player sees themself holding and what everyone else sees them
-holding are one grip, not two tuned to look alike. The arms ride on the
-viewmodel root and are never animated separately; sway, bob and recoil move
-arms and rifle together.
+other players are drawn with and keeps only the triangles skinned to the arm
+bones, with their weights given wholly to those bones so nothing of the torso
+can drag them. The shouldered clip `remotes.js` uses supplies the **hands** -
+how each closes on the rifle, measured against the rifle it would be holding
+with `grip.js`, which both modules use. It does not supply the **arms**: the
+first version bolted the whole third-person pose onto the first-person
+rifle, which put the soldier's shoulders in front of the camera and pushed
+the sleeves up through the bottom of the screen as stumps. Each arm now
+hangs from a point below the frame (`arms` in `weapons.js`) and is solved
+every frame (`_poseArms`, two bones, elbow bent towards a pole, the arm
+turned as a whole frame so the elbow hinges the way the clip's did, half
+the hand's roll handed to the forearm). The left palm sits on the handguard
+rather than out by the front sight where the clip holds it, because no arm
+reaches that far from below the screen. `hip.position` is high enough that
+the support forearm is in the frame; lower it and the arm is cut off at the
+wrist.
 
 **Each shot throws a case and leaves a puff of smoke**, both pooled and
 tuned in `weapons.js` (`casings`, `smoke`). Once out of the rifle they live
