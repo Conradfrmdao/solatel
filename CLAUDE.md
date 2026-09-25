@@ -25,6 +25,10 @@ does not work there and the tools run directly: `cargo test --workspace`,
 Postgres (`postgres://solatel:solatel@localhost:5432/solatel`, exported as
 `DATABASE_URL` unless the environment sets one). It cannot reach Neon: its
 network passes web traffic only, and a Postgres connection is not.
+`bash scripts/test-ledger-local.sh` runs the ledger invariant tests against
+that Postgres instead of a container, and `cargo test -p solatel-server --
+--ignored` runs the tests that need a database (they make their own players
+and touch nobody else's rows).
 
 ## Editing files on this machine
 
@@ -1000,6 +1004,54 @@ tested *before* control characters and that order matters: a tab and a newline
 are both, and dropping them outright turns "big⇥red" into "bigred" rather than
 the two words somebody typed. Nothing is ever keyed on a name — anything that
 moved money by name would be paying whoever typed the name.
+
+## Match history, the anti-cheat, and the admin view
+
+Phase 5's foundations and Phase 3's operator view, in `records.rs`,
+`admin.rs` and migration 0006.
+
+**Every life is written down when its stake settles** - killed, survived, or
+walked away - as one row in `match_lives`: map, stake, outcome, killer, and
+what the server counted (kills, shots, hits, headshots, damage, flick-hits,
+winnings, time alive). `settle_stake` is the one place every life ends
+through, so that is where `record_life` hangs. None of it is money - the
+money is in the ledger already - and none of it is reported by a client.
+
+**It has its own queue, not the ledger's.** Writing a life is two or three
+statements, and on the ledger's queue each would sit in front of the next
+payout at half a second a round trip. The one place the two meet is a
+withdrawal, and that reads the reviews table in the statement it already
+makes (`balance_and_review`).
+
+**Judging is over a player's last twenty lives**, against three lines, each
+with a minimum sample under which it says nothing: accuracy (70% over 60
+shots), headshots as a share of hits (65% over 25), and hits that ended a
+flick (45% over 15). A **flick** is the aim having swung more than 30 degrees
+in the tenth of a second before the shot, measured from the shooter's own
+history, which lag compensation already keeps. People flick; what people do
+not do is land most of their hits that way. The lines are generous on
+purpose and are starting points to tune against real records, not facts
+about human aim - `judge` is a pure function and its tests say where each
+line sits.
+
+**A review holds withdrawals and nothing else.** Crossing a line opens one
+(one open per player, which the database enforces), and while it is open or
+confirmed `request_withdrawal` refuses with a reason and the balance is
+untouched and playable. That is the product's "manual review before a
+payout is finalized": a payout is money leaving for the chain. Nothing here
+claws money back or stops anybody playing; both are a person's decision.
+Clawing back is a ledger `adjustment` with a reason, made deliberately.
+
+**The admin view** is at `/admin`, off unless `SOLATEL_ADMIN_TOKEN` (24
+characters or more) is set, and its API answers only a request carrying that
+token as a bearer token, compared by SHA-256 so the comparison takes the same
+time whatever it is given. It shows the ledger's accounts, the review queue,
+any player (balance, record, lives, every ledger movement on their balance,
+withdrawals, deposits, reviews) and any match (its lives and every
+transaction keyed on it). Each endpoint is one statement that builds its JSON
+in Postgres. The only write is deciding a review, which the database will not
+accept without who decided and why. The page puts every value in as text,
+never markup: notes are typed by people and the page can decide reviews.
 
 ## When aim stops responding
 

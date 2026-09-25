@@ -131,7 +131,9 @@ capture the mouse once the match starts. The HUD shows
 link state, ping, and the current prediction error in metres — a number that climbs means client and
 server are drifting, which is the thing the shared simulation exists to prevent.
 `/health` reports database liveness, whether the ledger reconciles, what is in
-escrow, and the wallet's figures.
+escrow, and the wallet's figures. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
+the operator's view: the ledger's accounts, any player's balance, lives and
+ledger history, any match, and the anti-cheat's review queue.
 
 **In a Claude Code on the web session** there is no Docker, and
 `.claude/hooks/session-start.sh` sets the machine up instead (wasm-bindgen, the
@@ -246,7 +248,11 @@ Two limits exist purely because this game pays money:
 4. **Deposits and withdrawals — devnet only.** *(current)* Built; waiting on an
    end-to-end run with real devnet SOL. Then Plisio, and signing in with a
    Solana wallet in place of account keys.
-5. Anti-cheat foundations.
+5. **Anti-cheat foundations.** *(started)* Every life is recorded with the
+   server's own counts; implausible records (accuracy, headshots, hits at the
+   end of a flick) open a review that holds withdrawals until a person decides
+   it in the admin view at `/admin`. Still to do: an adversarial client run
+   against a live server, and tuning the lines against real records.
 6. Polish and launch prep.
 
 ## Open decisions

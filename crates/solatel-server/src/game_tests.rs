@@ -917,6 +917,28 @@ impl Duel {
             self.reload();
         }
     }
+
+    /// Ticks in which the shooter looks at `target` without firing.
+    fn look_at(&mut self, target: Vec3, ticks: usize) {
+        for _ in 0..ticks {
+            let from = self.body(self.shooter).state.eye_position();
+            let (yaw, pitch) = aim(from, target);
+            self.seq += 1;
+            self.lobby.handle(GameCommand::Inputs {
+                player_id: self.shooter,
+                session_id: self.shooter_session,
+                commands: vec![InputCommand {
+                    seq: self.seq,
+                    forward: 0.0,
+                    right: 0.0,
+                    yaw,
+                    pitch,
+                    buttons: Buttons(0),
+                }],
+            });
+            self.lobby.step();
+        }
+    }
 }
 
 #[test]
@@ -2169,4 +2191,105 @@ fn coming_back_to_the_lobby_is_not_being_told_about_a_match() {
             .any(|m| matches!(m, ServerMsg::MatchStarted { .. })),
         "somebody in the lobby was told they were in a match"
     );
+}
+
+// ---- match history and the anti-cheat ------------------------------------
+
+fn record(duel: &mut Duel) -> mpsc::Receiver<crate::records::Life> {
+    let (handle, lives) = crate::records::RecordsHandle::recording();
+    duel.lobby.records = Some(handle);
+    lives
+}
+
+fn lives_of(lives: &mut mpsc::Receiver<crate::records::Life>) -> Vec<crate::records::Life> {
+    std::iter::from_fn(|| lives.try_recv().ok()).collect()
+}
+
+#[test]
+fn a_kill_writes_the_victims_life_into_history() {
+    use crate::records::Outcome;
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let mut lives = record(&mut duel);
+
+    duel.kill_the_victim();
+
+    let written = lives_of(&mut lives);
+    assert_eq!(written.len(), 1, "one life ended, so one should be written");
+    let life = &written[0];
+    assert_eq!(life.player_id, duel.victim);
+    assert_eq!(life.match_id, duel.match_id);
+    assert_eq!(life.outcome, Outcome::Killed { killer: duel.shooter });
+    assert_eq!(life.stake, duel.lobby.matches[&duel.match_id].stakes.entry());
+    assert!(life.alive_ms > 0, "the victim was alive for a while");
+}
+
+#[test]
+fn a_survivor_is_written_with_what_they_did() {
+    use crate::records::Outcome;
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let mut lives = record(&mut duel);
+    duel.kill_the_victim();
+    let _ = lives_of(&mut lives);
+    let reward = duel.lobby.matches[&duel.match_id].stakes.reward();
+
+    duel.lobby.end_match(duel.match_id);
+
+    let written = lives_of(&mut lives);
+    let shooter = written
+        .iter()
+        .find(|l| l.player_id == duel.shooter)
+        .expect("the shooter survived and should be written");
+    assert_eq!(shooter.outcome, Outcome::Survived);
+    assert_eq!(shooter.counts.kills, 1);
+    assert_eq!(
+        shooter.counts.shots_fired,
+        Duel::shots_to_kill(),
+        "every shot the weapon took is counted, and only those"
+    );
+    assert_eq!(shooter.counts.shots_hit, shooter.counts.shots_fired);
+    assert_eq!(shooter.winnings, reward, "the history says what the kill paid");
+    assert!(
+        !written.iter().any(|l| l.player_id == duel.victim),
+        "a life is written once, when it ends, and the victim's already had"
+    );
+}
+
+#[test]
+fn nothing_is_written_in_free_play() {
+    let mut duel = Duel::new();
+    duel.kill_the_victim();
+    duel.lobby.end_match(duel.match_id);
+    // No records handle attached: a free-play lobby has no payout to guard
+    // and no history to keep. The point is that nothing panics without one.
+    assert!(duel.lobby.records.is_none());
+}
+
+#[test]
+fn a_hit_at_the_end_of_a_flick_is_counted_as_one() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    let from = duel.body(duel.shooter).state.eye_position();
+    // Looking well away - ninety degrees off - for longer than the window,
+    // then onto the target and firing in the same tick.
+    let away = from + (target - from).cross(Vec3::Y).normalize() * 5.0;
+    duel.look_at(away, 20);
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_hit, 1, "the flick should still have landed");
+    assert_eq!(stats.snap_hits, 1, "and it should be counted as a flick");
+}
+
+#[test]
+fn a_hit_after_tracking_the_target_is_not_a_flick() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    duel.look_at(target, 20);
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_hit, 1);
+    assert_eq!(stats.snap_hits, 0, "aim held on the target is tracking, not a flick");
 }

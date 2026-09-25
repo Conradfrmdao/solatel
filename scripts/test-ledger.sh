@@ -340,6 +340,39 @@ VALUES ('f0000000-0000-0000-0000-000000000002', '$P_VICTIM', 'x', 5000000, 35714
     "a withdrawal queued as requested"
 
 echo
+echo ">> match history and the review queue"
+LIFE="INSERT INTO match_lives (match_id, player_id, map, stake_micro_usd, outcome, killer_id,
+    kills, shots_fired, shots_hit, headshots, damage_dealt, snap_hits, winnings_micro_usd, alive_ms)"
+expect_ok "$LIFE VALUES ('e0000000-0000-0000-0000-000000000001', '$P_VICTIM', 'arena', 1000000,
+    'killed', '$P_KILLER', 0, 10, 3, 1, 90, 0, 0, 30000);" \
+    "a life ended by a kill, naming the killer"
+expect_rejected "$LIFE VALUES ('e0000000-0000-0000-0000-000000000002', '$P_VICTIM', 'arena', 1000000,
+    'killed', NULL, 0, 10, 3, 1, 90, 0, 0, 30000);" \
+    "a killed life that names nobody as its killer"
+expect_rejected "$LIFE VALUES ('e0000000-0000-0000-0000-000000000003', '$P_VICTIM', 'arena', 1000000,
+    'survived', '$P_KILLER', 0, 10, 3, 1, 90, 0, 0, 30000);" \
+    "a survivor with a killer"
+expect_rejected "$LIFE VALUES ('e0000000-0000-0000-0000-000000000004', '$P_VICTIM', 'arena', 1000000,
+    'survived', NULL, 0, 10, 11, 1, 90, 0, 0, 30000);" \
+    "more hits than shots"
+expect_rejected "$LIFE VALUES ('e0000000-0000-0000-0000-000000000001', '$P_VICTIM', 'arena', 1000000,
+    'survived', NULL, 0, 10, 3, 1, 90, 0, 0, 30000);" \
+    "a second row for one life"
+expect_ok "INSERT INTO reviews (player_id, reasons, evidence) VALUES ('$P_KILLER', ARRAY['accuracy'], '{}');" \
+    "a review opened for a player"
+expect_rejected "INSERT INTO reviews (player_id, reasons, evidence) VALUES ('$P_KILLER', ARRAY['snaps'], '{}');" \
+    "a second open review for the same player"
+expect_rejected "INSERT INTO reviews (player_id, reasons, evidence) VALUES ('$P_VICTIM', ARRAY[]::text[], '{}');" \
+    "a review with no reason"
+expect_rejected "UPDATE reviews SET status = 'cleared' WHERE player_id = '$P_KILLER';" \
+    "a review decided without saying who or why"
+expect_ok "UPDATE reviews SET status = 'cleared', decided_by = 'ops', note = 'looked fine',
+    decided_at = now() WHERE player_id = '$P_KILLER';" \
+    "a review decided, with who and why"
+expect_ok "INSERT INTO reviews (player_id, reasons, evidence) VALUES ('$P_KILLER', ARRAY['snaps'], '{}');" \
+    "a new review once the last one is decided"
+
+echo
 echo ">> final state"
 docker exec -i "$CONTAINER" psql -U postgres -d ledgertest -t -A -F'  ' <<'SQL' | sed 's/^/   /'
 SELECT a.kind, COALESCE(p.display_name,'-'), (b.balance_micro_usd::numeric/1000000)::money
