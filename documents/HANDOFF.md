@@ -5,6 +5,36 @@ Windows machine. Read this whole file, then `CLAUDE.md` (the authoritative
 working notes; its rules are not negotiable), then start on the task list.
 Everything described here is committed at `9bff08c` on `main`.
 
+## Status after the first cloud session (2026-09-25)
+
+Branch `claude/cloud-session-check-4os737`, PR #1. Done there:
+
+- **Task 1**: `duel.mjs` and `survive.mjs` send `map`; both pass.
+- **Task 2**: it bit, harder than predicted. Through a relay adding 250 ms
+  each way, thirteen arrivals dissolved the whole match. `ReadBalance` is now
+  one statement (`ledger::read_wallet`); the same run passes, balance reads
+  1 to 1.5 s. Still slow at that latency and not changed: the dev-grant
+  buy-in (13 s of the 30 s `FORMING_TIMEOUT`), kill payouts (about 6 s), and
+  the pool's check before every statement (one extra round trip each).
+- **Task 5**: CLAUDE.md has Accounts and The wallet; README rewritten.
+- **Task 6**: `room_0`'s floor hidden (MAP_VERSION 23, collision unchanged);
+  `extend-arena.py` and the `check-*.py` scripts fixed (they could not start);
+  "life" wording and the unused `brushes` field gone.
+- A SessionStart hook (`.claude/hooks/session-start.sh`) readies a cloud
+  container: wasm-bindgen, npm packages, numpy/scipy, and a local Postgres at
+  `postgres://solatel:solatel@localhost:5432/solatel`.
+
+**The cloud cannot reach Neon** (it passes web traffic only), so the cloud uses
+its local Postgres, and task 4 must be done from Conrad's machine. `./x` and
+`scripts/test-ledger.sh` need Docker, which the cloud does not have; the
+ledger invariant tests there mean applying `migrations/` to the local Postgres
+and running the script's SQL by hand.
+
+Left: **task 3** (needs the treasury and payer keys in the environment and
+devnet SOL in the payer), **task 4** (Neon, Conrad's approval), the asset
+licences (yard and rifle carry no embedded licence; a person has to check the
+source pages), and task 7.
+
 ## What Solatel is
 
 A browser first-person shooter where players pay a real-money entry fee and
