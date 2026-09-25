@@ -492,9 +492,13 @@ an exponential that takes `dt`, so the feel is the same at any frame rate,
 and most of them are steadied with the sights up.
 
 **Aiming down the sights is solved, not tuned.** `weapons.js` gives the two
-sight points in the model's own units, measured off its geometry; the rig is
-pitched until the line between them is level and moved so the front post is
-on the view axis. The world camera narrows by scaling the tangent of its
+sight points in the model's own units; the rig is pitched until the line
+between them is level and moved so the front point is on the view axis. The
+rifle carries a **red-dot sight** (`optic`), built in code on the carry
+handle - a lathed tube with turrets, tinted glass and an unlit dot - and the
+sight points are the two ends of its tube, so aiming looks down it: a near
+rim, a far rim, the dot in the middle. It is added to the rifle model itself,
+so everyone else's rifle carries it too. The world camera narrows by scaling the tangent of its
 half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
 covers the same part of the screen. The weapon's own camera narrows by its
 own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view

@@ -108,6 +108,101 @@ export function flashTexture() {
   return texture;
 }
 
+/**
+ * A tube red-dot sight, in the rifle model's own units.
+ *
+ * The housing is a lathed ring: open at both ends, thick-walled, with a
+ * lip at each end so the rims read as rims. The glass is a faint blue-green
+ * disc at the front, and the dot sits just behind it, unlit so it glows at
+ * any exposure. A mount runs down from the tube to the carry handle.
+ */
+function redDot(optic) {
+  const { height, front, rear, radius, bore, base, dotRadius } = optic;
+  const group = new THREE.Group();
+  group.name = 'red_dot';
+  const housing = new THREE.MeshStandardMaterial({
+    color: 0x1b1c1e,
+    roughness: 0.45,
+    metalness: 0.35,
+  });
+
+  // The tube, turned from a profile: out along the outside, back along the
+  // bore. LatheGeometry spins about +Y, so it is laid along -Z afterwards.
+  const length = rear - front;
+  const lip = radius * 1.08;
+  const profile = [
+    new THREE.Vector2(bore, 0),
+    new THREE.Vector2(lip, 0),
+    new THREE.Vector2(lip, length * 0.08),
+    new THREE.Vector2(radius, length * 0.12),
+    new THREE.Vector2(radius, length * 0.88),
+    new THREE.Vector2(lip, length * 0.92),
+    new THREE.Vector2(lip, length),
+    new THREE.Vector2(bore, length),
+    new THREE.Vector2(bore, 0),
+  ];
+  const tube = new THREE.Mesh(new THREE.LatheGeometry(profile, 32), housing);
+  tube.rotation.x = Math.PI / 2; // +Y onto +Z
+  tube.position.set(0, height, front);
+  group.add(tube);
+
+  // Turrets on the top and the right, for elevation and windage.
+  const turret = new THREE.CylinderGeometry(radius * 0.32, radius * 0.32, radius * 0.5, 16);
+  const top = new THREE.Mesh(turret, housing);
+  top.position.set(0, height + radius * 1.1, front + length * 0.5);
+  group.add(top);
+  const side = new THREE.Mesh(turret, housing);
+  side.rotation.z = Math.PI / 2;
+  side.position.set(-radius * 1.1, height, front + length * 0.5);
+  group.add(side);
+
+  // The mount, from the carry handle up to the tube.
+  const mountHeight = height - radius * 0.8 - base;
+  const mount = new THREE.Mesh(
+    new THREE.BoxGeometry(radius * 1.2, mountHeight, length * 0.7),
+    housing,
+  );
+  mount.position.set(0, base + mountHeight / 2, front + length * 0.5);
+  group.add(mount);
+
+  // Glass: just tinted, so the world is seen through it.
+  const glass = new THREE.Mesh(
+    new THREE.CircleGeometry(bore, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x7fb8c8,
+      transparent: true,
+      opacity: 0.16,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  glass.position.set(0, height, front + length * 0.04);
+  group.add(glass);
+
+  // The dot, and a soft glow round it.
+  const dot = new THREE.Mesh(
+    new THREE.CircleGeometry(dotRadius, 20),
+    new THREE.MeshBasicMaterial({ color: 0xff2a20, side: THREE.DoubleSide }),
+  );
+  dot.position.set(0, height, front + length * 0.05);
+  group.add(dot);
+  const halo = new THREE.Mesh(
+    new THREE.CircleGeometry(dotRadius * 1.9, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xff3a2a,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    }),
+  );
+  halo.position.set(0, height, front + length * 0.051);
+  group.add(halo);
+
+  return group;
+}
+
 export class Viewmodel {
   constructor(config = RIFLE) {
     this.config = config;
@@ -240,6 +335,9 @@ export class Viewmodel {
   async load(url) {
     const gltf = await new GLTFLoader().loadAsync(url);
     const rifle = gltf.scene;
+    // The optic goes on the model itself, so every copy of the rifle -
+    // everyone else's, in `remotes.js` - carries it too.
+    if (this.config.optic) rifle.add(redDot(this.config.optic));
     rifle.position.copy(this.modelOffset);
     rifle.scale.setScalar(this.config.scale);
     this.root.add(rifle);

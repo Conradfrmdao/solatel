@@ -22,6 +22,27 @@ export const RIFLE = {
   boreHeight: 0.065,
   muzzleFace: -2.306,
 
+  /**
+   * A red-dot sight on the carry handle, in the model's units (the rifle's
+   * top is at 0.49 there; the rifle is 4.4 units long). A tube: `radius` outside, `bore` inside, from
+   * `front` to `rear` along the barrel, its axis `height` above the model's
+   * origin. The glass is at the front and the dot is on the glass, so looking
+   * down the tube puts the dot in the middle of two rings - the near rim big,
+   * the far rim smaller - which is what aiming through one looks like.
+   */
+  optic: {
+    // A real red dot is about 30-40 mm across on an 840 mm rifle; these
+    // are in model units, 0.18 m each in first person.
+    height: 0.64,
+    front: 0.2,
+    rear: 0.52,
+    radius: 0.12,
+    bore: 0.106,
+    /** The mount, from the carry handle up to the tube. */
+    base: 0.49,
+    dotRadius: 0.011,
+  },
+
   /** From the hip: down and out into the corner, turned in so the muzzle
    *  points near the crosshair. Rotation is [pitch, yaw, roll]. */
   hip: {
@@ -43,11 +64,13 @@ export const RIFLE = {
      * angle between them to make the line level, and then moved so the front
      * post lands on the middle of the screen.
      */
-    frontSight: [0.4, -1.41],
-    rearSight: [0.465, 0.4],
-    /** How far in front of the eye the rear sight sits, in metres. Closer
-     *  makes the front sight's ring bigger on screen. */
-    eyeRelief: 0.09,
+    /** Through the red dot: the tube's axis at both ends, which is level. */
+    frontSight: [0.64, 0.2],
+    rearSight: [0.64, 0.52],
+    /** How far in front of the eye the back of the sight sits, in metres.
+     *  Closer makes its rings bigger on screen; at 0.13 the near rim fills
+     *  about a third of the screen's height. */
+    eyeRelief: 0.13,
     /** How far the view narrows: the tangent of the half-angle is scaled by
      *  this, so 0.8 is a 1.25x zoom. */
     zoom: 0.8,
@@ -55,7 +78,7 @@ export const RIFLE = {
      *  sights 1.4x larger with the sights up, which is what makes the ring
      *  read as something to look through rather than a speck. Magnifying
      *  about the middle of the screen leaves the sights where they are. */
-    weaponZoom: 0.7,
+    weaponZoom: 0.8,
     /** Seconds from hip to sights, and back. */
     duration: 0.18,
     /** How much of the hip's sway, bob and recoil survives into ADS. */
