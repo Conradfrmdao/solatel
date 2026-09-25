@@ -104,8 +104,14 @@ changes be stated, and two meshes were removed by `scripts/prepare-assets.py`:
 - `hand_knife_soldier_0`, a knife in the hand, which clashes with the rifle
   viewmodel.
 
-Nothing else was altered: the skeleton, the five animation clips and the
-remaining geometry are the author's, untouched.
+Nothing else was altered in the file: the skeleton, the five animation clips
+and the remaining geometry are the author's, untouched.
+
+**In game, the author's geometry is no longer drawn.** `client/src/soldier.js`
+removes every mesh from the loaded model at runtime and draws Solatel's own
+generated tactical kit in its place, skinned to the author's skeleton and
+driven by the author's animation clips. The skeleton and clips are still this
+work, so the credit above still applies.
 
 ## Weapon — `assets/weapons/rifle.glb`
 

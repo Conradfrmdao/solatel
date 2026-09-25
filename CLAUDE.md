@@ -517,15 +517,29 @@ sound for the echo of its own shot. The server still decides every hit.
 
 ### Other players
 
-`remotes.js` layers everything the clips lack on top of them - the soldier
-has idle, walk, run and jump with the arms swinging and nothing in the hands:
+**The soldier is generated.** `soldier.js` throws away the model's own skin at
+load and builds tactical kit in its place - helmet with night vision and a
+headset, balaclava and goggles, plate carrier with magazine pouches and a
+radio, camouflage uniform from a canvas-drawn pattern, gloves, knee pads,
+boots - out of boxes, capsules and spheres placed relative to the rig's
+joints. Every piece is weighted to the bone it moves with (the far end of
+each limb half onto the next, so elbows and knees bend the sleeve), and the
+lot is merged into one skinned mesh bound to the original skeleton: one draw
+call per player, and the clips, IK and aim lean drive it unchanged. The rig
+and clips are still the downloaded model's, so `ATTRIBUTION.md` still credits
+it. Loaded bone names have their dots stripped (`fingers_L.001` arrives as
+`fingers_L001`); look them up that way.
+
+`remotes.js` layers everything the clips lack on top of them - the clips are
+idle, walk, run and jump with the arms swinging and nothing in the hands:
 
 - **Legs** turn up to 70 degrees toward the way the player moves, and the
   walk plays backwards when backing off; the spine turns back so the chest
   faces the aim.
-- **The rifle is not in a hand.** It sits at the shoulder in a frame that
-  turns with the player's yaw and pitch, so it points where they look, and
-  both arms are bent onto it by analytic two-bone IK. The chest is turned
+- **The rifle is not in a hand.** It sits in the right shoulder pocket -
+  following the shoulder joint as posed each frame - in a frame that turns
+  with the player's yaw and pitch, so it points where they look, and both
+  arms are bent onto it by analytic two-bone IK. The chest is turned
   into a bladed stance (`STANCE_TURN`), because at 0.47 m the rig's arms
   cannot otherwise reach both ends of a 0.84 m rifle.
 - The torso and head lean with the pitch; shots kick the rifle and flash its

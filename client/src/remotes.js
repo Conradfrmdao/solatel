@@ -49,6 +49,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { SIM, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
+import { dressSoldier } from './soldier.js';
 
 /** Clip names exactly as the file spells them, pipes and spaces included. */
 const CLIP = {
@@ -106,9 +107,15 @@ const BONE = {
  * shoulders are at 1.40 m and 0.19 m either side, the arms reach 0.47 m.
  */
 const CARRY = {
-  /** The shoulder pocket the stock sits in: a little inside the right
-   *  shoulder joint, toward the cheek. */
-  shoulder: new THREE.Vector3(-0.1, 1.4, 0.0),
+  /** The shoulder pocket the stock sits in, from the right shoulder joint
+   *  as it is posed this frame: in toward the cheek, a little down, and
+   *  forward onto the front of the shoulder. Following the joint rather than
+   *  a fixed point matters, because the bladed stance turns the right
+   *  shoulder back 15 cm, and a rifle left where it was had both arms at
+   *  full stretch. */
+  pocket: new THREE.Vector3(0.05, -0.02, 0.1),
+  /** Where the shoulder is before the first frame has posed it. */
+  shoulder: new THREE.Vector3(-0.19, 1.4, -0.06),
   /** Metres of rifle: the model is 4.405 units nose to stock. */
   scale: 0.19,
   /** Stock-end to model origin, in model units, so the butt is on the pivot. */
@@ -196,6 +203,9 @@ export class Remotes {
     this.template = soldier.scene;
     this.clips = soldier.animations;
     this.weapon = weapon;
+    // The model's own skin is replaced with generated kit; its rig and its
+    // clips are what is kept. See `soldier.js`.
+    dressSoldier(this.template);
 
     this.template.traverse((node) => {
       if (node.isMesh || node.isSkinnedMesh) {
@@ -404,7 +414,18 @@ export class Remotes {
     // The rifle points where they aim, and kicks when they fire.
     player.kick += (0 - player.kick) * (1 - Math.exp(-KICK_RECOVERY * step));
     carry.rotation.set(-entry.pitch - player.kick * 0.1, 0, 0);
-    carry.position.set(CARRY.shoulder.x, CARRY.shoulder.y - player.dip, CARRY.shoulder.z - player.kick * 0.04);
+    if (bones.upperArmR) {
+      root.updateMatrixWorld(true);
+      bones.upperArmR.getWorldPosition(_a);
+      root.worldToLocal(_a);
+    } else {
+      _a.copy(CARRY.shoulder);
+    }
+    carry.position.set(
+      _a.x + CARRY.pocket.x,
+      _a.y + CARRY.pocket.y,
+      _a.z + CARRY.pocket.z - player.kick * 0.04,
+    );
     player.flash = Math.max(0, player.flash - step);
     player.flashSprite.visible = player.flash > 0 && distance < FAR;
 
@@ -529,7 +550,7 @@ function solveArm(upper, lower, hand, target, pole) {
       (2 * upperLength * lowerLength))));
   _axis.crossVectors(_d, _e);
   if (_axis.lengthSq() < 1e-10) _axis.set(1, 0, 0);
-  rotateWorld(lower, _axis.normalize(), current - wanted);
+  rotateWorld(lower, _axis.normalize(), wanted - current);
 
   // 2. The shoulder, so the hand points at the target.
   hand.getWorldPosition(_c);
