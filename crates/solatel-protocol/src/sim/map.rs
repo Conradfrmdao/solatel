@@ -281,8 +281,10 @@ const PERIMETER_BRUSHES: usize = 5;
 /// last building and the water, which a player could be knocked onto and
 /// then spend the round behind the map - and dropped the arena's redundant
 /// red-orange floor quad, which had been z-fighting with its grey ground
-/// plane over the whole map.
-pub const MAP_VERSION: u32 = 22;
+/// plane over the whole map. 23 hid `room_0`'s own floor, which did the
+/// same inside that building; the collision tables came out unchanged, so
+/// this bump is for the model alone.
+pub const MAP_VERSION: u32 = 23;
 
 // --- generated: run scripts/derive-maps.py, do not edit by hand ---
 // --- arena -------------------------------------------------------------

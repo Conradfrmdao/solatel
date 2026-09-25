@@ -40,6 +40,12 @@ fi
 # Chromium at /opt/pw-browsers.
 npm --prefix client install --no-audit --no-fund
 
+# ---- the map scripts' Python dependencies -----------------------------------
+# scripts/derive-maps.py, extend-arena.py and the check-*.py scripts.
+if ! python3 -c "import numpy, scipy" 2>/dev/null; then
+    pip install --quiet --root-user-action=ignore numpy scipy
+fi
+
 # ---- a local Postgres for tests and a dev server ----------------------------
 # Throwaway, inside this container. The server applies migrations itself on
 # start. Only used when no DATABASE_URL was configured for the environment,

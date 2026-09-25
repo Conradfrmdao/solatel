@@ -129,7 +129,7 @@ def scale_of(name):
         'derive_maps', os.path.join(ROOT, 'scripts', 'derive-maps.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for map_name, scale in module.MAPS:
+    for map_name, scale, *_ in module.MAPS:
         if map_name == name:
             return scale
     raise SystemExit(f'no map called {name!r} in derive-maps.py')
@@ -588,6 +588,20 @@ def redundant_original(centres):
     return walls | floor
 
 
+def room_floor(centres):
+    """`room_0`'s faces at ground level, and nothing else of it.
+
+    The building in the middle of the arena carries its own floor at y 0,
+    64 m2 of it in 'material_6', the orange. It faces down, which would hide
+    it from above if faces were culled - but the client draws every map
+    material double-sided, so from inside the building it is drawn at
+    exactly the depth of the grey ground under it, and the floor flickers
+    orange and grey there the same way the whole arena used to. Nothing of
+    `room_0` above the ground is touched: its upper floor is at 4.6 m.
+    """
+    return np.abs(centres[:, 1]) < 0.05
+
+
 def east_district(parts):
     """A second half to the arena, east of the wall that used to end it.
 
@@ -794,6 +808,10 @@ def main():
     print(f'  took down {removed} triangles of the original: its east and '
           f'west walls, and the red-orange floor that was z-fighting with '
           f'the grey one over the whole arena')
+    blob, room, removed = retire_triangles(js, blob, 'room_0', room_floor, scale)
+    repointed += room
+    print(f'  took down {removed} triangles of room_0: its own floor, '
+          f'z-fighting with the ground inside the building')
 
     parts = Parts()
     build(parts)

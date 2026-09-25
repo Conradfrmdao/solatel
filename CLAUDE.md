@@ -508,7 +508,10 @@ separate from `prepare-assets.py` precisely so that "the download is untouched"
 stays true of everything else. It adds Solatel's own buildings, stairs and
 walls to `arena.glb`, and takes down 40 triangles of the original: the east and
 west walls, so the map can continue past them, and a redundant red-orange floor
-quad that was z-fighting with the grey ground plane over the whole arena. It is idempotent: everything it adds goes on
+quad that was z-fighting with the grey ground plane over the whole arena. It
+also takes down `room_0`'s own floor - 60 downward-facing triangles at ground
+level, which the client's double-sided materials drew at exactly the ground's
+depth inside that building. It is idempotent: everything it adds goes on
 the end of each glTF array, the lengths from before are in `asset.extras`, and
 nothing is ever deleted — removed triangles are only pointed away from. Run it,
 then `./x maps`, then bump `MAP_VERSION`.
