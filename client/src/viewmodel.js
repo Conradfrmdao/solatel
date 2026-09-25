@@ -62,7 +62,7 @@ function clamp(value, limit) {
  * Sixty-four pixels is plenty. It is on screen for two frames at a time and
  * it is a blur when it is.
  */
-function flashTexture() {
+export function flashTexture() {
   const size = 64;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;

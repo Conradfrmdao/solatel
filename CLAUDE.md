@@ -481,6 +481,61 @@ WebGL came up and the socket connected.
 The viewmodel is rendered in its own scene over a cleared depth buffer, which is
 what stops a wall the player is standing against cutting through the weapon.
 
+### The weapon in your hands
+
+`viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
+in it, nothing hard-coded in the controller. The pose each frame is layers
+added together: hip-to-sights, sway from turning, a breath when still, a
+figure-of-eight bob paced by *distance covered* (so it quickens with speed),
+a lift in the air and a dip on landing, then recoil. Every layer eases with
+an exponential that takes `dt`, so the feel is the same at any frame rate,
+and most of them are steadied with the sights up.
+
+**Aiming down the sights is solved, not tuned.** `weapons.js` gives the two
+sight points in the model's own units, measured off its geometry; the rig is
+pitched until the line between them is level and moved so the front post is
+on the view axis. The world camera narrows by scaling the tangent of its
+half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
+covers the same part of the screen. The weapon's own camera keeps the hip
+angle it was placed for - zooming it with the world would slide the sights
+off centre. The crosshair dims with the sights up and never disappears: it is
+where the shot goes, and on real stakes a player should always see it.
+
+**None of it changes where a shot goes.** Recoil kicks the weapon and rolls
+the camera around its own axis; a roll leaves the middle of the screen where
+it was aimed. A recoil pattern that actually walks the aim, bullet spread
+that differs between hip and sights, sprinting, magazines and reloading are
+all *not built*, on purpose: each changes who wins a fight, so each has to be
+enforced by the server, and a client-only version would be a lie a cheater
+removes in one line. They are Conrad's decision and server work first.
+
+**Your own shot is shown when you fire it**, not when the server echoes it a
+round trip later. `LocalPlayer` predicts shots on the same ticks and interval
+the server enforces (`takePredictedShots`), and `main.js` skips the kick and
+sound for the echo of its own shot. The server still decides every hit.
+
+### Other players
+
+`remotes.js` layers everything the clips lack on top of them - the soldier
+has idle, walk, run and jump with the arms swinging and nothing in the hands:
+
+- **Legs** turn up to 70 degrees toward the way the player moves, and the
+  walk plays backwards when backing off; the spine turns back so the chest
+  faces the aim.
+- **The rifle is not in a hand.** It sits at the shoulder in a frame that
+  turns with the player's yaw and pitch, so it points where they look, and
+  both arms are bent onto it by analytic two-bone IK. The chest is turned
+  into a bladed stance (`STANCE_TURN`), because at 0.47 m the rig's arms
+  cannot otherwise reach both ends of a 0.84 m rifle.
+- The torso and head lean with the pitch; shots kick the rifle and flash its
+  muzzle; landing dips the hips; death falls the body before it goes.
+- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth, and
+  beyond 50 m the IK is skipped.
+
+The rifle is a clone of the viewmodel's, which carries that rig's offset and
+scale. Both are reset on the copy - inheriting them is what made every other
+player hold a toy.
+
 ## Assets
 
 Runtime models live in `assets/` and are copied into `web/dist/assets` by

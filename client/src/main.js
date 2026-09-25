@@ -28,7 +28,7 @@ import { Audio } from './audio.js';
 import { Link, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
-import { SIM, SPAWNS, loadSim, selectMap } from './sim.js';
+import { BRUSHES, SIM, SPAWNS, loadSim, selectMap } from './sim.js';
 import { Menu } from './menu.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
@@ -273,6 +273,11 @@ async function boot() {
       get composer() {
         return composer;
       },
+      /** The current map's collision boxes, for scripts that need to know
+       *  what is solid - a camera placed for a screenshot, say. */
+      get brushes() {
+        return BRUSHES;
+      },
       setComposer(on) {
         composer = on ? builtComposer : null;
       },
@@ -415,7 +420,10 @@ async function boot() {
         // shot a direction and a distance. The round landing is a second
         // sound from a second place - often the more useful one, because it
         // is where the shooter was aiming.
-        if (!mine) audio.shot(message.from, eye, forward);
+        if (!mine) {
+          audio.shot(message.from, eye, forward);
+          remotes.onShot(message.shooter);
+        }
         if (!message.hit_player) audio.impact(message.to, eye, forward);
         if (mine && message.hit_player) audio.hitConfirmed(false);
       } else if (message.t === 'damaged') {
@@ -530,7 +538,7 @@ async function boot() {
     world.followWithShadows(eye);
     world.positionSky(eye, camera.far);
     world.setZone(local.zoneRadius);
-    remotes.update(now, dt, local.id);
+    remotes.update(now, dt, local.id, camera.position);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround);
     hud.update(now, link, local, input);
 
