@@ -1,0 +1,48 @@
+[package]
+name = "solatel-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+solatel-protocol.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+tower-http = { version = "0.7", features = ["trace", "fs", "cors", "set-header"] }
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    # Neon (and any managed Postgres) requires TLS. webpki roots are bundled,
+    # so this does not depend on the container's CA store.
+    "tls-rustls-ring-webpki",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+    # sqlx::migrate! is a macro; "migrate" alone only provides the runtime.
+    "macros",
+] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = "0.3"
+
+# Solana, hand-rolled rather than through `solana-sdk`.
+#
+# The whole of what this server does on chain is: read a balance, read recent
+# transactions, and send one system transfer. That is a JSON-RPC call, an
+# ed25519 signature and a documented byte layout. `solana-sdk` would do it too
+# and would bring several hundred crates to do it with, on a build that is
+# already the slowest thing in the loop.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls-webpki-roots",
+] }
+ed25519-dalek = "2"
+bs58 = "0.5"
+base64 = "0.22"
+getrandom = "0.2"
+# Account keys are stored hashed. Already in the tree under ed25519-dalek.
+sha2 = "0.10"

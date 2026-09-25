@@ -1,0 +1,22 @@
+# Scripts in this repo are executed inside a Linux container. A CRLF checkout
+# on Windows breaks them with "bad interpreter: /usr/bin/env bash^M", so line
+# endings are normalised to LF for everything textual.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+x      text eol=lf
+*.rs   text eol=lf
+*.sql  text eol=lf
+*.toml text eol=lf
+
+*.pdf binary
+
+# Model and texture data. `text=auto` above relies on Git guessing which files
+# are binary, and a single newline rewritten inside a .glb corrupts the whole
+# model - the same class of failure as the ^M in shell scripts above, but
+# silent, because a broken .glb fails at load time rather than at checkout.
+*.glb  binary
+*.gltf binary
+*.bin  binary
+*.png  binary
+*.jpg  binary

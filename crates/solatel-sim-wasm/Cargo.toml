@@ -1,0 +1,23 @@
+[package]
+name = "solatel-sim-wasm"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# cdylib is what wasm-bindgen post-processes; rlib keeps `cargo test` able to
+# build this crate on the host like any other.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+solatel-protocol.workspace = true
+# Same minor as solatel-protocol, so `Vec3` is literally the same type and no
+# conversion is needed at this boundary.
+glam = "0.32"
+wasm-bindgen = "=0.2.128"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `solatel-protocol` generates UUIDs, so the same `js` feature the old Bevy
+# client needed applies here: without it getrandom has no backend on wasm and
+# the build fails at link time with an error that does not name the cause.
+uuid = { version = "1", features = ["js"] }

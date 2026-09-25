@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Solatel</title>
+    <link rel="icon" href="favicon.png" />
+    <style>
+      :root {
+        --ink: #dfe7f2;
+        --dim: #8ea0b8;
+        --warn: #ffb648;
+        --bad: #ff6b5e;
+        --bg: #0b0e13;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+        /* The page is a game, not a document: selecting text with a stray drag
+           only ever gets in the way. */
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      #solatel-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: crosshair;
+      }
+
+      #hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      /* Only the settings panel takes clicks; everything else must let them
+         through to the canvas, or the first click captures nothing. */
+      /* The pot, centred at the top: the one place a player's eye already
+         goes between fights, and out of the way of the crosshair. Hidden
+         until the first snapshot names a figure, so it never shows a
+         confident $0.00 that is only "we have not been told yet". */
+      #pool {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        align-items: baseline;
+        gap: 8px;
+        padding: 5px 14px;
+        border-radius: 999px;
+        background: rgba(10, 14, 20, 0.55);
+        border: 1px solid rgba(190, 210, 240, 0.14);
+      }
+      #pool.shown { display: flex; }
+
+      /* The player's own money, under the pot and smaller than it. Two
+         figures side by side would invite reading one as the other; the pot
+         is the match's and this is theirs. */
+      #balance {
+        position: absolute;
+        top: 86px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--dim);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      }
+      #balance.shown { display: flex; }
+      #balance .amount { color: var(--ink); }
+      #balance.broke .amount { color: var(--bad); }
+      #balance .caption { text-transform: uppercase; letter-spacing: 1.1px; }
+
+      /* What this match has been worth. Green because it only ever goes up:
+         nobody takes it off a player for dying. */
+      #winnings {
+        position: absolute;
+        top: 108px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--dim);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      }
+      #winnings .amount { color: #9fe8b4; font-weight: 600; }
+      #winnings .caption { text-transform: uppercase; letter-spacing: 1.1px; }
+
+      /* The mouse being loose is the difference between playing and
+         watching, so it is stated plainly rather than left to the
+         diagnostics. */
+      #lock-hint {
+        background: rgba(10, 14, 20, 0.72);
+        border: 1px solid rgba(190, 210, 240, 0.18);
+        padding: 7px 15px;
+        border-radius: 999px;
+        font-size: 14px;
+        color: #eaf1fb;
+      }
+
+      #stats {
+        position: absolute;
+        top: 10px;
+        left: 12px;
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--dim);
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+        white-space: pre;
+      }
+
+      #health {
+        position: absolute;
+        left: 24px;
+        bottom: 22px;
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+      }
+      #health.hurt { color: var(--bad); }
+
+      #crosshair,
+      #hitmarker {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+      }
+
+      #crosshair {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+      }
+
+      /* Four strokes forming an X, drawn only when a shot connects. */
+      #hitmarker {
+        width: 22px;
+        height: 22px;
+        opacity: 0;
+        transition: opacity 60ms linear;
+        background:
+          linear-gradient(to bottom right, transparent 44%, var(--bad) 44%, var(--bad) 56%, transparent 56%),
+          linear-gradient(to bottom left, transparent 44%, var(--bad) 44%, var(--bad) 56%, transparent 56%);
+      }
+      #hitmarker.show { opacity: 1; }
+      /* A headshot is worth twice a body shot, so it gets its own colour
+         rather than the same X twice. */
+      #hitmarker.head {
+        background:
+          linear-gradient(to bottom right, transparent 40%, var(--good, #8fe388) 40%, var(--good, #8fe388) 60%, transparent 60%),
+          linear-gradient(to bottom left, transparent 40%, var(--good, #8fe388) 40%, var(--good, #8fe388) 60%, transparent 60%);
+        width: 28px;
+        height: 28px;
+      }
+
+      /* Under the pot, which is the other number that belongs to the match
+         rather than to the player. */
+      #matchclock {
+        position: absolute;
+        left: 50%;
+        top: 58px;
+        transform: translateX(-50%);
+        font-size: 19px;
+        letter-spacing: 0.06em;
+        color: var(--ink);
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+      }
+      #matchclock.urgent { color: var(--bad); }
+
+      /* Bottom right above the weapon, reading upwards from newest. A feed
+         that grows downwards moves every line every time one arrives, which
+         is the one thing a player glancing at it cannot follow. */
+      #killfeed {
+        position: absolute;
+        right: 14px;
+        bottom: 96px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+        font-size: 13px;
+        pointer-events: none;
+      }
+      #killfeed .kill {
+        padding: 4px 9px;
+        border-radius: 6px;
+        background: rgba(10, 14, 20, 0.72);
+        border: 1px solid rgba(190, 210, 240, 0.12);
+        color: var(--dim);
+        white-space: nowrap;
+      }
+      /* Anything the player was part of. Their own kills and deaths are the
+         only lines worth breaking a glance for. */
+      #killfeed .kill.mine {
+        border-color: rgba(255, 107, 94, 0.5);
+        color: var(--ink);
+      }
+      #killfeed .who { color: var(--ink); }
+      #killfeed .hs { margin: 0 7px; color: var(--bad); }
+
+      #scoreboard {
+        position: absolute;
+        left: 50%;
+        top: 18%;
+        transform: translateX(-50%);
+        padding: 12px 16px;
+        border-radius: 10px;
+        background: rgba(10, 14, 20, 0.88);
+        border: 1px solid rgba(190, 210, 240, 0.18);
+        font-size: 13px;
+        color: var(--dim);
+        min-width: min(88vw, 470px);
+      }
+      #scoreboard table { width: 100%; border-collapse: collapse; }
+      #scoreboard th,
+      #scoreboard td {
+        padding: 3px 8px;
+        text-align: right;
+        font-weight: 400;
+      }
+      #scoreboard th { color: var(--dim); opacity: 0.7; font-size: 11px; }
+      #scoreboard .name { text-align: left; color: var(--ink); }
+      #scoreboard tr.me .name { color: var(--good, #8fe388); }
+      #scoreboard tbody tr.me td { color: var(--ink); }
+
+      #lock-hint {
+        position: absolute;
+        left: 50%;
+        top: 62%;
+        transform: translateX(-50%);
+        padding: 9px 16px;
+        border-radius: 999px;
+        background: rgba(10, 14, 20, 0.78);
+        border: 1px solid rgba(190, 210, 240, 0.16);
+        font-size: 13px;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+
+      #banner {
+        position: absolute;
+        left: 50%;
+        top: 16%;
+        transform: translateX(-50%);
+        padding: 10px 18px;
+        border-radius: 8px;
+        background: rgba(60, 16, 16, 0.86);
+        border: 1px solid rgba(255, 107, 94, 0.45);
+        color: var(--bad);
+        font-size: 14px;
+        max-width: min(90vw, 620px);
+        text-align: center;
+      }
+
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 12px;
+        text-align: center;
+        background: var(--bg);
+        transition: opacity 240ms ease;
+      }
+      body.running #boot { opacity: 0; pointer-events: none; }
+
+      #boot h1 {
+        margin: 0;
+        font-size: 30px;
+        letter-spacing: 0.34em;
+        font-weight: 600;
+      }
+      #boot-status { color: var(--dim); font-size: 13px; min-height: 1.2em; }
+      #boot-status.error { color: var(--bad); max-width: 560px; }
+
+      /* ---- the menu ---------------------------------------------------
+         The screen before the game. There is no world behind it: until a
+         match starts the client has not loaded a map, because which map it
+         loads is whichever table the player picks. */
+      #menu {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        overflow: auto;
+        background:
+          radial-gradient(120% 90% at 50% -20%, #16202e 0%, rgba(11, 14, 19, 0) 70%),
+          var(--bg);
+        display: grid;
+        place-items: start center;
+        padding: 40px 16px;
+      }
+      body.in-menu #solatel-canvas { visibility: hidden; }
+
+      .menu-shell {
+        width: min(100%, 820px);
+        display: grid;
+        gap: 18px;
+        align-content: start;
+      }
+
+      .menu-shell header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .menu-shell .brand {
+        font-size: 26px;
+        letter-spacing: 0.34em;
+        font-weight: 600;
+      }
+      #purse { display: flex; align-items: baseline; gap: 8px; }
+      #purse .amount { font-size: 20px; font-weight: 600; color: #9fe8b4; }
+      #purse .caption {
+        font-size: 11px;
+        color: var(--dim);
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+      }
+
+      #menu-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+      #menu-tabs button {
+        font: inherit;
+        font-size: 13px;
+        padding: 8px 16px;
+        border-radius: 8px;
+        color: var(--dim);
+        background: rgba(190, 210, 240, 0.06);
+        border: 1px solid rgba(190, 210, 240, 0.14);
+        cursor: pointer;
+        text-transform: lowercase;
+      }
+      #menu-tabs button:hover { color: #eaf1fb; }
+      #menu-tabs button.on {
+        color: #06210f;
+        background: #9fe8b4;
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+
+      .pane {
+        display: grid;
+        gap: 10px;
+        padding: 20px;
+        border-radius: 12px;
+        background: rgba(10, 14, 20, 0.7);
+        border: 1px solid rgba(190, 210, 240, 0.14);
+      }
+      .pane .label {
+        font-size: 11px;
+        color: var(--dim);
+        text-transform: uppercase;
+        letter-spacing: 1.3px;
+      }
+      .pane .big { font-size: 34px; font-weight: 600; color: #9fe8b4; }
+
+      #menu-result {
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(60, 16, 16, 0.5);
+        border: 1px solid rgba(255, 107, 94, 0.35);
+        font-size: 14px;
+        color: var(--ink);
+      }
+      #menu-result .who { color: var(--bad); }
+
+      /* Maps and tables are the same shape of card: a big name, what it is
+         worth, and how busy it is. */
+      #menu-maps,
+      #menu-tables {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 8px;
+      }
+      .map,
+      .table {
+        display: grid;
+        gap: 4px;
+        font: inherit;
+        text-align: center;
+        padding: 14px 10px;
+        border-radius: 10px;
+        color: var(--ink);
+        background: rgba(190, 210, 240, 0.06);
+        border: 1px solid rgba(190, 210, 240, 0.16);
+        cursor: pointer;
+      }
+      .map:hover,
+      .table:hover {
+        background: rgba(159, 232, 180, 0.14);
+        border-color: rgba(159, 232, 180, 0.45);
+      }
+      .map.on {
+        background: rgba(120, 170, 255, 0.18);
+        border-color: rgba(120, 170, 255, 0.55);
+      }
+      .map .name { font-size: 19px; font-weight: 600; text-transform: capitalize; }
+      .map .seats { font-size: 12px; color: var(--ink); }
+      .table .stake { font-size: 24px; font-weight: 600; color: #9fe8b4; }
+      .table .pays { font-size: 12px; }
+      .map .busy,
+      .table .busy { font-size: 11px; color: var(--dim); }
+
+      /* ---- the wallet and the account -------------------------------- */
+      #wallet-note { font-size: 13px; color: var(--dim); min-height: 1.3em; }
+      #wallet-note.warn { color: var(--bad); }
+      #wallet-on { display: grid; gap: 14px; }
+      #wallet-network {
+        font-size: 12px;
+        color: var(--dim);
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(255, 196, 80, 0.08);
+        border: 1px solid rgba(255, 196, 80, 0.3);
+      }
+      #wallet-network b { color: #ffc450; text-transform: uppercase; letter-spacing: 1px; }
+      .wallet-block {
+        display: grid;
+        gap: 8px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(190, 210, 240, 0.1);
+        min-width: 0;
+      }
+      .wallet-block .field {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .wallet-block .field > span { color: var(--dim); }
+      .wallet-block code {
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+        color: var(--ink);
+        background: rgba(190, 210, 240, 0.06);
+        border-radius: 6px;
+        padding: 6px 8px;
+        overflow-wrap: anywhere;
+        min-width: 0;
+      }
+      .wallet-block code.block { display: block; }
+      .wallet-block code.secret { color: var(--dim); font-style: italic; }
+      .wallet-block .fine { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.5; }
+      .wallet-block .fine b { color: var(--ink); }
+      .wallet-block a { color: #9fe8b4; }
+      .wallet-block button,
+      #menu-status #play-here {
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        color: var(--ink);
+        background: rgba(190, 210, 240, 0.08);
+        border: 1px solid rgba(190, 210, 240, 0.2);
+        cursor: pointer;
+      }
+      .wallet-block button:hover { border-color: rgba(159, 232, 180, 0.5); }
+      .wallet-block button[type='submit'] {
+        justify-self: start;
+        font-size: 14px;
+        padding: 10px 20px;
+        color: #06210f;
+        background: #9fe8b4;
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      .wallet-block button:disabled,
+      .wallet-block input:disabled { opacity: 0.45; cursor: not-allowed; }
+      #withdraw-form { display: grid; gap: 10px; }
+      #withdraw-form label,
+      form.inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: var(--dim);
+      }
+      #withdraw-form label { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; }
+      .wallet-block input {
+        font: 13px ui-monospace, SFMono-Regular, Consolas, monospace;
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(190, 210, 240, 0.2);
+        border-radius: 6px;
+        padding: 8px 10px;
+        min-width: 0;
+      }
+      form.inline input { flex: 1 1 240px; }
+      .with-unit { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .with-unit input { flex: 1; }
+      #wallet-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+      #wallet-history .in b { color: #9fe8b4; }
+      #wallet-history .out.returned b { color: var(--bad); }
+      #wallet-history .dim { color: var(--dim); }
+      @media (max-width: 560px) {
+        .wallet-block .field,
+        #withdraw-form label { grid-template-columns: minmax(0, 1fr) auto; }
+        .wallet-block .field > span,
+        #withdraw-form label { grid-column: 1 / -1; }
+      }
+
+      #menu-status {
+        font-size: 13px;
+        color: var(--dim);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      #menu-status b { color: var(--ink); font-weight: 600; }
+      #menu-status .warn { color: var(--bad); }
+      #menu-status #leave-queue {
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 12px;
+        border-radius: 6px;
+        color: var(--dim);
+        background: rgba(190, 210, 240, 0.08);
+        border: 1px solid rgba(190, 210, 240, 0.18);
+        cursor: pointer;
+      }
+      #menu-status #leave-queue:hover { color: #eaf1fb; }
+
+      /* The settings live in the menu now, so they are a plain block rather
+         than a panel floating over the weapon. */
+      #menu-profile label,
+      #settings label {
+        display: grid;
+        grid-template-columns: 120px 140px 1fr;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--dim);
+        padding: 4px 0;
+      }
+      #settings label.check input { width: auto; justify-self: start; }
+      #menu-profile input[type='text'] { width: 140px; }
+
+      .hidden { display: none !important; }
+
+      /* Anything that describes a match, while the player is not in one. */
+      .out-of-match { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <canvas id="solatel-canvas"></canvas>
+    <div id="hud"></div>
+    <div id="menu" class="hidden"></div>
+
+    <div id="boot">
+      <h1>SOLATEL</h1>
+      <div id="boot-status">starting&hellip;</div>
+    </div>
+
+    <script type="module" src="solatel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "solatel-protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+# Pinned to the same minor as bevy_math 0.19 so that `Vec3` is literally the
+# same type on both sides. A different glam major would compile but force
+# conversions at every client/server boundary.
+glam = { version = "0.32", features = ["serde"] }

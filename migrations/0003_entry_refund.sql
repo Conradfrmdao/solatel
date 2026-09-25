@@ -1,0 +1,16 @@
+-- no-transaction
+--
+-- A survivor gets their entry fee back.
+--
+-- An entry fee buys one life in one match. A kill moves it to the killer and
+-- a forfeit moves it to the platform, but a player who is still standing when
+-- the clock runs out has had neither happen to them: nobody won their dollar,
+-- so they keep it. Without a kind of its own that would have to be posted as
+-- an `adjustment`, which is the kind reserved for somebody correcting the
+-- books by hand and which requires a written reason - and a refund that
+-- happens at the end of every match is not a correction.
+--
+-- `ALTER TYPE ... ADD VALUE` cannot run inside a transaction block, hence the
+-- `-- no-transaction` directive above. It is safe to replay: the `IF NOT
+-- EXISTS` makes a second run a no-op rather than an error.
+ALTER TYPE ledger_transaction_kind ADD VALUE IF NOT EXISTS 'entry_refund';

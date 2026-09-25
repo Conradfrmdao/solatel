@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/solatel-protocol",
+    "crates/solatel-server",
+    "crates/solatel-sim-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+solatel-protocol = { path = "crates/solatel-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+anyhow = "1"
+thiserror = "2"
+
+# Release builds: the wasm client is downloaded by every player, so size matters.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+
+# Dependencies are rebuilt rarely; optimise them even in dev so the client is
+# playable at dev-build speeds (Bevy is unusably slow with unoptimised deps).
+[profile.dev.package."*"]
+opt-level = 3

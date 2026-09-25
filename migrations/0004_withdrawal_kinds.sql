@@ -1,0 +1,21 @@
+-- no-transaction
+--
+-- A withdrawal is three events in the books, not one.
+--
+--   withdrawal           player_balance -> treasury   when it is asked for
+--   withdrawal_sent      treasury       -> external   once the chain has it
+--   withdrawal_returned  treasury       -> player     if the chain never does
+--
+-- The first step takes the money out of the player's reach *before* anything
+-- is signed, so it cannot be staked or withdrawn a second time while the
+-- transfer is in flight. `treasury` holds it in between; that account is the
+-- sum of every withdrawal not yet final, and is empty when nothing is moving.
+--
+-- The return is its own kind rather than an `adjustment`, because an
+-- adjustment is somebody correcting the books by hand and requires a written
+-- reason, and a transfer that expired before it landed is not a correction.
+--
+-- `ALTER TYPE ... ADD VALUE` cannot run inside a transaction block, hence the
+-- directive above, and `IF NOT EXISTS` makes a replay a no-op.
+ALTER TYPE ledger_transaction_kind ADD VALUE IF NOT EXISTS 'withdrawal_sent';
+ALTER TYPE ledger_transaction_kind ADD VALUE IF NOT EXISTS 'withdrawal_returned';
