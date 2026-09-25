@@ -15,6 +15,17 @@ mount, because Rust build directories are unusably slow over a Windows bind
 mount. Build outputs that matter are written to `web/dist`, which is on the
 mount and visible from the host.
 
+**Claude Code on the web is the exception.** That container is Linux with
+Rust, Node and Postgres installed natively and no Docker daemon, so `./x`
+does not work there and the tools run directly: `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`bash scripts/build-sim.sh`, `npm --prefix client run build`,
+`bash scripts/copy-assets.sh`, `cargo run -p solatel-server`.
+`.claude/hooks/session-start.sh` installs what is missing and starts a local
+Postgres (`postgres://solatel:solatel@localhost:5432/solatel`, exported as
+`DATABASE_URL` unless the environment sets one). It cannot reach Neon: its
+network passes web traffic only, and a Postgres connection is not.
+
 ## Editing files on this machine
 
 Two Windows defaults have already corrupted files in this repo:
@@ -150,8 +161,8 @@ not use the same corner every time. The shuffle takes its randomness from the
 caller: the simulation runs on the server *and*, compiled to wasm, in every
 client, so a function that reached for the clock would differ between them.
 
-The client follows its match. `selectMap` now calls `map::switch` rather than
-`map::select`, and it is called **between matches only** - a match is a fresh
+The client follows its match. `selectMap` calls `map::switch`, and it is
+called **between matches only** - a match is a fresh
 start with no world state to carry across, so there is nothing for a changed
 table to contradict. Doing it mid-match would put a player's prediction on
 different ground from the server's, which is the one disagreement this whole
@@ -322,6 +333,102 @@ route a stake can take:
 
 **Solana stays on devnet** until Conrad explicitly says otherwise. Nothing in
 this repo should be able to move mainnet funds by accident.
+
+## Accounts
+
+`crates/solatel-server/src/account.rs`, migration 0005. A balance hangs off a
+`PlayerId`, and that id used to last as long as the tab did - harmless while
+every dollar was a development grant, and a lost deposit the first time
+somebody closed a tab. So a browser holds an **account key**.
+
+- **32 random bytes, base58, in `localStorage`** (`solatel.account`). Handed
+  over in the `Welcome` only when the account is made; the database keeps
+  only its SHA-256 (`players.account_key_hash`), so the server cannot send it
+  again and a copy of the database is not a copy of everybody's wallet. A
+  plain hash, not a slow one: this is 256 random bits, not a password.
+- **Signed in before the lobby hears of the connection.** `ws.rs` resolves
+  the `Hello`'s `account` to a `PlayerId` in the connection's own task,
+  because it is a database round trip and the lobby's loop never waits on
+  one. A missing or unknown key is a new account.
+- **The account says who; the resume token says which body.** Local storage
+  and shared by every tab, against session storage and one per tab. A token
+  is honoured only for its own account.
+- **A second tab on one account takes the player over.** The first is sent
+  `Rejected` with `TAKEN_OVER` and **stops reconnecting** - it is *parked*,
+  and the menu says "you are playing in another tab" with a *play here
+  instead* button. Without the park the two tabs would sign in over each
+  other every couple of seconds, passing one player back and forth.
+- The profile pane shows the player id and, when asked, the key, with a
+  warning; and takes a saved key to sign in with.
+
+It is the weakest part of the wallet on purpose and for now: lose the key and
+the balance goes with it. The answer is signing in with the Solana wallet the
+money came from, which is what `players.solana_pubkey` is waiting for.
+
+`client/menu.mjs` checks the lot in a real browser: a closed tab comes back as
+the same player, and a second tab takes over while the first stays put.
+
+## The wallet
+
+`wallet.rs`, `solana.rs`, `ledger.rs`, migrations 0004 and 0005. Playing never
+touches a chain; money crosses it exactly twice, in and out. **Devnet only**:
+`solana::Cluster::devnet()` is the only cluster there is.
+
+**The rate is configuration, `SOLATEL_SOL_USD`, and nothing reads a market.**
+That was Conrad's choice: on devnet the SOL is free and the rate only has to
+be deterministic, and on a real network it means we eat the difference from
+the real price. There is no default, because a guessed price is a guess about
+what somebody's deposit is worth; the server refuses to start with the
+treasury key and no rate. Both conversions **round down** - a deposit is never
+credited for more than arrived, a withdrawal never sends more than was taken.
+Plisio replaces this rail for real money.
+
+**In: one treasury address, and the player id as the memo.** A watcher polls
+the treasury's *finalized* history every five seconds, pages back until it
+reaches a signature it has already judged, and judges each new one exactly
+once into `treasury_receipts`: `credited`, `unmatched` (the memo names
+nobody), `too_small` or `not_incoming`. A credit posts `external -> player`
+under `deposit:<signature>`, the chain's own name for the event, in the same
+database transaction as the receipt - so a transfer seen twice is credited
+once. The memo parser tolerates text around the UUID. Most wallets have no
+memo box, so `./x pay <memo> <sol>` sends a test deposit from
+`SOLATEL_DEV_PAYER_KEY`.
+
+**Out: three ledger steps, never one.**
+
+1. *Requested*: `player -> treasury` under `withdraw:<id>`, on the ledger's
+   sequential queue, so it cannot race a buy-in. The money is out of the
+   player's reach before anything is signed.
+2. *Sent*: the wallet loop signs it and **records the signature before
+   sending**. A signature is a transaction's id, so a transfer on record can
+   be sent again, or waited out, and never paid twice.
+3. *Final*: `treasury -> external` (`withdrawn:<id>`, `withdrawal_sent`). If
+   it failed, or expired past its last valid block height plus 32, the money
+   goes back: `treasury -> player` (`withdraw-returned:<id>`,
+   `withdrawal_returned`), with the reason.
+
+Checked before the ledger sees a request: at least `MIN_WITHDRAWAL` ($5); a
+base58 address on the ed25519 curve, which is what a wallet is; not the
+treasury; at least the rent-exempt minimum; five seconds since the player's
+last request; and **refused while `SOLATEL_DEV_GRANT` is set**, because
+development money can be played with and must not leave as SOL. The treasury
+keeps its own rent-exempt minimum plus the fee, and a withdrawal it cannot
+cover is returned with a reason.
+
+Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
+Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms. The
+menu's wallet pane states the rate and shows what the server says it is
+sending; it never converts an amount itself. `/health` has a `wallet` block -
+the treasury against what is owed - which is an operator's number, not a
+reconciliation.
+
+**A player's wallet is read in one statement** (`read_wallet`): the account
+made if new, the balance and the last few withdrawals. Every arrival asks for
+it on the one ledger queue, and as five statements it held that queue for
+five to seven seconds a player against a database half a second away -
+enough for thirteen arrivals to keep a match's buy-in waiting past
+`FORMING_TIMEOUT` until the match dissolved. Every statement costs two or
+three round trips; count them before adding one to that queue.
 
 ## Protocol changes
 
@@ -645,8 +752,8 @@ stays where it was for `RESUME_WINDOW` — standing still, visible, and entirely
 shootable — and is retired only when the window closes. Removing them instead
 would make closing the tab the cheapest escape in the game, and a way to walk
 out of a fight without paying for the life you were about to lose. When the
-window does close, the life is forfeited - the same settlement a fall gets,
-and not a refund.
+window does close, the stake settles as an abandon - the reward back to the
+player, the rake to us, the same settlement a fall gets - and not a refund.
 Their held inputs are cleared on the way out, so a body whose owner
 disconnected mid-sprint stands where it was rather than walking off a roof.
 
@@ -679,7 +786,9 @@ underneath them.
 
 A token the server does not recognise costs the client nothing: it simply
 joins as a new player. That is what makes it safe for the client to always
-send whatever it happens to have.
+send whatever it happens to have. A token is honoured **only for the account
+it belongs to** (see *Accounts*), so holding somebody's token does not make a
+connection them.
 
 It lives in `sessionStorage`, not `localStorage`, and the difference is the
 design. Session storage is per tab and survives a reload, which is exactly the
@@ -687,12 +796,20 @@ set of events a player expects to come back from. Local storage is shared by
 every tab on the origin, so two tabs open on the game would each present the
 same token and fight over one body.
 
+**A reloaded page is told which match it is in.** It knows nothing on arrival
+- not the match, not the map - and without that it discards every snapshot as
+a straggler and sits on the menu while its body stands in the match being
+shot. So a player taken back mid-match is sent `MatchStarted` again, right
+behind the `Welcome`. That broke once when the menu came first, and
+`coming_back_mid_match_is_being_told_which_match_and_which_map` pins it.
+
 `client/resume.mjs` is the end-to-end check, and it is not redundant with the
 Rust tests: those cover which tokens are honoured, but they cannot cover
-whether a real browser keeps one across a real page load. It connects, walks,
-reloads, and asserts the same player id came back within a metre or two of
-where it left — the tolerance is not zero because gravity still applies to the
-body while the page is loading.
+whether a real browser keeps one across a real page load. It queues into a
+match, walks, reloads, and asserts the same player came back into the same
+match on the same map, within a metre or two of where it left — the tolerance
+is not zero because gravity still applies to the body while the page is
+loading.
 
 ## Shooting, and what it is worth
 
@@ -757,8 +874,6 @@ tested *before* control characters and that order matters: a tab and a newline
 are both, and dropping them outright turns "big⇥red" into "bigred" rather than
 the two words somebody typed. Nothing is ever keyed on a name — anything that
 moved money by name would be paying whoever typed the name.
-
-## When aim stops responding
 
 ## When aim stops responding
 
