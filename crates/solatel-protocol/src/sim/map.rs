@@ -6,9 +6,10 @@
 //! that only one side believes in.
 //!
 //! Two are built: `arena`, the thirty-metre deathmatch box, and `yard`, a
-//! much larger open map. One is chosen at startup with `SOLATEL_MAP` and named
-//! in the handshake, so the client draws the model the server is colliding
-//! against rather than whichever one it happened to cache.
+//! much larger open map. The server runs every map at once - each match holds
+//! its own `&'static Map` - and `MatchStarted` names the ground, so the client
+//! draws the model the server is colliding against rather than whichever one
+//! it happened to cache.
 //!
 //! # Where these numbers come from
 //!
@@ -40554,16 +40555,12 @@ pub fn by_name(name: &str) -> Option<&'static Map> {
     MAPS.iter().copied().find(|map| map.name == name)
 }
 
-/// The map this process is playing, as an index into `MAPS`.
+/// The map the browser client is predicting against, as an index into `MAPS`.
 ///
-/// Chosen once, at startup on the server and from the handshake on the client.
-/// The client predicts against this table and the server decides against it,
-/// so a map that changed underneath either of them mid-match would be a player
-/// walking through a wall the other side still believes in.
-///
-/// `select` therefore refuses to change it, and is what both sides call.
-/// `switch` exists for the server alone and is the only way it can change -
-/// see there for what has to be true first.
+/// The client's alone. The server's lobby never reads it: several matches run there at
+/// once on different ground, and each holds its own map. A client is only ever
+/// in one match, so it has one active map, set by `switch` from the map named
+/// in `MatchStarted`.
 static ACTIVE: AtomicUsize = AtomicUsize::new(UNSET);
 
 /// No map chosen yet, so `active()` answers with the arena.
@@ -40573,33 +40570,13 @@ fn index_of(name: &str) -> Option<usize> {
     MAPS.iter().position(|map| map.name == name)
 }
 
-/// Commits this process to a map, or confirms it is already on that one.
+/// Points the client's prediction at a map. Returns false, and changes
+/// nothing, for a map this build does not have.
 ///
-/// Returns false only for a map this build does not have, or for an attempt to
-/// change to a *different* map once one is chosen. Asking again for the map
-/// already in use succeeds, and has to: the client calls this from every
-/// handshake, and it reconnects on its own whenever the server restarts -
-/// which during tuning is constantly. Treating the second handshake as a
-/// refusal would tell the player their client has no such map and then retry
-/// forever.
-pub fn select(name: &str) -> bool {
-    let Some(index) = index_of(name) else {
-        return false;
-    };
-    match ACTIVE.compare_exchange(UNSET, index, Ordering::Relaxed, Ordering::Relaxed) {
-        Ok(_) => true,
-        // Already chosen. Same map, fine; different map, refuse.
-        Err(current) => current == index,
-    }
-}
-
-/// Changes the map out from under everything. Server only.
-///
-/// This is the one thing `select` will not do, and it is safe here for exactly
-/// one reason: the caller drops every connected client immediately afterwards
-/// with an instruction to reload. A reloaded client is a fresh process that
-/// calls `select` for itself, so no client ever runs a tick against a table it
-/// did not choose. Call it without doing that and the invariant is gone.
+/// Called **between matches only**. A match is a fresh start with no world
+/// state to carry across, so there is nothing for the new table to contradict;
+/// switching mid-match would put the player's prediction on different ground
+/// from the server's, and it is the caller's job not to.
 pub fn switch(name: &str) -> bool {
     match index_of(name) {
         Some(index) => {
@@ -41094,23 +41071,14 @@ mod tests {
     }
 
     #[test]
-    fn choosing_the_same_map_twice_is_not_an_error() {
-        // The client calls `select` from every handshake and reconnects by
-        // itself, so the second call is the normal case, not a mistake. It
-        // used to return false there, which the client reports as "this build
-        // has no such map" - a client that cannot survive a server restart.
-        //
-        // The arena is what `active()` falls back to, so this test picks the
-        // other one: choosing arena would pass whether or not `select` did
-        // anything at all.
-        assert!(select("yard"), "first choice should be accepted");
-        assert!(
-            select("yard"),
-            "choosing the same map again should be accepted"
-        );
-        assert!(!select("arena"), "changing map mid-session must be refused");
-        assert!(!select("no such map"), "an unknown map must be refused");
-        assert_eq!(active().name, "yard");
+    fn switching_to_a_map_this_build_lacks_changes_nothing() {
+        // The client reports a false here as "this build has no such map" and
+        // stays where it was; a half-applied switch would leave it predicting
+        // against a table nobody chose. Only the refusal is tested, so the
+        // shared `ACTIVE` is left as the other tests found it.
+        let before = active().name;
+        assert!(!switch("no such map"), "an unknown map must be refused");
+        assert_eq!(active().name, before);
     }
 
     #[test]

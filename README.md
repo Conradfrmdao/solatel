@@ -44,15 +44,8 @@ each came from and under what licence, and `scripts/prepare-assets.py` records
 what was done to it.
 
 There are two maps. `arena` is a 34 by 66 metre deathmatch box; `yard` is 116
-by 252 metres of open ground. The server picks one at startup:
-
-```
-SOLATEL_MAP=yard ./x server
-```
-
-Add `SOLATEL_MAP_SWITCH=1` and the settings panel grows a map picker, which
-ends the round and reloads everyone onto the other map. It is for looking at
-the maps, not for playing: leave it off anywhere real.
+by 252 metres of open ground. The server runs both at once, and players pick a
+map and a stake from the menu.
 
 Every spawn on a map is reachable on foot from every other, which
 `every_spawn_can_reach_every_other` checks by walking the map with the real

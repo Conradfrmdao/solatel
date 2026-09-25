@@ -425,22 +425,12 @@ bump `MAP_VERSION` in the same commit, which is what tells a stale cached client
 to reload. Each map carries its own `scale` for the same reason: the client
 draws that model at that scale because its brushes were derived at it.
 
-There are two maps, `arena` and `yard`. The server picks one from `SOLATEL_MAP`
-at startup and names it in the handshake; the client calls `select_map` with
-that name before it loads anything. Neither side may choose for itself, and
-`map::select` refuses to change its mind afterwards — a map that changed under
-a running client is a player walking through a wall the server still believes
-in. Asking again for the map already chosen succeeds, because that is what a
-client does every time it reconnects, and the server restarts a lot.
-
-`map::switch` is the one exception and it is the server's alone. It is safe
-only because the caller drops every connected client immediately with a reason
-beginning `the map changed`, which the client treats as an instruction to
-reload; a reloaded client is a fresh process that calls `select` for itself, so
-nobody ever runs a tick against a table they did not choose. It is reachable
-only when the server is started with `SOLATEL_MAP_SWITCH=1`, which puts a map
-picker in the client's settings panel. Leave it off anywhere real: switching
-ends the round for everyone, and a round is people's money.
+There are two maps, `arena` and `yard`, and the server runs both at once: each
+match holds its own map (see *A table is a map and a stake*), and
+`MatchStarted` names it. The client calls `select_map` with that name
+**between matches only**, which points its prediction at that table through
+`map::switch`. `map::active()` is the client's one map; the lobby never reads
+it. There is no `SOLATEL_MAP`, no `map::select` and no map picker any more.
 
 Tests run over every map in `MAPS`. Two of them pin the arena on purpose —
 what they assert about its two staircases is true of those specifically.
