@@ -418,6 +418,120 @@
       .table .pays { font-size: 12px; }
       .map .busy,
       .table .busy { font-size: 11px; color: var(--dim); }
+      .map .blurb { font-size: 11px; color: var(--dim); }
+      .table .caption {
+        font-size: 10px;
+        color: var(--dim);
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+      }
+      .table:hover .stake { color: #c3f5d0; }
+
+      .menu-shell .tagline {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--dim);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      /* The rules, stated before anybody pays. */
+      .rules {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 8px;
+      }
+      .rules > div {
+        display: grid;
+        gap: 4px;
+        align-content: start;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: rgba(190, 210, 240, 0.04);
+        border: 1px solid rgba(190, 210, 240, 0.1);
+        font-size: 12px;
+        color: var(--dim);
+        line-height: 1.45;
+      }
+      .rules b { color: var(--ink); font-size: 13px; }
+
+      .keys { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--dim); }
+      .keys span { display: inline-flex; align-items: center; gap: 4px; }
+      kbd {
+        font: inherit;
+        font-size: 11px;
+        color: var(--ink);
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: rgba(190, 210, 240, 0.08);
+        border: 1px solid rgba(190, 210, 240, 0.22);
+        border-bottom-width: 2px;
+      }
+
+      /* Mouse against touchpad, said plainly: a touchpad player is at a real
+         disadvantage in a game that pays for aim. */
+      .devices {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 8px;
+      }
+      .device {
+        display: grid;
+        gap: 5px;
+        align-content: start;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(190, 210, 240, 0.12);
+        background: rgba(190, 210, 240, 0.04);
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--dim);
+      }
+      .device.best { border-color: rgba(159, 232, 180, 0.4); background: rgba(159, 232, 180, 0.06); }
+      .device > b { color: var(--ink); font-size: 13px; }
+      .device em {
+        font-style: normal;
+        font-size: 10px;
+        margin-left: 6px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: #06210f;
+        background: #9fe8b4;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+      }
+      .device .pro::before { content: '+ '; color: #9fe8b4; }
+      .device .con::before { content: '\2212  '; color: var(--bad); }
+      .device .con b { color: var(--ink); }
+
+      /* Nothing here works on a phone, and it is kinder to say so. */
+      .needs-keyboard {
+        display: none;
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        color: #ffd28a;
+        background: rgba(255, 196, 80, 0.08);
+        border: 1px solid rgba(255, 196, 80, 0.3);
+      }
+      @media (hover: none) and (pointer: coarse) {
+        .needs-keyboard { display: block; }
+      }
+
+      /* Form controls in the menu's colours rather than the browser's. */
+      #menu input[type='range'],
+      #menu input[type='checkbox'] { accent-color: #9fe8b4; }
+      #menu-profile input[type='text'] {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(190, 210, 240, 0.2);
+        border-radius: 6px;
+        padding: 6px 8px;
+      }
+      #menu-status:empty { display: none; }
 
       /* ---- the wallet and the account -------------------------------- */
       #wallet-note { font-size: 13px; color: var(--dim); min-height: 1.3em; }
