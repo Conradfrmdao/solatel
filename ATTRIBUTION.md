@@ -91,27 +91,23 @@ map. Until then it is fine for development and must not ship.
 
 ## Character — `assets/characters/soldier.glb`
 
-> This work is based on ["Low Poly Soldier -Free"](https://sketchfab.com/3d-models/low-poly-soldier-free-739772a9b0f14feeb4a4f1b45dadf4e3)
-> by [manoeldarochadeoliveira](https://sketchfab.com/manoeldarochadeoliveira)
-> licensed under [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/).
+"Ch15" and the animations "Rifle Idle", "Rifle Run", "Firing Rifle" and
+"Rifle Death", from [Adobe Mixamo](https://www.mixamo.com), downloaded by Conrad.
 
-Commercial use allowed, author must be credited. CC-BY-4.0 also requires that
-changes be stated, and two meshes were removed by `scripts/prepare-assets.py`:
+Mixamo's terms: the characters and animations may be used royalty-free in
+personal and commercial projects, games included, with no attribution
+required; they may not be redistributed as raw files or as asset packs. So the
+downloads are kept out of this repository, which is public, and only the
+built game file is committed.
 
-- `holster_soldier_0`, which is broken in the source file — its geometry is
-  authored about 6.5 m below the body and weighted to the right thigh bone, so
-  in game it is a slab swinging around under the player's feet.
-- `hand_knife_soldier_0`, a knife in the hand, which clashes with the rifle
-  viewmodel.
+`scripts/build-soldier.sh` records everything done to them: converted from FBX,
+textures resized to 1024 px and re-encoded as WebP, the four clips copied onto
+the character's skeleton, root motion removed from idle, run and fire, and the
+mesh simplified to 34k triangles. The terms are also written into the file's
+`asset.extras`, where `scripts/asset-licence.py` reports them.
 
-Nothing else was altered in the file: the skeleton, the five animation clips
-and the remaining geometry are the author's, untouched.
-
-**In game, the author's geometry is no longer drawn.** `client/src/soldier.js`
-removes every mesh from the loaded model at runtime and draws Solatel's own
-generated tactical kit in its place, skinned to the author's skeleton and
-driven by the author's animation clips. The skeleton and clips are still this
-work, so the credit above still applies.
+This replaces "Low Poly Soldier -Free" by manoeldarochadeoliveira (CC-BY-4.0),
+which is no longer used anywhere in the game.
 
 ## Weapon — `assets/weapons/rifle.glb`
 

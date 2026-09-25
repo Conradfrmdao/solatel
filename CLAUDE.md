@@ -521,46 +521,51 @@ sound for the echo of its own shot. The server still decides every hit.
 
 ### Other players
 
-**The soldier is generated.** `soldier.js` throws away the model's own skin at
-load and builds tactical kit in its place - helmet with night vision and a
-headset, balaclava and goggles, plate carrier with magazine pouches and a
-radio, camouflage uniform from a canvas-drawn pattern, gloves, knee pads,
-boots - out of boxes, capsules and spheres placed relative to the rig's
-joints. Every piece is weighted to the bone it moves with (the far end of
-each limb half onto the next, so elbows and knees bend the sleeve), and the
-lot is merged into one skinned mesh bound to the original skeleton: one draw
-call per player, and the clips, IK and aim lean drive it unchanged. The rig
-and clips are still the downloaded model's, so `ATTRIBUTION.md` still credits
-it. Loaded bone names have their dots stripped (`fingers_L.001` arrives as
-`fingers_L001`); look them up that way.
+**The soldier is a Mixamo character**, "Ch15" - a special-forces operator in
+urban digital camo, helmet with night vision, balaclava, plate carrier - with
+four of Mixamo's rifle clips: idle, run, fire and death.
+`scripts/build-soldier.sh` builds `assets/characters/soldier.glb` from the raw
+downloads: FBX to glTF, 4096 px textures down to 1024 px WebP (98 MB to 2.8),
+the clips copied onto the character's bones by name, root motion taken out of
+idle, run and fire so the soldier runs on the spot the server puts him, and
+the mesh simplified from 46k triangles to 34k. The raw downloads are **not in
+the repository and must not be**: it is public, and Mixamo's terms allow the
+assets inside a game but not as redistributed raw files. Mixamo bone names
+lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
 
-`remotes.js` layers everything the clips lack on top of them - the clips are
-idle, walk, run and jump with the arms swinging and nothing in the hands:
+`remotes.js` splits each clip at load into legs (hips down) and upper body
+(spine up):
 
-- **Legs** turn up to 70 degrees toward the way the player moves, and the
-  walk plays backwards when backing off; the spine turns back so the chest
-  faces the aim.
-- **The rifle is not in a hand.** It sits in the right shoulder pocket -
-  following the shoulder joint as posed each frame - in a frame that turns
-  with the player's yaw and pitch, so it points where they look, and both
-  arms are bent onto it by analytic two-bone IK. The chest is turned
-  into a bladed stance (`STANCE_TURN`), because at 0.47 m the rig's arms
-  cannot otherwise reach both ends of a 0.84 m rifle.
-- The torso and head lean with the pitch; shots kick the rifle and flash its
-  muzzle; landing dips the hips; death falls the body before it goes.
-- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth, and
-  beyond 50 m the IK is skipped.
+- **Legs** are idle or run by speed - a walk is the run, slower - turned up
+  to 70 degrees toward the way the player moves, with the run played
+  backwards when backing off.
+- **Upper body** holds the shouldered pose from the fire clip's first frame,
+  with a little of the run's arm swing at a sprint; the fire clip plays over
+  it on every shot the server reports.
+- **Aim is a constraint, not a lean.** After the clips pose the body, the
+  line from the right palm to the left is measured and the spine is turned
+  by exactly the rotation that takes it onto the player's yaw and pitch,
+  shared over three spine bones. That also undoes the leg turn for strafing.
+  An earlier version leaned the spine by the pitch around a fixed axis; on
+  this rig the clip's hands point 55 degrees off the hips, and the lean bent
+  him sideways - measure the rifle against the aim, do not eyeball it.
+- **The rifle is not parented to a bone.** Each frame it is put in the right
+  palm and laid along the aim, so it points exactly where the player looks
+  and the left hand is on it.
+- Death plays the death clip once and leaves the body where it fell for five
+  seconds; landing dips the hips; shots flash the muzzle.
+- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth.
 
 The rifle is a clone of the viewmodel's, which carries that rig's offset and
-scale. Both are reset on the copy - inheriting them is what made every other
-player hold a toy.
+scale. Both are reset on the copy - inheriting them is what once made every
+other player hold a toy.
 
 ## Assets
 
 Runtime models live in `assets/` and are copied into `web/dist/assets` by
 `./x client`. They are downloaded by every player, so size is a gameplay
 number. A player fetches only the map being played, so the budget is per map,
-not for the folder: arena is 3.3 MB and yard 11 MB, against 1.6 MB of soldier
+not for the folder: arena is 3.3 MB and yard 11 MB, against 2.5 MB of soldier
 and 0.1 MB of rifle either way. The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.

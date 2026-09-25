@@ -40,10 +40,12 @@ per kill. Rendering, input, assets and everything else are ordinary JavaScript.
 
 ## The maps and the models
 
-The client draws three models from `assets/`: a soldier for other players, a
-rifle for your own hands, and the map itself. `ATTRIBUTION.md` records where
-each came from and under what licence, and `scripts/prepare-assets.py` records
-what was done to it.
+The client draws three models from `assets/`: a soldier for other players - a
+Mixamo special-forces character with rifle animations - a rifle for your own
+hands, with a red-dot sight built in code, and the map itself.
+`ATTRIBUTION.md` records where each came from and under what licence;
+`scripts/prepare-assets.py` and `scripts/build-soldier.sh` record what was done
+to them.
 
 There are two maps. `arena` is a 34 by 66 metre deathmatch box; `yard` is 116
 by 252 metres of open ground. The server runs both at once, and players pick a
