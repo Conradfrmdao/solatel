@@ -37,14 +37,23 @@ changes be stated. They are:
   surfaces at the same depth flicker against each other over the whole
   arena. The grey one is kept. Everything added is Solatel's own work and is
   listed below.
+- `scripts/extend-arena.py` also **repaints the whole model.** Every
+  primitive of the original is given one of Solatel's own materials in place
+  of the original's saturated orange, red and amber - weathered concrete,
+  asphalt, painted plaster, rusty steel, timber - by what the piece is. No
+  vertex or index is changed by this, and the original's materials stay in
+  the file, unused, with each primitive's original material recorded in
+  `asset.extras` so a second run restores it. The weathering itself (stains,
+  panel joints, planks, paint on the ground) is drawn by the client and is
+  not in the file.
 
 The original model is therefore modified, not merely repackaged, and the
 adaptation is offered under the same terms. The two are kept apart in the file
 so the distinction survives: our geometry hangs off a single scene node named
 `solatel_extension`, and the removed triangles are only pointed away from,
 never deleted, with the original accessor recorded in `asset.extras` so a
-second run restores them. Deleting that node and restoring those indices gives
-back the download.
+second run restores them. Deleting that node, restoring those indices and
+putting back the recorded materials gives back the download.
 
 ### What Solatel added to the arena
 
@@ -60,9 +69,8 @@ it; this is the summary.
 - Twelve buildings across the two, each with an interior, four doorways, a
   roof, and an external flight onto that roof; and eighteen pairs of crates
   as cover.
-- All of it made from the original's own materials, chosen by measuring which
-  ones it actually uses, so the new half is the same map rather than a grey
-  estate attached to an orange one.
+- All of it painted from the same palette as the repainted original, so the
+  new halves are the same map rather than an estate attached to it.
 
 None of it is derived from the original model's geometry.
 

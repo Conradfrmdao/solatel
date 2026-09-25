@@ -16,10 +16,17 @@ in the generator - `check-reachable.py` walks the table with the real step
 rules and the routes genuinely are not there - so no amount of tuning the
 voxeliser will produce them. They have to be built.
 
+It also repaints the whole map - see `PALETTE` - which changes which
+material each primitive of the original uses and nothing else. No vertex and
+no index moves, so the collision cannot, and `derive-maps.py arena` producing
+a byte-identical `map.rs` is the proof of that to ask for after any change to
+the palette. A colour change alone needs no `MAP_VERSION` bump.
+
 Idempotent. Everything added goes on the end of each glTF array, and the
 lengths from before are recorded in `asset.extras`, so a second run truncates
 the first run's work away and rebuilds it rather than stacking a second
-bridge on top of the first.
+bridge on top of the first. The same goes for the palette: the original's
+materials are kept, and each repainted primitive's own is recorded.
 
 Authoring is in game metres, the units of `map.rs` and of every measurement
 in the audit scripts, and divided by the map's scale on the way out. The
@@ -30,6 +37,7 @@ cannot afford is a staircase whose risers are secretly 1.6 m.
 import importlib.util
 import json
 import os
+import re
 import struct
 
 import numpy as np
@@ -38,35 +46,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL = os.path.join(ROOT, 'assets', 'maps', 'arena.glb')
 MARKER = 'solatel_extension'
 
-# Materials already in the model, reused rather than invented so the new
-# geometry is lit and coloured like everything around it. The numbers are
-# indices into the file's own material list; the names are what it calls them.
-#
-# Chosen by measuring what the original arena is actually made of, by
-# surface area, rather than by picking whatever sounded like "wall". It is a
-# warm map: red-orange 28%, its ground 16%, deep red 14%, bright orange 13%,
-# near-black 11%, amber 10%. The first version of this district used
-# 'stair', 'barier' and 'material_4' - which are three of the four *least*
-# used materials in the file, at 1.1%, 0.3% and 3.8% - so it came out a grey
-# housing estate bolted onto an orange map. It read as somebody else's
-# building because it was made of somebody else's colours.
-RED = 9         # 'material_9', red-orange - the arena's commonest surface
-DEEP_RED = 3    # 'material_3', deep red
-ORANGE = 6      # 'material_6', bright orange
-AMBER = 0       # 'material', amber
-DARK = 11       # 'material_11', near-black - roofs
-GROUND = 13     # 'plane', the arena's own ground
-
-# What each kind of thing is made of. Treads are warm and light against the
-# dark roofs on purpose: a way up should be visible from across the map.
-STAIR = AMBER
-WALL = RED
-RAIL = DEEP_RED
-ROOF = DARK
+# What each kind of thing we build is made of. These are surface names from
+# `PALETTE` below, not material indices: the materials are appended to the
+# file when it is painted, so their indices are only known at that point and
+# `attach` looks them up then. Treads are light against the dark roofs on
+# purpose - a way up should be visible from across the map.
+STAIR = 'steel_stair'
+WALL = 'concrete'
+RAIL = 'steel'
+ROOF = 'roof_metal'
+GROUND = 'asphalt'
 
 # Walls cycle through these, one per building, so a district reads as a
 # place rather than as the same asset stamped six times.
-BLOCK_WALLS = (RED, DEEP_RED, ORANGE, AMBER)
+BLOCK_WALLS = ('plaster_tan', 'plaster_olive', 'plaster_maroon', 'plaster_sand')
 
 # A player is 1.8 m tall and steps up 0.65 m. Every piece here is built from
 # these, and the rise is well under the limit on purpose: a tread at exactly
@@ -330,8 +323,8 @@ class Parts:
         foot*, and a map whose high ground needs bunny-hopping is the thing
         these audits exist to catch.
         """
-        self.box(x, 0.0, z, x + size, low, z + size, AMBER)
-        self.box(x + size, 0.0, z, x + 2 * size, high, z + size, DEEP_RED)
+        self.box(x, 0.0, z, x + size, low, z + size, 'wood')
+        self.box(x + size, 0.0, z, x + 2 * size, high, z + size, 'crate_olive')
         return self
 
     def arrays(self, scale):
@@ -361,6 +354,13 @@ def strip_previous(js, blob):
     # only pointed away from - so this is exact.
     for mesh, prim, accessor in mark.get('repointed', []):
         js['meshes'][mesh]['primitives'][prim]['indices'] = accessor
+    # And every primitive that was repainted, back onto the material it
+    # came with. The download's own materials are still in the file, ahead
+    # of the ones `paint` appends, so this too is exact.
+    for mesh, prim, material in mark.get('repainted', []):
+        js['meshes'][mesh]['primitives'][prim]['material'] = material
+    if 'materials' in mark:
+        del js['materials'][mark['materials']:]
     scene = js['scenes'][js.get('scene', 0)]
     before = len(scene['nodes'])
     scene['nodes'] = [n for n in scene['nodes'] if n < mark['nodes']]
@@ -369,6 +369,7 @@ def strip_previous(js, blob):
     print(f'  removed the previous extension '
           f'({before - len(scene["nodes"])} root node, '
           f'{len(mark.get("repointed", []))} restored primitive, '
+          f'{len(mark.get("repainted", []))} repainted primitive, '
           f'{len(blob) - mark["bytes"]:,} bytes)')
     return blob[:mark['bytes']]
 
@@ -460,7 +461,7 @@ def retire_triangles(js, blob, mesh_name, doomed, scale):
     return bytes(buffer), repointed, removed
 
 
-def attach(js, blob, parts, scale, before, repointed):
+def attach(js, blob, parts, scale, before, repointed, repainted, surfaces):
     """Append the geometry as one mesh under one node of its own.
 
     One mesh, not one per piece, and that matters: `derive-brushes.classify`
@@ -473,7 +474,9 @@ def attach(js, blob, parts, scale, before, repointed):
     extras[MARKER] = dict(
         before,
         repointed=repointed,
-        what='Geometry authored for Solatel, not part of the original model.',
+        repainted=repainted,
+        what='Geometry authored for Solatel, not part of the original model, '
+             'and the whole map repainted in a palette of our own.',
     )
 
     buffer = bytearray(blob)
@@ -504,7 +507,7 @@ def attach(js, blob, parts, scale, before, repointed):
         primitives.append({
             'attributes': {'POSITION': position},
             'indices': len(js['accessors']) - 1,
-            'material': material,
+            'material': surfaces[material],
         })
 
     js['meshes'].append({'name': MARKER, 'primitives': primitives})
@@ -789,6 +792,218 @@ def build(parts):
     parts.deck(-12.40, 23.60, -10.20, 26.15, 4.85 - SKIN)
 
 
+# The arena's own colours were a toy's: flat orange walls, red-orange, amber
+# and a blue car, every one at full saturation. This is the same map in the
+# colours of a real one - weathered concrete, asphalt, painted plaster, rusty
+# steel, timber - chosen against a reference picture of the map repainted,
+# and applied without moving a vertex.
+#
+# Each entry is a *surface*, named for what the thing is made of. The name is
+# what goes into the file, and it is what the client keys its shading on:
+# `world.js` gives concrete its stains, asphalt its grit and roofs their
+# corrugation by looking the material's name up. So a name here is a promise
+# about how the surface will be drawn, not just a colour.
+#
+# Colours are sRGB, as a person would pick them; glTF stores linear, and
+# `paint` converts. Roughness is how dull the surface is - nothing here is
+# glossy, and a metalness above zero reads as black without an environment
+# map to reflect, so none is used.
+PALETTE = {
+    # Structure.
+    'concrete':       ('#857f73', 0.92),  # perimeter and dividing walls
+    'concrete_dark':  ('#6f6b63', 0.92),  # decks, slabs, the end compounds
+    'concrete_light': ('#a39e92', 0.9),   # barriers
+    'asphalt':        ('#4f4d49', 0.96),  # the ground
+    'silo':           ('#978c78', 0.9),   # the two towers: stained concrete
+    # Buildings.
+    'plaster_tan':    ('#a8966c', 0.9),
+    'plaster_olive':  ('#646a4c', 0.9),
+    'plaster_maroon': ('#6e3029', 0.9),
+    'plaster_sand':   ('#978f7d', 0.9),
+    'roof_metal':     ('#4a4c4e', 0.75),
+    # Steel.
+    'steel':          ('#5b5d5e', 0.7),   # frames, rims, beams
+    'steel_stair':    ('#a48f5d', 0.8),   # every staircase: worn safety paint
+    'container_rust': ('#713628', 0.85),
+    'tank_white':     ('#b1afa6', 0.8),
+    'car_red':        ('#5e2825', 0.6),
+    'car_blue':       ('#2f3b4a', 0.6),
+    'barrel_rust':    ('#7b3b28', 0.75),
+    'barrel_olive':   ('#535b3c', 0.75),
+    'barrel_blue':    ('#3d4b59', 0.75),
+    # Timber and stores.
+    'wood':           ('#8d7450', 0.88),
+    'wood_dark':      ('#6c573e', 0.88),
+    'wood_pallet':    ('#9b8461', 0.9),
+    'crate_olive':    ('#4f5838', 0.85),
+    'crate_rust':     ('#6d3b2b', 0.85),
+    'brick':          ('#7b4a38', 0.92),
+    'sandbag':        ('#8a7f5f', 0.95),
+}
+
+# The download's props by name, where the name alone is not enough to say
+# what the thing is. `Cube` is its author's name for everything from a car to
+# a staircase, so these are looked up by number.
+CUBES = {
+    '': 'concrete',                                  # a free-standing wall
+    '001': 'steel_stair', '002': 'steel_stair',
+    '003': 'concrete_dark', '008': 'concrete_dark', '009': 'concrete_dark',
+    '004': 'concrete_dark', '016': 'concrete_dark',  # the two end compounds
+    '006': 'car_red', '007': 'car_red', '035': 'car_blue',
+    '010': 'concrete', '013': 'concrete',            # pillars
+    '011': 'tank_white', '017': 'tank_white',
+    '014': 'steel', '015': 'steel',                  # beams
+    '019': 'concrete',
+    '020': 'wood_pallet', '021': 'wood_pallet', '024': 'wood_pallet',
+    '034': 'wood_pallet', '026': 'wood_pallet', '027': 'wood_pallet',
+    '028': 'wood_pallet',                            # planks
+    '022': 'concrete', '023': 'concrete', '025': 'concrete',
+    '030': 'concrete', '031': 'concrete', '032': 'concrete',
+    '029': 'concrete_light', '033': 'concrete_light', '036': 'concrete_light',
+}
+
+
+# Paint on the ground, in world metres, as (x0, z0, x1, z1, width, dash
+# period, colour). The client draws them on the asphalt; they are carried on
+# that material's `extras` so the map describes its own markings and the
+# client stays a renderer. A dash period of 0 is a solid line. Laid out
+# around what `east_district` and `west_district` build, so a lane line runs
+# down the middle of a lane and an edge line stops short of a wall.
+YELLOW, WHITE = 0, 1
+MARKINGS = [
+    # Down the lane between the two rows of blocks, each side.
+    (34.5, -36.0, 34.5, 36.0, 0.15, 6.0, YELLOW),
+    (-34.6, -36.0, -34.6, 36.0, 0.15, 6.0, YELLOW),
+    # A kerb line a metre inside the outer walls of both districts.
+    (48.9, -35.6, 48.9, 35.6, 0.12, 0.0, YELLOW),
+    (-48.9, -35.6, -48.9, 35.6, 0.12, 0.0, YELLOW),
+    (20.6, 35.6, 48.9, 35.6, 0.12, 0.0, YELLOW),
+    (20.6, -35.6, 48.9, -35.6, 0.12, 0.0, YELLOW),
+    (-48.9, 35.6, -20.6, 35.6, 0.12, 0.0, YELLOW),
+    (-48.9, -35.6, -20.6, -35.6, 0.12, 0.0, YELLOW),
+] + [
+    # A stop line either side of every gate in the dividing walls.
+    (x, lo, x, hi, 0.3, 0.0, WHITE)
+    for gates, sides in (
+        (((-25.0, -20.0), (-2.5, 2.5), (20.0, 25.0)), (17.6, 20.5)),
+        (((-25.0, -20.0), (-11.0, -6.0), (14.0, 19.0)), (-17.6, -20.5)),
+    )
+    for lo, hi in gates
+    for x in sides
+]
+
+
+def surface_of(name, material, triangles):
+    """What one of the download's primitives is made of.
+
+    By the name its author gave the node, and where that is ambiguous by
+    what else is known about it. Anything this does not recognise is an
+    error rather than a default: a new prop silently painted as concrete is
+    exactly the kind of thing nobody notices until it is in a screenshot.
+    """
+    base, _, part = name.rpartition('_')
+    family, _, number = base.partition('.')
+    n = int(number) if number.isdigit() else 0
+    if family == 'Plane':
+        return 'asphalt'
+    if family == 'floors':
+        return 'concrete'
+    if family == 'room':
+        return 'plaster_olive' if part == '0' else 'concrete_dark'
+    if family == 'up2':
+        return 'concrete_dark'
+    if family in ('Barrel', 'BarrelB'):
+        if part == '1':
+            return 'steel'
+        return {7: 'barrel_blue', 9: 'barrel_olive'}.get(material, 'barrel_rust')
+    if family == 'BigBox':
+        return 'steel' if part == '1' else ('crate_olive', 'crate_rust')[n % 2]
+    if family == 'Box':
+        if triangles <= 12:
+            return 'crate_rust'
+        if part == '1':
+            return 'steel'
+        return ('wood', 'wood', 'wood_dark')[n % 3]
+    if family == 'miniBox':
+        return ('wood', 'wood_dark')[n % 2]
+    if family == 'Cube':
+        if base == 'Cube.005':
+            return 'steel' if part == '1' else 'container_rust'
+        if number in CUBES:
+            return CUBES[number]
+    if family == 'obj':
+        if number in ('048', '049'):
+            return 'silo'
+        if triangles <= 12:
+            return 'concrete'
+        if triangles <= 196:
+            return 'wood_pallet' if material == 0 else 'wood_dark'
+        # Stacks of small blocks, in four colours in the original. Bricks
+        # and sandbags, alternately, so a row of them is not one colour.
+        return ('brick', 'sandbag')[n % 2]
+    raise SystemExit(f'  no surface for {name!r} (material {material}, '
+                     f'{triangles} triangles) - add it to surface_of')
+
+
+def linear(hex_colour):
+    """sRGB '#rrggbb' to the linear floats glTF stores."""
+    out = []
+    for i in (1, 3, 5):
+        c = int(hex_colour[i:i + 2], 16) / 255.0
+        out.append(round(c / 12.92 if c <= 0.04045
+                         else ((c + 0.055) / 1.055) ** 2.4, 5))
+    return out
+
+
+def paint(js):
+    """Give every primitive in the download a surface from `PALETTE`.
+
+    Only the `material` of each primitive changes - not a vertex, not an
+    index - so the collision, which is derived from geometry alone, cannot
+    move. The download's own materials stay in the file, unused, and the
+    palette goes on the end, so `strip_previous` can put every primitive
+    back exactly as it was.
+
+    Returns the surface name to material index table, for the geometry this
+    file adds, and the list of what was changed.
+    """
+    surfaces = {}
+    for name, (colour, roughness) in PALETTE.items():
+        js['materials'].append({
+            'name': name,
+            'pbrMetallicRoughness': {
+                'baseColorFactor': linear(colour) + [1.0],
+                'metallicFactor': 0.0,
+                'roughnessFactor': roughness,
+            },
+            'doubleSided': True,
+        })
+        surfaces[name] = len(js['materials']) - 1
+    js['materials'][surfaces['asphalt']]['extras'] = {
+        'markings': [list(m) for m in MARKINGS]}
+
+    names = {}
+    for node in js['nodes']:
+        if 'mesh' in node:
+            names.setdefault(node['mesh'], set()).add(node.get('name', ''))
+
+    repainted, counts = [], {}
+    for index, mesh in enumerate(js['meshes']):
+        for slot, prim in enumerate(mesh['primitives']):
+            triangles = js['accessors'][prim['indices']]['count'] // 3
+            found = {surface_of(name, prim.get('material'), triangles)
+                     for name in names.get(index, ())}
+            if len(found) != 1:
+                raise SystemExit(f'  mesh {index} is drawn as {found or "nothing"}')
+            surface = found.pop()
+            repainted.append((index, slot, prim.get('material')))
+            prim['material'] = surfaces[surface]
+            counts[surface] = counts.get(surface, 0) + 1
+    print(f'  painted {len(repainted)} primitives in {len(counts)} surfaces: '
+          + ', '.join(f'{k} {v}' for k, v in sorted(counts.items())))
+    return surfaces, repainted
+
+
 def main():
     scale = scale_of('arena')
     print(f'arena, authored in metres at {scale}x')
@@ -802,7 +1017,9 @@ def main():
         'nodes': len(js['nodes']), 'meshes': len(js['meshes']),
         'accessors': len(js['accessors']),
         'bufferViews': len(js['bufferViews']), 'bytes': len(blob),
+        'materials': len(js['materials']),
     }
+    surfaces, repainted = paint(js)
     blob, repointed, removed = retire_triangles(
         js, blob, 'floors_0', redundant_original, scale)
     print(f'  took down {removed} triangles of the original: its east and '
@@ -819,7 +1036,8 @@ def main():
         print(line)
 
     expected = parts.bounds()
-    blob = attach(js, blob, parts, scale, before, repointed)
+    blob = attach(js, blob, parts, scale, before, repointed, repainted,
+                  surfaces)
     size = write_glb(js, blob, MODEL)
     print(f'  {parts.triangles()} triangles added, '
           f'{os.path.relpath(MODEL, ROOT)} is now {size / 1024 / 1024:.2f} MB')

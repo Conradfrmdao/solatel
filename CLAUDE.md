@@ -595,6 +595,23 @@ the end of each glTF array, the lengths from before are in `asset.extras`, and
 nothing is ever deleted — removed triangles are only pointed away from. Run it,
 then `./x maps`, then bump `MAP_VERSION`.
 
+It is also where the arena's **colours** live. `PALETTE` repaints every
+primitive of the original, by what the piece is, in weathered concrete,
+asphalt, plaster, rusty steel and timber, and the geometry it adds is
+painted from the same list. That changes materials and nothing else, so a
+palette change needs no `MAP_VERSION` bump - but prove it: `python
+scripts/derive-maps.py arena` must leave `map.rs` byte-identical. A piece
+`surface_of` does not recognise is an error rather than a default.
+
+The palette's names are a contract with `world.js`, which keys its shading
+on them: `SURFACES` says how each one weathers - rain streaks, formwork
+joints, grime at the foot of a wall, rust, chipped paint, corrugation,
+planks - and the ground's paint comes from `markings` in the asphalt
+material's `extras`, in world metres. All of it is computed from world
+position in the shader, because the maps have no texture coordinates. A
+material with a name `SURFACES` does not list - the whole yard - gets the
+plain grain it always had.
+
 Two rules govern what may be built, both found the hard way and both in that
 file's docstrings. **Nothing may be built over a column whose own obstacle
 reaches 1.75 m**: `obstacle_heights` gives such a column the height of the
