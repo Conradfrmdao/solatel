@@ -11,7 +11,7 @@
 
 import puppeteer from 'puppeteer-core';
 
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const URL = process.env.SOLATEL_URL ?? 'http://localhost:8080/?debug=1&nolock=1';
 
 const at = process.argv.indexOf('--seconds');

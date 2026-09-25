@@ -24,7 +24,7 @@
 
 import puppeteer from 'puppeteer-core';
 
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const URL = process.env.SOLATEL_URL ?? 'http://localhost:8080/?debug=1&nolock=1';
 
 /** How far the player may legitimately have drifted across the reload.
@@ -37,7 +37,9 @@ const DRIFT_TOLERANCE = 1.5;
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--window-size=900,600', '--use-gl=angle', '--use-angle=swiftshader'],
+  // --no-sandbox because a Linux container runs this as root, where
+  // Chromium's sandbox will not start.
+  args: ['--window-size=900,600', '--use-gl=angle', '--use-angle=swiftshader', '--no-sandbox'],
 });
 
 const page = await browser.newPage();
@@ -100,12 +102,23 @@ try {
   await page.evaluate(() => window.solatel.input._keys.add('KeyW'));
   await new Promise((done) => setTimeout(done, 1000));
   await page.evaluate(() => window.solatel.input._keys.delete('KeyW'));
-  await new Promise((done) => setTimeout(done, 300));
-  const moved = await page.evaluate(() => ({
+  // Until the player has come to rest, not for a fixed time. On a slow
+  // renderer - a software GPU draws a frame a second - the client sends its
+  // last few inputs late, and a position read too early is one the server
+  // has not finished walking to, which reads as drift across the reload.
+  const where = () => page.evaluate(() => ({
     x: window.solatel.local.current.x,
     y: window.solatel.local.current.y,
     z: window.solatel.local.current.z,
   }));
+  let moved = await where();
+  for (let tries = 0; tries < 30; tries += 1) {
+    await new Promise((done) => setTimeout(done, 500));
+    const now = await where();
+    const still = Math.hypot(now.x - moved.x, now.z - moved.z) < 0.01;
+    moved = now;
+    if (still) break;
+  }
   const walked = Math.hypot(moved.x - before.x, moved.z - before.z);
   console.log(`walked           : ${walked.toFixed(1)} m from the spawn`);
 
