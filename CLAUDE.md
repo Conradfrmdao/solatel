@@ -496,9 +496,10 @@ sight points in the model's own units, measured off its geometry; the rig is
 pitched until the line between them is level and moved so the front post is
 on the view axis. The world camera narrows by scaling the tangent of its
 half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
-covers the same part of the screen. The weapon's own camera keeps the hip
-angle it was placed for - zooming it with the world would slide the sights
-off centre. The crosshair dims with the sights up and never disappears: it is
+covers the same part of the screen. The weapon's own camera narrows by its
+own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view
+axis, so magnifying about the middle of the screen does not move them. The
+crosshair dims with the sights up and never disappears: it is
 where the shot goes, and on real stakes a player should always see it.
 
 **None of it changes where a shot goes.** Recoil kicks the weapon and rolls

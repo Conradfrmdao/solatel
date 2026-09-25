@@ -45,11 +45,17 @@ export const RIFLE = {
      */
     frontSight: [0.4, -1.41],
     rearSight: [0.465, 0.4],
-    /** How far in front of the eye the rear sight sits, in metres. */
-    eyeRelief: 0.14,
+    /** How far in front of the eye the rear sight sits, in metres. Closer
+     *  makes the front sight's ring bigger on screen. */
+    eyeRelief: 0.09,
     /** How far the view narrows: the tangent of the half-angle is scaled by
      *  this, so 0.8 is a 1.25x zoom. */
     zoom: 0.8,
+    /** The same for the weapon's own view: 0.7 draws the rifle and its
+     *  sights 1.4x larger with the sights up, which is what makes the ring
+     *  read as something to look through rather than a speck. Magnifying
+     *  about the middle of the screen leaves the sights where they are. */
+    weaponZoom: 0.7,
     /** Seconds from hip to sights, and back. */
     duration: 0.18,
     /** How much of the hip's sway, bob and recoil survives into ADS. */

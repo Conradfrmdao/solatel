@@ -112,10 +112,11 @@ export class Viewmodel {
   constructor(config = RIFLE) {
     this.config = config;
     this.scene = new THREE.Scene();
-    // Angle and aspect are set by `setView` from the world camera's *hip*
-    // angle, so the weapon sits in the same perspective as everything else.
-    // It is not narrowed with the sights up: the weapon is placed for this
-    // angle, and zooming it with the world would move the sights off centre.
+    // Angle and aspect are set from the world camera's hip angle, so the
+    // weapon sits in the same perspective as everything else. With the
+    // sights up it narrows by its own factor, `ads.weaponZoom`: the sights
+    // are on the view axis, so magnifying about the middle of the screen
+    // enlarges them without moving them.
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.01, 10);
 
     this.root = new THREE.Group();
@@ -385,6 +386,11 @@ export class Viewmodel {
    */
   get zoom() {
     return 1 - this.aim * (1 - this.config.ads.zoom);
+  }
+
+  /** The same for the weapon's own camera. */
+  get weaponZoom() {
+    return 1 - this.aim * (1 - this.config.ads.weaponZoom);
   }
 
   /** Crosshair opacity for this frame. */

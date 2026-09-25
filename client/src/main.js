@@ -544,7 +544,7 @@ async function boot() {
 
     // The sights narrow the world's view, and turning slows by the same
     // factor so a flick covers the same part of the screen either way. The
-    // weapon's own camera keeps the hip angle: it was placed for it.
+    // weapon's own camera narrows by its own factor, to enlarge the sights.
     // Compared against the camera itself, so a resize or the FOV slider
     // moving with the sights up is caught the same way.
     const zoom = viewmodel.zoom;
@@ -554,6 +554,10 @@ async function boot() {
       camera.updateProjectionMatrix();
     }
     input.lookScale = zoom;
+    const weaponFov = verticalFov(horizontalFov, camera.aspect, viewmodel.weaponZoom);
+    if (Math.abs(weaponFov - viewmodel.camera.fov) > 1e-4) {
+      viewmodel.setView(camera.aspect, weaponFov);
+    }
     hud.setCrosshairOpacity(viewmodel.crosshairOpacity);
 
     // Counters cover the whole frame, not the last pass of it. Three.js
