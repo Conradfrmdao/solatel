@@ -16,10 +16,10 @@
 //!
 //! So money is asked for, not taken: the world sends a [`LedgerRequest`] and
 //! carries on, and the answer comes back later as a `GameCommand`. That
-//! ordering is also what makes the rules honest. **A life is spawned only
-//! after it has been paid for**, never before with a promise to charge later,
-//! because "later" is a window in which a player can be shot while occupying a
-//! life nobody paid for.
+//! ordering is also what makes the rules honest. **Nobody is put on the map
+//! until their stake has been paid**, never before with a promise to charge
+//! later, because "later" is a window in which a player can be shot while
+//! standing in a match nobody paid for.
 //!
 //! # What an idempotency key is for
 //!
@@ -211,8 +211,8 @@ impl LedgerHandle {
 /// The system accounts are created by the migration and never change; a
 /// balance account is created the first time its player is seen and never
 /// changes either. Looking either one up is a database round trip, and
-/// against a managed Postgres the round trips *are* the cost: buying a life
-/// took ten of them and three and a half seconds measured, which is three
+/// against a managed Postgres the round trips *are* the cost: one player's
+/// buy-in took ten of them and three and a half seconds measured, which is three
 /// and a half seconds between a player dying and being allowed back in.
 ///
 /// No balance is cached here, only ids. A balance is the thing that changes.
@@ -1002,11 +1002,11 @@ pub async fn owed(pool: &PgPool) -> Result<MicroUsd> {
     Ok(MicroUsd(micros))
 }
 
-/// Everything currently staked on lives in progress.
+/// Everything currently staked in matches in progress.
 ///
 /// This is the pot, and it is a sum over the ledger rather than a count of
 /// players times the entry fee. Those agree only while every player has
-/// exactly one paid life and nothing has been settled, which stops being true
+/// exactly one stake in and nothing has been settled, which stops being true
 /// the moment somebody dies.
 pub async fn escrow_total(pool: &PgPool) -> Result<MicroUsd> {
     let micros: i64 = sqlx::query_scalar(
@@ -1019,7 +1019,7 @@ pub async fn escrow_total(pool: &PgPool) -> Result<MicroUsd> {
     .await
     .context("reading the pot")?;
     if micros < 0 {
-        bail!("escrow is negative, which means a life was settled twice");
+        bail!("escrow is negative, which means a stake was settled twice");
     }
     Ok(MicroUsd(micros))
 }

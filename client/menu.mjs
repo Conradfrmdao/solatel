@@ -203,7 +203,6 @@ await page.waitForFunction(() => document.body.classList.contains('running'), {
 const entered = await page.evaluate(() => ({
   map: window.solatel.local.mapName,
   menuHidden: document.getElementById('menu').classList.contains('hidden'),
-  brushes: window.solatel.SIM ? window.solatel.world.arena !== null : false,
 }));
 console.log(`>> dropped into ${entered.map}`);
 if (!entered.menuHidden) fail('the menu stayed up over the match');
