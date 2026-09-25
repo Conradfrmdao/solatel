@@ -128,6 +128,11 @@ export class LocalPlayer {
     this.zoneRadius = Infinity;
     /** Milliseconds left in the match, for the clock in the HUD. */
     this.matchRemainingMs = 0;
+    /** Simulation time, in ticks' worth of seconds, for the fire rate. */
+    this.gameTime = 0;
+    this.lastPredictedShot = -Infinity;
+    /** Shots this client expects the server to have fired, not yet shown. */
+    this.predictedShots = 0;
 
     /** Everything staked on this match, in micro-USD, straight from the
      *  server. Null until the first snapshot arrives. */
@@ -206,6 +211,23 @@ export class LocalPlayer {
 
     this.unacked.push(command);
     while (this.unacked.length > MAX_UNACKED) this.unacked.shift();
+
+    // The shot, as far as this player's own hands are concerned. The server
+    // enforces the same interval on the same ticks and decides what the shot
+    // hit; this only lets the kick and the flash happen now rather than a
+    // round trip from now. A predicted shot the server refused costs one
+    // flash that meant nothing.
+    this.gameTime += dt;
+    if (
+      intent.fire &&
+      this.matchId &&
+      !this.eliminated &&
+      this.health > 0 &&
+      this.gameTime - this.lastPredictedShot >= SIM.weaponFireInterval
+    ) {
+      this.lastPredictedShot = this.gameTime;
+      this.predictedShots += 1;
+    }
 
     this.link.send({
       t: 'inputs',
@@ -454,6 +476,13 @@ export class LocalPlayer {
     this.onGround = p.on_ground;
     this.speed = p.speed;
     this.health = p.health;
+  }
+
+  /** Shots fired since this was last asked, once. */
+  takePredictedShots() {
+    const shots = this.predictedShots;
+    this.predictedShots = 0;
+    return shots;
   }
 
   /** How hard the last landing was, in metres per second, once. */

@@ -13,70 +13,42 @@
 // The rest of this is feel, and feel is the product. A weapon that kicks when
 // it fires and lags when you turn gives shooting a physicality a crosshair
 // cannot. None of it is simulation - the server neither knows nor cares where
-// this model is - so all of it can be tuned freely.
+// this model is - so all of it can be tuned freely, and the numbers live in
+// `weapons.js` rather than here.
+//
+// # How a frame's pose is built
+//
+// Layers, added together in this order:
+//
+//   hip <-> sights   the base pose, blended by how far into ADS the player is
+//   sway             the weapon lagging a turn of the view, then settling
+//   idle breath      standing still only
+//   bob              moving on the ground, paced by distance covered
+//   air and landing  a lift while airborne, a dip when coming down
+//   recoil           kick back, up and sideways per shot, recovering
+//
+// Everything but the base pose is scaled down with the sights up, so aiming
+// steadies the weapon. Every layer approaches its target with an exponential
+// that takes `dt`, which is what keeps the feel the same at any frame rate.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { wrapAngle } from './sim.js';
+import { RIFLE } from './weapons.js';
 
-/**
- * Where the weapon sits relative to the eye: right, down, and forward.
- *
- * Further right, lower and further away than a real carbine would be. Held
- * where a person actually holds one it covers the lower right quadrant of the
- * screen, which is the quadrant a player needs to see things coming from. The
- * first version of this was life size at arm's length and read as "a gun in
- * front of the camera" rather than "a gun I am carrying".
- */
-// Down and out into the corner, and close.
-//
-// A weapon held against the shoulder has its stock behind the camera, so
-// most of what is drawn should be running off the bottom right of the
-// frame. Sitting it far enough forward to show the whole rifle is what made
-// it read as a prop hanging in space rather than something the player is
-// carrying.
-const REST = new THREE.Vector3(0.32, -0.30, -0.44);
+/** Frame-rate independent approach: the same curve at 30 fps as at 240. */
+function damp(current, target, rate, dt) {
+  return current + (target - current) * (1 - Math.exp(-rate * dt));
+}
 
-/**
- * The model measures 4.405 units nose to stock, so this draws it at 0.79 m,
- * near enough a real carbine's 0.84 m.
- *
- * It was 0.135 - 0.59 m - on the theory that first-person weapons are drawn
- * small. They are drawn *cropped*, which is a different thing: near enough
- * full size, close to the camera, with the back of the weapon outside the
- * frame. Drawn small and whole it looks like a toy at arm's length.
- */
-const SCALE = 0.18;
+/** Eases a 0..1 progress so a transition starts and lands gently. */
+function smooth(t) {
+  return t * t * (3 - 2 * t);
+}
 
-/** Pushed forward so the stock is not sitting on the near plane. */
-const MODEL_OFFSET = new THREE.Vector3(0, 0, -0.1);
-
-/**
- * Turned in towards the middle of the screen, and nosed down a little.
- *
- * A rifle held square to the view points its barrel at nothing and leads
- * the eye off the side of the frame. A few degrees inward puts the muzzle
- * near the crosshair, which is both what the weapon is for and what every
- * shooter does with its viewmodel.
- */
-const MODEL_YAW = 0.085;
-const MODEL_PITCH = -0.03;
-
-/** Bore height and muzzle face in the model's own units, measured off its
- *  geometry, so the flash sits on the end of the barrel rather than near it. */
-const BORE_HEIGHT = 0.065;
-const MUZZLE_FACE = -2.306;
-
-const RECOIL_KICK = 0.055;
-const RECOIL_RECOVERY = 14;
-const SWAY_PER_TURN = 0.035;
-const SWAY_RECOVERY = 9;
-const SWAY_LIMIT = 0.05;
-const BOB_AMOUNT = 0.012;
-
-/** How long the flash is lit. Shorter than the fire interval, so rapid fire
- *  reads as a series of flashes rather than one continuous glow. */
-const FLASH_SECONDS = 0.04;
+function clamp(value, limit) {
+  return Math.max(-limit, Math.min(limit, value));
+}
 
 /**
  * The muzzle flash, drawn into a canvas once.
@@ -137,28 +109,81 @@ function flashTexture() {
 }
 
 export class Viewmodel {
-  constructor() {
+  constructor(config = RIFLE) {
+    this.config = config;
     this.scene = new THREE.Scene();
-    // Angle and aspect are set by `setView` from the world camera, so the
-    // weapon sits in the same perspective as everything else. Sharing the angle
-    // matters: at a different one the gun's vanishing point disagrees with the
-    // room's and it reads as a sticker on the screen.
+    // Angle and aspect are set by `setView` from the world camera's *hip*
+    // angle, so the weapon sits in the same perspective as everything else.
+    // It is not narrowed with the sights up: the weapon is placed for this
+    // angle, and zooming it with the world would move the sights off centre.
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.01, 10);
 
     this.root = new THREE.Group();
-    this.root.position.copy(REST);
     this.scene.add(this.root);
 
-    this.recoil = 0;
-    this.sway = new THREE.Vector2();
+    const [ox, oy, oz] = config.modelOffset;
+    this.modelOffset = new THREE.Vector3(ox, oy, oz);
+    this.hipPosition = new THREE.Vector3(...config.hip.position);
+    this.hipRotation = new THREE.Vector3(...config.hip.rotation);
+    this.adsRotation = new THREE.Vector3();
+    this.adsPosition = new THREE.Vector3();
+    this._solveSights();
+
+    /** Whether the player is asking for the sights. */
+    this.aiming = false;
+    /** Linear progress hip (0) to sights (1), and its eased form. */
+    this.aimProgress = 0;
+    this.aim = 0;
+
+    this.time = 0;
+    this.previousYaw = null;
+    this.previousPitch = null;
+    this.sway = { x: 0, y: 0, pitch: 0, yaw: 0 };
     this.bobPhase = 0;
-    this.previousYaw = 0;
+    this.bobWeight = 0;
+    this.airLift = 0;
+    this.landDip = 0;
+    this.recoil = { back: 0, rise: 0, yaw: 0, roll: 0 };
+    this.shotIndex = 0;
+    this.lastShotAt = -Infinity;
+    /** Roll for the world camera, from recoil. Around the view axis only, so
+     *  the middle of the screen - where shots go - does not move. */
+    this.cameraRoll = 0;
+
     this.flash = 0;
     /** Size of the current flash, picked when it was fired. */
     this.flashSize = 1;
 
     this._buildLighting();
     this._buildFlash();
+    this._apply(this.hipPosition, this.hipRotation);
+  }
+
+  /**
+   * The pose that puts the sights on the middle of the screen.
+   *
+   * Derived rather than tuned. The sight line runs from the rear notch to the
+   * top of the front post; the rig is pitched until that line is level, then
+   * moved so the front post sits on the view axis and the rear sight is
+   * `eyeRelief` in front of the eye. Both points are in the model's own
+   * units and go through the same scale and offset the model is drawn with,
+   * so changing either of those cannot knock the sights off centre.
+   */
+  _solveSights() {
+    const { scale } = this.config;
+    const { frontSight, rearSight, eyeRelief } = this.config.ads;
+    const [frontY, frontZ] = frontSight;
+    const [rearY, rearZ] = rearSight;
+    // Nose-up by the angle the line falls from rear to front.
+    const pitch = Math.atan2(rearY - frontY, rearZ - frontZ);
+    this.adsRotation.set(pitch, 0, 0);
+
+    const turn = new THREE.Euler(pitch, 0, 0, 'YXZ');
+    const inRig = (y, z) =>
+      new THREE.Vector3(0, y * scale, z * scale).add(this.modelOffset).applyEuler(turn);
+    const front = inRig(frontY, frontZ);
+    const rear = inRig(rearY, rearZ);
+    this.adsPosition.set(-front.x, -front.y, -eyeRelief - rear.z);
   }
 
   _buildLighting() {
@@ -172,10 +197,11 @@ export class Viewmodel {
   }
 
   _buildFlash() {
+    const { scale, boreHeight, muzzleFace } = this.config;
     const muzzle = new THREE.Vector3(
-      MODEL_OFFSET.x,
-      MODEL_OFFSET.y + BORE_HEIGHT * SCALE,
-      MODEL_OFFSET.z + MUZZLE_FACE * SCALE,
+      this.modelOffset.x,
+      this.modelOffset.y + boreHeight * scale,
+      this.modelOffset.z + muzzleFace * scale,
     );
 
     // A pair of crossed billboards rather than one, so the flash has some
@@ -213,18 +239,42 @@ export class Viewmodel {
   async load(url) {
     const gltf = await new GLTFLoader().loadAsync(url);
     const rifle = gltf.scene;
-    rifle.position.copy(MODEL_OFFSET);
-    rifle.rotation.set(MODEL_PITCH, MODEL_YAW, 0);
-    rifle.scale.setScalar(SCALE);
+    rifle.position.copy(this.modelOffset);
+    rifle.scale.setScalar(this.config.scale);
     this.root.add(rifle);
     this.rifle = rifle;
     return rifle;
   }
 
-  /** Called when the server confirms a shot this player fired. */
+  /** The player is holding the aim button, or has let go. */
+  setAiming(on) {
+    this.aiming = on;
+  }
+
+  /**
+   * A shot left the weapon.
+   *
+   * Called the moment the client fires, not when the server echoes it: the
+   * kick is this player's own hands and waits for nobody. Whether it hit is
+   * still the server's answer, and arrives on its own.
+   */
   onShotFired() {
-    this.recoil = RECOIL_KICK;
-    this.flash = FLASH_SECONDS;
+    const { recoil } = this.config;
+    if (this.time - this.lastShotAt > recoil.patternReset) this.shotIndex = 0;
+    this.lastShotAt = this.time;
+    const step = recoil.pattern[Math.min(this.shotIndex, recoil.pattern.length - 1)];
+    this.shotIndex += 1;
+
+    const scale = 1 - this.aim * (1 - this.config.ads.recoilScale);
+    this.recoil.back += recoil.back * scale;
+    this.recoil.rise = Math.min(recoil.maxRise, this.recoil.rise + recoil.rise * scale);
+    this.recoil.yaw += recoil.sideways * step * scale;
+    // Alternating roll reads as the weapon bucking rather than tipping over.
+    const side = this.shotIndex % 2 === 0 ? 1 : -1;
+    this.recoil.roll += recoil.roll * side * scale;
+    this.cameraRoll += recoil.cameraRoll * side * scale;
+
+    this.flash = this.config.flashSeconds;
     // A different size and roll each time. Three identical frames in a burst
     // read as a decal being switched on and off; a little variation reads as
     // combustion, which is what it is.
@@ -232,52 +282,119 @@ export class Viewmodel {
     this.flashSize = 0.82 + Math.random() * 0.36;
   }
 
+  /** The player came down at `speed` metres per second. */
+  onLanded(speed) {
+    const { land } = this.config;
+    this.landDip = Math.min(land.maxDip, this.landDip + speed * land.dipPerMetrePerSecond);
+  }
+
   /**
    * Places the weapon for this frame.
    *
-   * `yaw` and `pitch` are the camera's, and the weapon is positioned in the
-   * viewmodel camera's fixed space, so the whole rig stays glued to the view
-   * without ever trailing it by a frame.
+   * `yaw` and `pitch` are the camera's. The weapon is positioned in the
+   * viewmodel camera's fixed space, so the rig stays glued to the view
+   * without ever trailing it by a frame; sway is an offset on top, not lag.
    */
   update(dt, yaw, pitch, speed, onGround) {
-    this.recoil = Math.max(0, this.recoil - this.recoil * RECOIL_RECOVERY * dt);
-    this.flash = Math.max(0, this.flash - dt);
+    const c = this.config;
+    this.time += dt;
 
-    // Sway: the weapon lags a turn slightly, then settles.
-    const turn = wrapAngle(yaw - this.previousYaw);
+    // Hip to sights at a fixed rate, eased, so the time it takes is the same
+    // every time and a player can learn it.
+    const step = dt / c.ads.duration;
+    this.aimProgress = Math.max(0, Math.min(1,
+      this.aimProgress + (this.aiming ? step : -step)));
+    this.aim = smooth(this.aimProgress);
+    const steady = (scale) => 1 - this.aim * (1 - scale);
+
+    // Sway: the weapon lags a turn, then settles.
+    const turnYaw = this.previousYaw === null ? 0 : wrapAngle(yaw - this.previousYaw);
+    const turnPitch = this.previousPitch === null ? 0 : pitch - this.previousPitch;
     this.previousYaw = yaw;
-    this.sway.x += turn * SWAY_PER_TURN;
-    this.sway.multiplyScalar(Math.max(0, Math.min(1, 1 - SWAY_RECOVERY * dt)));
-    if (this.sway.length() > SWAY_LIMIT) this.sway.setLength(SWAY_LIMIT);
+    this.previousPitch = pitch;
+    const sway = this.sway;
+    sway.x = clamp(sway.x + turnYaw * c.sway.position, c.sway.maxPosition);
+    sway.y = clamp(sway.y - turnPitch * c.sway.position, c.sway.maxPosition);
+    sway.yaw = clamp(sway.yaw + turnYaw * c.sway.rotation, c.sway.maxRotation);
+    sway.pitch = clamp(sway.pitch + turnPitch * c.sway.rotation, c.sway.maxRotation);
+    for (const key of ['x', 'y', 'yaw', 'pitch']) {
+      sway[key] = damp(sway[key], 0, c.sway.recovery, dt);
+    }
+    const swayScale = steady(c.ads.swayScale);
 
-    // Bob while moving on the ground, so running has a rhythm to it.
+    // Bob, paced by distance so it quickens with speed.
     const moving = onGround && speed > 0.5;
-    this.bobPhase += dt * (moving ? speed * 1.6 : 2);
-    const bobScale = moving ? BOB_AMOUNT * Math.min(1, speed / 8) : 0;
-    const bobX = Math.sin(this.bobPhase) * bobScale;
-    const bobY = -Math.abs(Math.sin(this.bobPhase * 2)) * bobScale;
+    this.bobWeight = damp(this.bobWeight, moving ? Math.min(1, speed / 8) : 0, c.bob.fade, dt);
+    this.bobPhase += speed * dt * c.bob.cyclesPerMetre * Math.PI * 2;
+    const bob = c.bob.amount * this.bobWeight * steady(c.ads.bobScale);
+    const bobX = Math.sin(this.bobPhase) * bob;
+    const bobY = Math.sin(this.bobPhase * 2) * bob * 0.5 - bob * 0.3;
+    const bobRoll = Math.sin(this.bobPhase) * c.bob.roll * this.bobWeight * steady(c.ads.bobScale);
 
+    // Breath, fading out as the bob fades in.
+    const breath = (1 - this.bobWeight) * steady(c.ads.swayScale);
+    const t = this.time * c.idle.rate * Math.PI * 2;
+    const breathX = Math.sin(t) * c.idle.position * breath;
+    const breathY = Math.sin(t * 2) * c.idle.position * breath;
+    const breathPitch = Math.sin(t) * c.idle.rotation * breath;
+
+    this.airLift = damp(this.airLift, onGround ? 0 : c.air.lift, c.air.rate, dt);
+    this.landDip = damp(this.landDip, 0, c.land.recovery, dt);
+
+    const r = this.recoil;
+    for (const key of ['back', 'rise', 'yaw', 'roll']) r[key] = damp(r[key], 0, c.recoil.recovery, dt);
+    this.cameraRoll = damp(this.cameraRoll, 0, c.recoil.cameraRecovery, dt);
+
+    const a = this.aim;
+    const hip = this.hipPosition;
+    const ads = this.adsPosition;
     this.root.position.set(
-      REST.x + this.sway.x + bobX,
-      REST.y + this.sway.y + bobY,
-      REST.z + this.recoil,
+      hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX,
+      hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
+        + (this.airLift - this.landDip) * steady(c.ads.bobScale),
+      hip.z + (ads.z - hip.z) * a + r.back,
     );
-    // A touch of muzzle rise, and the weapon tips with the view so it does not
-    // feel welded to the screen when looking up and down.
-    this.root.rotation.set(-this.recoil * 3 + pitch * 0.05, 0, 0);
+    const hr = this.hipRotation;
+    const ar = this.adsRotation;
+    // The weapon tips a little with the view from the hip, so it does not
+    // feel welded to the screen looking up and down; with the sights up it
+    // must not, or they would leave the middle.
+    this.root.rotation.set(
+      hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch
+        + pitch * 0.05 * (1 - a),
+      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale,
+      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll,
+      'YXZ',
+    );
 
     const lit = this.flash > 0;
+    this.flash = Math.max(0, this.flash - dt);
     this.flashGroup.visible = lit;
     if (lit) {
       // The roll and the size of *this* flash were chosen when the shot was
-      // fired; all that happens here is that it shrinks as it dies. Rerolling
-      // every frame - which is what this used to do - spins the flash through
-      // a random angle sixty times a second for the forty milliseconds it is
-      // alive, which reads as a strobe rather than as a shot.
-      const fade = this.flash / FLASH_SECONDS;
+      // fired; all that happens here is that it shrinks as it dies.
+      const fade = this.flash / c.flashSeconds;
       this.flashGroup.scale.setScalar(this.flashSize * (0.62 + fade * 0.5));
     }
-    this.flashLight.intensity = lit ? 9 * (this.flash / FLASH_SECONDS) : 0;
+    this.flashLight.intensity = lit ? 9 * (this.flash / c.flashSeconds) : 0;
+  }
+
+  /**
+   * How much to narrow the world camera, as a factor on the tangent of its
+   * half-angle: 1 at the hip, `ads.zoom` with the sights up.
+   */
+  get zoom() {
+    return 1 - this.aim * (1 - this.config.ads.zoom);
+  }
+
+  /** Crosshair opacity for this frame. */
+  get crosshairOpacity() {
+    return 1 - this.aim * (1 - this.config.ads.crosshairOpacity);
+  }
+
+  _apply(position, rotation) {
+    this.root.position.copy(position);
+    this.root.rotation.set(rotation.x, rotation.y, rotation.z, 'YXZ');
   }
 
   setView(aspect, verticalFov) {

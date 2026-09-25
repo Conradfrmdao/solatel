@@ -217,6 +217,15 @@ export class Hud {
     this.quality.addEventListener('keydown', (event) => event.preventDefault());
   }
 
+  /** Fades the crosshair with the sights up. Never to nothing: the dot is
+   *  where the shot goes, and a player on real stakes should always see it. */
+  setCrosshairOpacity(opacity) {
+    const value = opacity.toFixed(2);
+    if (value === this._crosshairOpacity) return;
+    this._crosshairOpacity = value;
+    this.crosshair.style.opacity = value;
+  }
+
   update(now, link, local, input) {
     this._frames += 1;
     if (now - this._fpsAt >= 500) {
