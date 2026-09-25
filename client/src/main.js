@@ -163,7 +163,9 @@ async function boot() {
   const rifle = await viewmodel.load('assets/weapons/rifle.glb');
   say('loading the soldier…');
   // The same rifle, handed on rather than fetched again.
-  await remotes.load('assets/characters/soldier.glb', rifle);
+  const soldier = await remotes.load('assets/characters/soldier.glb', rifle);
+  // And the same soldier's arms in first person, in the same pose.
+  viewmodel.setArms(soldier, remotes.clips.aim);
 
   const local = new LocalPlayer(link, input);
   // The menu is built before the HUD, because the settings controls live in
@@ -539,7 +541,7 @@ async function boot() {
     world.positionSky(eye, camera.far);
     world.setZone(local.zoneRadius);
     remotes.update(now, dt, local.id, camera.position);
-    viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround);
+    viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     hud.update(now, link, local, input);
 
     // The sights narrow the world's view, and turning slows by the same

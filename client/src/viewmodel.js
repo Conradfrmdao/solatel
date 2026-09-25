@@ -30,10 +30,20 @@
 // Everything but the base pose is scaled down with the sights up, so aiming
 // steadies the weapon. Every layer approaches its target with an exponential
 // that takes `dt`, which is what keeps the feel the same at any frame rate.
+//
+// # What a shot leaves behind
+//
+// A flash, a spent case and a puff of smoke. The flash is part of the weapon
+// and moves with it. The case and the smoke are not: once they have left the
+// rifle they belong to the world, so they are kept in world coordinates and
+// carried into this scene's space each frame - turn away and they are left
+// hanging where they were, which is most of what makes them read as real.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { wrapAngle } from './sim.js';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { HAND, holdMatrix, palms } from './grip.js';
+import { SIM, wrapAngle } from './sim.js';
 import { RIFLE } from './weapons.js';
 
 /** Frame-rate independent approach: the same curve at 30 fps as at 240. */
@@ -48,6 +58,54 @@ function smooth(t) {
 
 function clamp(value, limit) {
   return Math.max(-limit, Math.min(limit, value));
+}
+
+function between([low, high]) {
+  return low + Math.random() * (high - low);
+}
+
+/** Cases and puffs that can be in the air at once. Past that the oldest is
+ *  reused, which at this fire rate is one that has already landed. */
+const CASING_POOL = 16;
+const SMOKE_POOL = 12;
+
+const GRAVITY = 9.81;
+
+// Scratch objects, reused so a burst allocates nothing.
+const _v = new THREE.Vector3();
+const _w = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _spin = new THREE.Quaternion();
+const _euler = new THREE.Euler();
+
+/**
+ * A soft grey puff, drawn into a canvas once.
+ *
+ * A handful of overlapping soft discs rather than one, so it has a lumpy
+ * edge; a single radial gradient reads as a lens smudge, not as smoke.
+ */
+function smokeTexture() {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext('2d');
+  const middle = size / 2;
+  for (let i = 0; i < 7; i += 1) {
+    const angle = (i / 7) * Math.PI * 2;
+    const reach = i === 0 ? 0 : middle * 0.3;
+    const x = middle + Math.cos(angle) * reach;
+    const y = middle + Math.sin(angle) * reach;
+    const radius = middle * (i === 0 ? 0.75 : 0.5);
+    const puff = context.createRadialGradient(x, y, 0, x, y, radius);
+    puff.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+    puff.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
+    puff.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    context.fillStyle = puff;
+    context.fillRect(0, 0, size, size);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 /**
@@ -106,6 +164,46 @@ export function flashTexture() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+/** The bones whose skin is kept for the arms: upper arm, forearm, hand and
+ *  fingers, each side. Not the shoulder - that is the torso's. */
+const ARM = /(Left|Right)(Arm|ForeArm|Hand)/;
+
+/**
+ * The same geometry, drawing only the triangles that belong to the arms.
+ *
+ * A triangle is kept when all three of its corners are skinned mostly to an
+ * arm bone. The attributes are shared with the original rather than copied;
+ * only the index is new, so this costs a few hundred kilobytes of indices
+ * and not a second soldier.
+ */
+function armsOnly(geometry, skeleton) {
+  const arm = skeleton.bones.map((bone) => ARM.test(bone.name));
+  const joints = geometry.getAttribute('skinIndex');
+  const weights = geometry.getAttribute('skinWeight');
+  const onArm = new Uint8Array(joints.count);
+  for (let v = 0; v < joints.count; v += 1) {
+    let weight = 0;
+    for (let k = 0; k < 4; k += 1) {
+      if (arm[joints.getComponent(v, k)]) weight += weights.getComponent(v, k);
+    }
+    onArm[v] = weight >= 0.5 ? 1 : 0;
+  }
+  const index = geometry.getIndex();
+  const kept = [];
+  for (let i = 0; i < index.count; i += 3) {
+    const a = index.getX(i);
+    const b = index.getX(i + 1);
+    const c = index.getX(i + 2);
+    if (onArm[a] && onArm[b] && onArm[c]) kept.push(a, b, c);
+  }
+  const out = new THREE.BufferGeometry();
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    out.setAttribute(name, attribute);
+  }
+  out.setIndex(kept);
+  return out;
 }
 
 /**
@@ -250,8 +348,19 @@ export class Viewmodel {
     /** Size of the current flash, picked when it was fired. */
     this.flashSize = 1;
 
+    /** Where the eye is and which way it looks, in the world, as of the
+     *  last frame - what cases and smoke are carried into this scene by. */
+    this.eye = new THREE.Vector3();
+    this.view = new THREE.Quaternion();
+    this.eyeVelocity = new THREE.Vector3();
+    this.hasEye = false;
+    /** The floor under the player, last time they were standing on one. */
+    this.floor = -Infinity;
+
     this._buildLighting();
     this._buildFlash();
+    this._buildCasings();
+    this._buildSmoke();
     this._apply(this.hipPosition, this.hipRotation);
   }
 
@@ -332,6 +441,157 @@ export class Viewmodel {
     this.flashLight = glow;
   }
 
+  _buildCasings() {
+    const { casings, scale } = this.config;
+    // Lying along x, which is how it leaves the port: sideways.
+    const geometry = new THREE.CylinderGeometry(casings.radius, casings.radius, casings.length, 8);
+    geometry.rotateZ(Math.PI / 2);
+    const brass = new THREE.MeshStandardMaterial({ color: 0xc9a04c, metalness: 0.35, roughness: 0.32 });
+    this.casings = [];
+    this.nextCasing = 0;
+    for (let i = 0; i < CASING_POOL; i += 1) {
+      const mesh = new THREE.Mesh(geometry, brass);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.casings.push({
+        mesh,
+        age: Infinity,
+        position: new THREE.Vector3(),
+        velocity: new THREE.Vector3(),
+        spin: new THREE.Vector3(),
+        turn: new THREE.Quaternion(),
+      });
+    }
+    const [px, py, pz] = casings.port;
+    this.port = new THREE.Vector3(px, py, pz).multiplyScalar(scale).add(this.modelOffset);
+  }
+
+  _buildSmoke() {
+    const map = smokeTexture();
+    this.puffs = [];
+    this.nextPuff = 0;
+    for (let i = 0; i < SMOKE_POOL; i += 1) {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map,
+        color: 0xd2cec6,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0,
+      }));
+      sprite.visible = false;
+      sprite.frustumCulled = false;
+      // After the weapon, so the rifle is seen through the smoke rather
+      // than the smoke being cut off by the barrel.
+      sprite.renderOrder = 2;
+      this.scene.add(sprite);
+      this.puffs.push({
+        sprite,
+        age: Infinity,
+        position: new THREE.Vector3(),
+        velocity: new THREE.Vector3(),
+        opacity: 0,
+        roll: 0,
+      });
+    }
+  }
+
+  /** A point in this scene's space, into the world. */
+  _toWorld(point, out) {
+    return out.copy(point).applyQuaternion(this.view).add(this.eye);
+  }
+
+  /** A spent case out of the port. */
+  _eject() {
+    if (!this.hasEye) return;
+    const c = this.config.casings;
+    const casing = this.casings[this.nextCasing];
+    this.nextCasing = (this.nextCasing + 1) % this.casings.length;
+
+    this.root.updateMatrix();
+    this._toWorld(_v.copy(this.port).applyMatrix4(this.root.matrix), casing.position);
+    // Out to the weapon's right and up, in the weapon's own frame, so it
+    // leaves the port the same way whatever the weapon is doing - and with
+    // the player's own velocity, which it had while it was in the rifle.
+    casing.velocity.set(between(c.speed), between(c.lift), c.back)
+      .applyQuaternion(this.root.quaternion)
+      .applyQuaternion(this.view)
+      .add(this.eyeVelocity);
+    casing.turn.copy(this.view).multiply(this.root.quaternion);
+    casing.spin.set(
+      (Math.random() - 0.5) * 2 * c.spin,
+      (Math.random() - 0.5) * 2 * c.spin,
+      (Math.random() - 0.5) * 2 * c.spin,
+    );
+    casing.age = 0;
+  }
+
+  /** A puff at the muzzle. */
+  _puff() {
+    if (!this.hasEye) return;
+    const s = this.config.smoke;
+    const puff = this.puffs[this.nextPuff];
+    this.nextPuff = (this.nextPuff + 1) % this.puffs.length;
+
+    this.root.updateMatrix();
+    this._toWorld(_v.copy(this.flashGroup.position).applyMatrix4(this.root.matrix), puff.position);
+    // Down the barrel. Smoke is left in the air it was fired into, so it
+    // takes only a little of the player's own movement with it.
+    puff.velocity.set(0, 0, -s.drift)
+      .applyQuaternion(this.root.quaternion)
+      .applyQuaternion(this.view)
+      .addScaledVector(this.eyeVelocity, 0.3);
+    puff.opacity = s.opacity + (s.adsOpacity - s.opacity) * this.aim;
+    puff.roll = Math.random() * Math.PI * 2;
+    puff.age = 0;
+  }
+
+  /** Cases and smoke, moved on by `dt` and carried into this scene. */
+  _updateDebris(dt) {
+    _q.copy(this.view).invert();
+    const c = this.config.casings;
+    for (const casing of this.casings) {
+      if (casing.age >= c.seconds) {
+        casing.mesh.visible = false;
+        continue;
+      }
+      casing.age += dt;
+      casing.velocity.y -= GRAVITY * dt;
+      casing.position.addScaledVector(casing.velocity, dt);
+      if (casing.position.y < this.floor && casing.velocity.y < 0) {
+        casing.position.y = this.floor;
+        casing.velocity.multiplyScalar(c.bounce);
+        casing.velocity.y = -casing.velocity.y;
+        casing.spin.multiplyScalar(c.bounce);
+      }
+      _euler.set(casing.spin.x * dt, casing.spin.y * dt, casing.spin.z * dt);
+      casing.turn.multiply(_spin.setFromEuler(_euler));
+      casing.mesh.position.copy(casing.position).sub(this.eye).applyQuaternion(_q);
+      casing.mesh.quaternion.copy(_q).multiply(casing.turn);
+      casing.mesh.visible = true;
+    }
+
+    const s = this.config.smoke;
+    for (const puff of this.puffs) {
+      if (puff.age >= s.seconds) {
+        puff.sprite.visible = false;
+        continue;
+      }
+      puff.age += dt;
+      const t = Math.min(1, puff.age / s.seconds);
+      puff.velocity.multiplyScalar(Math.exp(-s.drag * dt));
+      puff.position.addScaledVector(puff.velocity, dt);
+      puff.position.y += s.rise * dt;
+      // Spreads fast and then slows, the way a puff does; thins throughout.
+      const spread = 1 - (1 - t) * (1 - t);
+      puff.sprite.scale.setScalar(s.size[0] + (s.size[1] - s.size[0]) * spread);
+      puff.sprite.material.opacity = puff.opacity * (1 - t) * (1 - t);
+      puff.sprite.material.rotation = puff.roll + t * 0.6;
+      puff.sprite.position.copy(puff.position).sub(this.eye).applyQuaternion(_q);
+      puff.sprite.visible = true;
+    }
+  }
+
   async load(url) {
     const gltf = await new GLTFLoader().loadAsync(url);
     const rifle = gltf.scene;
@@ -343,6 +603,61 @@ export class Viewmodel {
     this.root.add(rifle);
     this.rifle = rifle;
     return rifle;
+  }
+
+  /**
+   * Arms and gloves, holding the rifle: the soldier everybody else sees,
+   * cut down to the arms.
+   *
+   * `template` is the loaded soldier and `pose` the clip its upper body is
+   * posed with to shoulder a rifle - the same clip, and the same model, the
+   * other players' view of this one is drawn from. Posed once and never
+   * animated: the weapon's sway, bob and kick are the viewmodel's own, and
+   * the arms ride along with it because they are attached to it.
+   *
+   * Placed by working out where the posed soldier would hold a rifle -
+   * `holdMatrix`, exactly as `remotes.js` does - and then moving the whole
+   * soldier so that rifle lands on this one. The hands are therefore on the
+   * grip and the handguard wherever the viewmodel's rifle is tuned to sit.
+   */
+  setArms(template, pose) {
+    const body = cloneSkinned(template);
+    const bones = {};
+    body.traverse((node) => {
+      if (node.isBone) bones[node.name] = node;
+    });
+    const hands = {};
+    for (const [key, name] of Object.entries(HAND)) hands[key] = bones[name];
+    if (!hands.handR || !hands.handL) return;
+
+    const mixer = new THREE.AnimationMixer(body);
+    mixer.clipAction(pose).play();
+    mixer.update(0);
+    body.updateMatrixWorld(true);
+
+    body.traverse((node) => {
+      if (!node.isSkinnedMesh) return;
+      node.geometry = armsOnly(node.geometry, node.skeleton);
+      // Posed away from where its bind-pose bounds say it is.
+      node.frustumCulled = false;
+      node.castShadow = false;
+      node.receiveShadow = false;
+    });
+
+    const right = new THREE.Vector3();
+    const left = new THREE.Vector3();
+    palms(hands, right, left);
+    const forward = left.clone().sub(right).normalize();
+    const held = holdMatrix(right, forward, new THREE.Vector3(0, 1, 0),
+      this.config.scale, new THREE.Matrix4());
+    const drawn = new THREE.Matrix4().compose(
+      this.modelOffset,
+      new THREE.Quaternion(),
+      new THREE.Vector3().setScalar(this.config.scale),
+    );
+    drawn.multiply(held.invert()).decompose(body.position, body.quaternion, body.scale);
+    this.root.add(body);
+    this.arms = body;
   }
 
   /** The player is holding the aim button, or has let go. */
@@ -379,6 +694,9 @@ export class Viewmodel {
     // combustion, which is what it is.
     this.flashGroup.rotation.z = Math.random() * Math.PI;
     this.flashSize = 0.82 + Math.random() * 0.36;
+
+    this._eject();
+    this._puff();
   }
 
   /** The player came down at `speed` metres per second. */
@@ -390,13 +708,28 @@ export class Viewmodel {
   /**
    * Places the weapon for this frame.
    *
-   * `yaw` and `pitch` are the camera's. The weapon is positioned in the
-   * viewmodel camera's fixed space, so the rig stays glued to the view
-   * without ever trailing it by a frame; sway is an offset on top, not lag.
+   * `yaw` and `pitch` are the camera's, and `eye` where it is in the world.
+   * The weapon is positioned in the viewmodel camera's fixed space, so the
+   * rig stays glued to the view without ever trailing it by a frame; sway is
+   * an offset on top, not lag. The eye is only for what a shot leaves
+   * behind, which lives in the world.
    */
-  update(dt, yaw, pitch, speed, onGround) {
+  update(dt, yaw, pitch, speed, onGround, eye) {
     const c = this.config;
     this.time += dt;
+
+    if (eye) {
+      if (this.hasEye && dt > 0) {
+        // Smoothed: the eye is itself smoothed over steps, and a case thrown
+        // on the frame of a step should not be thrown up the stairs with it.
+        _w.subVectors(eye, this.eye).divideScalar(dt);
+        this.eyeVelocity.lerp(_w, 1 - Math.exp(-12 * dt));
+      }
+      this.eye.copy(eye);
+      this.hasEye = true;
+      if (onGround) this.floor = eye.y - SIM.eyeOffset - SIM.halfExtentY;
+    }
+    this.view.setFromEuler(_euler.set(pitch, yaw, 0, 'YXZ'));
 
     // Hip to sights at a fixed rate, eased, so the time it takes is the same
     // every time and a player can learn it.
@@ -476,6 +809,8 @@ export class Viewmodel {
       this.flashGroup.scale.setScalar(this.flashSize * (0.62 + fade * 0.5));
     }
     this.flashLight.intensity = lit ? 9 * (this.flash / c.flashSeconds) : 0;
+
+    this._updateDebris(dt);
   }
 
   /**

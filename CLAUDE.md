@@ -514,6 +514,26 @@ all *not built*, on purpose: each changes who wins a fight, so each has to be
 enforced by the server, and a client-only version would be a lie a cheater
 removes in one line. They are Conrad's decision and server work first.
 
+**The arms are the soldier's own.** `setArms` clones the same Mixamo soldier
+other players are drawn with, keeps only the triangles skinned to the arm
+bones (upper arm, forearm, hand), poses it once with the same shouldered clip
+`remotes.js` uses, and moves the whole soldier so the rifle its hands would
+hold lands on the viewmodel's rifle. Where the palm closes on the rifle, and
+how a rifle is laid along the hands, is in `grip.js`, which both modules
+use - so what a player sees themself holding and what everyone else sees them
+holding are one grip, not two tuned to look alike. The arms ride on the
+viewmodel root and are never animated separately; sway, bob and recoil move
+arms and rifle together.
+
+**Each shot throws a case and leaves a puff of smoke**, both pooled and
+tuned in `weapons.js` (`casings`, `smoke`). Once out of the rifle they live
+in **world** coordinates and are carried into the viewmodel's scene each
+frame, so turning leaves them behind; a case inherits the player's velocity,
+bounces once on the floor under them, and is gone in about a second. The
+smoke is faint on purpose and fainter with the sights up, because it hangs
+between the eye and the target. All of it is local decoration: nothing is
+sent, and other players see only the flash.
+
 **Your own shot is shown when you fire it**, not when the server echoes it a
 round trip later. `LocalPlayer` predicts shots on the same ticks and interval
 the server enforces (`takePredictedShots`), and `main.js` skips the kick and

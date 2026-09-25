@@ -152,4 +152,51 @@ export const RIFLE = {
   /** How long the muzzle flash is lit. Shorter than the fire interval, so
    *  rapid fire reads as separate flashes. */
   flashSeconds: 0.04,
+
+  /**
+   * Spent cases, thrown out of the ejection port to the right and a little
+   * up and back, the way a rifle of this pattern throws them. They fly in
+   * the world rather than on the screen - turn and they are left behind -
+   * bounce once off the floor under the player, and are gone.
+   */
+  casings: {
+    /** The ejection port, in model units: right side of the receiver,
+     *  level with the bore, just behind the magazine well. */
+    port: [0.08, 0.08, 0.15],
+    /** Metres per second out to the right, and up: a range, so no two
+     *  cases take the same path. More up than out, so a case arcs up into
+     *  view past the receiver rather than leaving the screen at its edge. */
+    speed: [0.9, 1.3],
+    lift: [1.6, 2.1],
+    /** Metres per second back towards the shooter. */
+    back: 0.4,
+    /** Radians per second of tumble, at most, on each axis. */
+    spin: 28,
+    /** A 5.56 case: 5.7 mm across, 45 mm long. */
+    radius: 0.0029,
+    length: 0.045,
+    /** Of its speed, how much a case keeps when it hits the floor. */
+    bounce: 0.3,
+    seconds: 1.1,
+  },
+
+  /**
+   * A puff of smoke at the muzzle every shot. It hangs where it was fired -
+   * in the world, not on the screen - drifts forward and up, spreads and
+   * thins. Faint on purpose, and fainter with the sights up: it is between
+   * the eye and the target, and a burst must never become a smoke screen
+   * in front of the player's own aim.
+   */
+  smoke: {
+    seconds: 0.9,
+    /** Metres across, when it leaves the muzzle and when it is gone. */
+    size: [0.06, 0.4],
+    opacity: 0.28,
+    adsOpacity: 0.1,
+    /** Metres per second: along the barrel at first, then rising. */
+    drift: 0.7,
+    rise: 0.28,
+    /** How fast the drift dies away, per second. */
+    drag: 3,
+  },
 };

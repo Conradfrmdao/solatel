@@ -55,6 +55,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { SIM, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
+import { HAND, holdMatrix, palms } from './grip.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -95,10 +96,7 @@ const BONE = {
   spine1: 'mixamorigSpine1',
   spine2: 'mixamorigSpine2',
   neck: 'mixamorigNeck',
-  handR: 'mixamorigRightHand',
-  palmR: 'mixamorigRightHandMiddle1',
-  handL: 'mixamorigLeftHand',
-  palmL: 'mixamorigLeftHandMiddle1',
+  ...HAND,
 };
 
 /** Tracks from the spine up belong to the upper body; the rest - hips and
@@ -106,10 +104,10 @@ const BONE = {
 const UPPER = /Spine|Neck|Head|Shoulder|Arm|Hand/;
 
 /** The rifle: metres per model unit (4.4 units nose to stock), and where
- *  the right palm closes on it and the muzzle is, in the model's units. */
+ *  the muzzle is, in the model's units. Where the hand closes on it is in
+ *  `grip.js`, shared with the first-person arms. */
 const RIFLE = {
   scale: 0.19,
-  grip: new THREE.Vector3(0, -0.3, 0.62),
   muzzle: new THREE.Vector3(0, 0.065, -2.306),
 };
 
@@ -124,10 +122,6 @@ const TWIST = { spine: 0.3, spine1: 0.3, spine2: 0.4 };
 /** The most the spine is ever turned to meet the aim. Beyond this a pose is
  *  not one the constraint should rescue - a body mid-fall, say. */
 const MAX_TWIST = 1.6;
-
-/** How far from wrist to knuckles the palm's centre is, as a fraction. The
- *  hand closes round the rifle there, not at the wrist bone. */
-const PALM = 0.7;
 
 /** How much of the run's own arm swing shows at a sprint. */
 const RUN_SWING = 0.3;
@@ -146,9 +140,6 @@ const FAR = 70;
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
-const _x = new THREE.Vector3();
-const _y = new THREE.Vector3();
-const _z = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _aim = new THREE.Vector3();
 const _twist = new THREE.Quaternion();
@@ -429,15 +420,6 @@ export class Remotes {
     player.flashSprite.visible = player.flash > 0 && distance < FAR;
   }
 
-  /** Where the palms are, into `right` and `left`. */
-  _palms(player, right, left) {
-    const { bones } = player;
-    bones.handR.getWorldPosition(right);
-    if (bones.palmR) right.lerp(bones.palmR.getWorldPosition(_c), PALM);
-    bones.handL.getWorldPosition(left);
-    if (bones.palmL) left.lerp(bones.palmL.getWorldPosition(_c), PALM);
-  }
-
   /**
    * Turns the spine so the hands point along `aim`.
    *
@@ -450,7 +432,7 @@ export class Remotes {
   _aimSpine(player, aim) {
     const { bones } = player;
     if (!bones.handR || !bones.handL || !bones.spine) return;
-    this._palms(player, _a, _b);
+    palms(bones, _a, _b);
     _c.subVectors(_b, _a);
     if (_c.lengthSq() < 1e-8) return;
     _twist.setFromUnitVectors(_c.normalize(), aim);
@@ -467,18 +449,9 @@ export class Remotes {
   _placeRifle(player, aim) {
     const { bones, rifle, root } = player;
     if (!bones.handR || !bones.handL) return;
-    this._palms(player, _a, _b);
-
-    // The model's muzzle is down its -Z, so +Z is back along the aim. Up is
-    // the world's, squared off against that.
-    _z.copy(aim).negate();
-    _y.copy(_up).addScaledVector(_z, -_up.dot(_z)).normalize();
-    _x.crossVectors(_y, _z);
-    _m.makeBasis(_x, _y, _z);
-    _m.scale(_c.setScalar(RIFLE.scale));
-    // Grip on the right palm.
-    _c.copy(RIFLE.grip).applyMatrix4(_m);
-    _m.setPosition(_a.sub(_c));
+    palms(bones, _a, _b);
+    // Along the aim, upright against the world's up, grip in the palm.
+    holdMatrix(_a, aim, _up, RIFLE.scale, _m);
 
     root.updateMatrixWorld(true);
     _inverse.copy(root.matrixWorld).invert();
