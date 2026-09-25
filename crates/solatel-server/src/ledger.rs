@@ -359,14 +359,13 @@ async fn handle(
         LedgerRequest::ReadBalance { player_id } => {
             // Creates the account if this is the first time we have seen
             // them, so a brand new player is told zero rather than nothing.
-            balance_account(pool, accounts, player_id).await?;
-            let balance = balance(pool, player_id).await.unwrap_or(MicroUsd::ZERO);
+            let (balance, withdrawals) = read_wallet(pool, accounts, player_id).await?;
             game.send(GameCommand::BalanceChanged {
                 player_id,
                 balance_micro_usd: balance.micros(),
             })
             .await;
-            for row in recent_withdrawals(pool, player_id).await? {
+            for row in withdrawals {
                 game.send(GameCommand::Tell {
                     player_id,
                     message: row.message(),
@@ -1171,6 +1170,96 @@ async fn recent_withdrawals(pool: &PgPool, player_id: PlayerId) -> Result<Vec<Wi
     .context("reading a player's withdrawals")?;
     rows.reverse();
     Ok(rows)
+}
+
+/// Everything the menu shows about a player's wallet, in one statement: their
+/// balance account (made if this is the first time we have seen them), the
+/// balance, and their last few withdrawals, oldest first.
+///
+/// One statement because every player who arrives asks for this, on the
+/// ledger's one sequential queue, and every statement is round trips. Against
+/// a database half a second away the five separate statements this replaced
+/// held the queue for five to seven seconds per arrival, so thirteen people
+/// arriving together kept a match's buy-in waiting past `FORMING_TIMEOUT` and
+/// the match dissolved with nobody in it.
+///
+/// A data-modifying CTE does not see its own inserts, so the account comes
+/// from `made` when it is new and from the table when it is not. The one case
+/// where neither answers is a concurrent insert of the same account committing
+/// mid-statement; that falls back to the step-by-step path, which sees it.
+async fn read_wallet(
+    pool: &PgPool,
+    accounts: &mut Accounts,
+    player_id: PlayerId,
+) -> Result<(MicroUsd, Vec<WithdrawalRow>)> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        "WITH player AS (
+             INSERT INTO players (id) VALUES ($1) ON CONFLICT (id) DO NOTHING
+         ),
+         made AS (
+             INSERT INTO ledger_accounts (kind, player_id) VALUES ('player_balance', $1)
+             ON CONFLICT DO NOTHING
+             RETURNING id
+         ),
+         account AS (
+             SELECT id FROM made
+             UNION ALL
+             SELECT id FROM ledger_accounts WHERE kind = 'player_balance' AND player_id = $1
+         )
+         SELECT a.id AS account_id,
+                COALESCE(b.balance_micro_usd, 0)::bigint AS balance_micro_usd,
+                w.id, w.player_id, w.destination, w.amount_micro_usd, w.lamports,
+                w.status, w.signature, w.signed_transaction,
+                w.last_valid_block_height, w.reason
+           FROM account a
+           LEFT JOIN ledger_account_balances b ON b.account_id = a.id
+           LEFT JOIN LATERAL (
+               SELECT id, player_id, destination, amount_micro_usd, lamports,
+                      status::text AS status, signature, signed_transaction,
+                      last_valid_block_height, reason, created_at
+                 FROM withdrawals
+                WHERE player_id = $1
+                ORDER BY created_at DESC
+                LIMIT 5
+           ) w ON true
+          ORDER BY w.created_at",
+    )
+    .bind(player_id.as_uuid())
+    .fetch_all(pool)
+    .await
+    .context("reading a player's wallet")?;
+
+    let Some(first) = rows.first() else {
+        balance_account(pool, accounts, player_id).await?;
+        let balance = balance(pool, player_id).await?;
+        return Ok((balance, recent_withdrawals(pool, player_id).await?));
+    };
+    accounts
+        .players
+        .insert(player_id, first.try_get("account_id")?);
+    let balance = MicroUsd(first.try_get("balance_micro_usd")?);
+
+    let mut withdrawals = Vec::new();
+    for row in &rows {
+        let Some(id) = row.try_get::<Option<Uuid>, _>("id")? else {
+            continue;
+        };
+        withdrawals.push(WithdrawalRow {
+            id,
+            player_id: row.try_get("player_id")?,
+            destination: row.try_get("destination")?,
+            amount_micro_usd: row.try_get("amount_micro_usd")?,
+            lamports: row.try_get("lamports")?,
+            status: row.try_get("status")?,
+            signature: row.try_get("signature")?,
+            signed_transaction: row.try_get("signed_transaction")?,
+            last_valid_block_height: row.try_get("last_valid_block_height")?,
+            reason: row.try_get("reason")?,
+        });
+    }
+    Ok((balance, withdrawals))
 }
 
 /// Take a withdrawal out of the player's balance and put it on the queue.

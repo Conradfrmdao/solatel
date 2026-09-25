@@ -32,6 +32,8 @@ const base = flag('--url') ?? 'http://localhost:8080';
 const url = `${base}/?debug=1&nolock=1`;
 
 const CHROME = [
+  // Set by the cloud session's startup hook to the preinstalled Chromium.
+  process.env.CHROME_PATH,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   '/usr/bin/google-chrome',
@@ -46,7 +48,7 @@ function fail(why) {
 }
 
 const fs = await import('node:fs');
-const executablePath = CHROME.find((p) => fs.existsSync(p));
+const executablePath = CHROME.find((p) => p && fs.existsSync(p));
 if (!executablePath) fail('no Chrome found to drive');
 
 const browser = await puppeteer.launch({
