@@ -275,6 +275,35 @@ export class Audio {
     strike(now + 0.09, 1770, 0.42);
   }
 
+  /**
+   * A match has been found. Three rising notes, bright and unmistakable,
+   * because the player may be looking at another window while they wait -
+   * which is exactly why every matchmaker has a sound for this.
+   */
+  matchFound() {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    this.blip(now, 660, 0.38, 0.14);
+    this.blip(now + 0.12, 880, 0.38, 0.14);
+    this.blip(now + 0.24, 1320, 0.42, 0.3);
+  }
+
+  /** The last seconds of the warm-up: one short tick a second. */
+  countdown() {
+    if (!this.ready) return;
+    this.blip(this.context.currentTime, 740, 0.32, 0.09);
+  }
+
+  /** The warm-up is over. Higher and longer than the ticks before it. */
+  go() {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    this.blip(now, 1480, 0.45, 0.35);
+    this.burst(this.master, now, {
+      gain: 0.18, attack: 0.002, decay: 0.25, type: 'bandpass', frequency: 3000, q: 0.8,
+    });
+  }
+
   /** Taking damage: dull, close and unpleasant, with no direction on it. */
   hurt() {
     if (!this.ready) return;

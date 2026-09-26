@@ -217,11 +217,17 @@ async fn decide(
 ) -> Response {
     let decision = body.get("decision").and_then(Value::as_str).unwrap_or("");
     let by = body.get("by").and_then(Value::as_str).unwrap_or("").trim();
-    let note = body.get("note").and_then(Value::as_str).unwrap_or("").trim();
+    let note = body
+        .get("note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     if !matches!(decision, "cleared" | "confirmed") || by.is_empty() || note.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "a decision is cleared or confirmed, with who made it and why" })),
+            Json(
+                json!({ "error": "a decision is cleared or confirmed, with who made it and why" }),
+            ),
         )
             .into_response();
     }

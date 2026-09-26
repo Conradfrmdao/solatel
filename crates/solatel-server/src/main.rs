@@ -184,8 +184,17 @@ async fn main() -> Result<()> {
             .with_context(|| format!("SOLATEL_QUEUE_WAIT {raw:?} is not a number of seconds"))?,
         Err(_) => 120.0,
     };
+    // How long a started match holds everybody on their spawn.
+    let warmup: f32 = match std::env::var("SOLATEL_WARMUP") {
+        Ok(raw) => raw
+            .trim()
+            .parse()
+            .with_context(|| format!("SOLATEL_WARMUP {raw:?} is not a number of seconds"))?,
+        Err(_) => game::WARMUP,
+    };
     tracing::info!(
         floor,
+        warmup_seconds = warmup,
         wait_seconds = wait,
         "a match starts when the table fills, or after the window with at least the floor"
     );
@@ -235,7 +244,18 @@ async fn main() -> Result<()> {
     // Match history and the anti-cheat's review queue. Off in free play,
     // like the ledger: there is no payout there to hold.
     let records = (!free_play).then(|| records::spawn(pool.clone()));
-    game::spawn(commands, ledger, records, terms.clone(), tiers.clone(), floor, wait);
+    game::spawn(
+        commands,
+        ledger,
+        records,
+        terms.clone(),
+        tiers.clone(),
+        game::Matchmaking {
+            floor,
+            wait,
+            warmup,
+        },
+    );
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));
 
     let state = AppState {

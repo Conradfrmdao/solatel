@@ -60,6 +60,9 @@ async function inGame() {
       document.body.classList.contains('running'),
     { timeout: 120_000 },
   );
+  // Past the warm-up, which holds a player on their spawn: walking in it
+  // would walk nowhere, and "the same place" would mean "the spawn".
+  await page.waitForFunction(() => !window.solatel.local.warmingUp, { timeout: 60_000 });
   // A snapshot or two, so the position is the server's and not the spawn
   // the client guessed at.
   await new Promise((done) => setTimeout(done, 1000));

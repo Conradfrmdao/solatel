@@ -30,6 +30,7 @@ import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
 import { BRUSHES, SIM, SPAWNS, loadSim, selectMap } from './sim.js';
 import { Menu } from './menu.js';
+import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
 
@@ -198,9 +199,20 @@ async function boot() {
   // decides which world there will be.
   menu.setOffer(link.maps, link.tiers);
   menu.bindPlay(
-    (mapName, dollars) => local.queue(mapName, dollars),
+    (mapName, dollars) => {
+      // The click on a table is a real gesture, so it is also where the
+      // sound can be started: the match-found chime has to be heard by
+      // somebody who has not clicked the world yet.
+      audio.resume();
+      local.queue(mapName, dollars);
+    },
     () => local.leaveQueue(),
   );
+  const matchmaking = new Matchmaking(document.getElementById('matchmaking'), {
+    onLeave: () => local.leaveQueue(),
+  });
+  /** The whole second the warm-up was on last frame, for its ticks. */
+  let warmupSecond = null;
   // A withdrawal is a request like any other: an amount and an address, and
   // the server decides whether it goes, at what rate and for how much SOL.
   menu.bindWallet((micros, destination) =>
@@ -448,6 +460,8 @@ async function boot() {
         menu.setWallet(link.wallet);
       } else if (message.t === 'scoreboard') {
         hud.setScores(message.entries);
+      } else if (message.t === 'match_found') {
+        audio.matchFound();
       } else if (message.t === 'exploded') {
         world.explode(message.at);
         audio.boom(message.at, eye, forward);
@@ -533,6 +547,64 @@ async function boot() {
     }
 
     const playing = Boolean(local.matchId) && world.ready && !link.parked;
+
+    // Searching, found, loading: the screens between a click on a table and
+    // standing on the map.
+    const table = (local.tables ?? []).find((t) => {
+      const map = local.queuedMap ?? local.queueRequested?.map;
+      const dollars = local.queuedFor ?? local.queueRequested?.dollars;
+      return t.map === map && t.dollars === dollars;
+    });
+    const tierOf = (dollars) => (link.tiers ?? []).find((t) => t.dollars === dollars);
+    let view = { phase: null };
+    if (!link.parked) {
+      if (local.searching) {
+        const dollars = local.queuedFor ?? local.queueRequested?.dollars;
+        const mapName = local.queuedMap ?? local.queueRequested?.map;
+        const tier = tierOf(dollars);
+        view = {
+          phase: 'searching',
+          map: mapName,
+          dollars,
+          confirmed: local.queuedFor !== null && local.queuedFor !== undefined,
+          elapsedMs: local.queuedAt === null ? 0 : performance.now() - local.queuedAt,
+          waiting: table?.waiting ?? 0,
+          needed: table?.needed ?? 0,
+          seats: table?.seats ?? (link.maps ?? []).find((m) => m.name === mapName)?.seats ?? 0,
+          formingInMs: local.formingInMs,
+          place: local.place,
+          entry: tier ? formatDollars(tier.entry_fee_micro_usd) : null,
+          reward: tier ? formatDollars(tier.kill_reward_micro_usd) : null,
+        };
+      } else if (local.found && !local.matchId) {
+        const tier = local.found.tier;
+        view = {
+          phase: 'found',
+          foundKey: local.found.matchId,
+          map: local.found.map,
+          dollars: tier?.dollars,
+          players: local.found.players,
+          entry: tier ? formatDollars(tier.entry_fee_micro_usd) : null,
+        };
+      } else if (local.matchId && !playing) {
+        view = {
+          phase: 'loading',
+          map: local.mapName,
+          dollars: local.tier?.dollars,
+          players: local.matchPlayers,
+        };
+      }
+      view.inMatch = Boolean(local.matchId);
+    }
+    matchmaking.update(view);
+
+    // The last seconds of the warm-up tick, and the start is heard.
+    const second = local.warmingUp ? Math.ceil(local.startsInMs / 1000) : null;
+    if (second !== warmupSecond) {
+      if (second !== null && second <= 3 && second >= 1) audio.countdown();
+      if (second === null && warmupSecond !== null && local.inMatch) audio.go();
+      warmupSecond = second;
+    }
     // No sights while the rifle is on its side for a reload.
     viewmodel.setAiming(playing && input.aiming && local.health > 0 && local.reloadMs === 0);
     viewmodel.setReload(
@@ -605,3 +677,9 @@ boot().catch((err) => {
     status.textContent = `failed to start: ${err?.message ?? err}`;
   }
 });
+
+/** Micro-USD as dollars and cents, for the matchmaking screens. */
+function formatDollars(micros) {
+  const cents = Math.round(micros / 10000);
+  return `$${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
+}

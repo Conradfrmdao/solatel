@@ -104,6 +104,26 @@ export class LocalPlayer {
     this.mapName = null;
     /** Their place in that line, counting from one. */
     this.place = 0;
+    /** The table this client has asked to join and the server has not yet
+     *  confirmed, so the searching screen is up the moment it is clicked
+     *  rather than half a second later. */
+    this.queueRequested = null;
+    /** When this player got in line, by this client's clock. Only for the
+     *  elapsed time on the searching screen; the server keeps its own. */
+    this.queuedAt = null;
+    /** The match the server has found for this player and is taking the
+     *  entry fees for: `{ matchId, map, tier, players }`, or null. */
+    this.found = null;
+    /** Milliseconds of warm-up left, from the server and run down between
+     *  its messages so the countdown reads smoothly. */
+    this.startsInMs = 0;
+    /** Whether the server still has this player held on their spawn. Set
+     *  only from what the server says - never from the local countdown
+     *  reaching zero - so the client starts moving late rather than early,
+     *  and never predicts a step the server is about to refuse. */
+    this.warmingUp = false;
+    /** How many bought into the current match. */
+    this.matchPlayers = 0;
     /** Milliseconds until a short-handed line starts anyway. The server sets
      *  it; the client only runs it down between messages so it reads
      *  smoothly, and never decides it has reached zero on its own. */
@@ -197,6 +217,17 @@ export class LocalPlayer {
     if (!this.link.isReady) return;
 
     const intent = this.input.sample();
+    if (this.warmingUp) {
+      // Held on the spawn: the server zeroes all of this for the warm-up,
+      // and predicting it would only be a correction a moment later.
+      intent.forward = 0;
+      intent.right = 0;
+      intent.jump = false;
+      intent.fire = false;
+      intent.crouch = false;
+      intent.reload = false;
+      intent.throw = false;
+    }
     let buttons = 0;
     if (intent.jump) buttons |= BUTTON_JUMP;
     if (intent.fire) buttons |= BUTTON_FIRE;
@@ -279,6 +310,9 @@ export class LocalPlayer {
     if (this.formingInMs > 0) {
       this.formingInMs = Math.max(0, this.formingInMs - dt * 1000);
     }
+    if (this.startsInMs > 0) {
+      this.startsInMs = Math.max(0, this.startsInMs - dt * 1000);
+    }
   }
 
   /**
@@ -295,12 +329,32 @@ export class LocalPlayer {
     this.eliminated = false;
     this.killedBy = null;
     this.finalBoard = null;
+    this.broke = false;
+    this.queueRequested = { map: mapName, dollars, at: performance.now() };
+    if (this.queuedAt === null) this.queuedAt = performance.now();
     this.link.send({ t: 'queue', map: mapName, tier_dollars: dollars });
   }
 
   /** Give up the place in line. No money has moved, so nothing comes back. */
   leaveQueue() {
+    this.queueRequested = null;
+    this.queuedAt = null;
+    this.queuedMap = null;
+    this.queuedFor = null;
     this.link.send({ t: 'leave_queue' });
+  }
+
+  /** Whether this player is in a line, or has just asked to be. */
+  get searching() {
+    // A request the server never confirmed stops counting after a few
+    // seconds, so a refusal nobody was told about cannot leave the screen
+    // searching forever.
+    const asked = this.queueRequested !== null && performance.now() - this.queueRequested.at < 4000;
+    return (
+      !this.matchId &&
+      !this.found &&
+      (asked || (this.queuedFor !== null && this.queuedFor !== undefined))
+    );
   }
 
   /** What the table this player is queued for looks like right now. */
@@ -358,6 +412,10 @@ export class LocalPlayer {
           this.grenades = message.grenades ?? this.grenades;
         }
         this.liveGrenades = message.live_grenades ?? [];
+        if (typeof message.starts_in_ms === 'number') {
+          this.startsInMs = message.starts_in_ms;
+          this.warmingUp = message.starts_in_ms > 0;
+        }
         this._reconcile(message);
         return true;
 
@@ -367,7 +425,26 @@ export class LocalPlayer {
         // could be wrong about how much money it has.
         this.balanceMicroUsd = message.balance_micro_usd;
         this.broke = Boolean(message.insufficient);
+        if (this.broke) {
+          // Refused a place: the searching screen has nothing to search for.
+          this.queueRequested = null;
+          this.queuedAt = null;
+          this.found = null;
+        }
         return true;
+
+      case 'match_found':
+        // The line became a match. Nothing is charged yet; `match_started`
+        // follows once the stakes are in, or a lobby message puts this
+        // player back in the lobby if the match did not get enough of them.
+        this.found = {
+          matchId: message.match_id,
+          map: message.map_name,
+          tier: message.tier,
+          players: message.players,
+        };
+        this.queueRequested = null;
+        return false; // main.js wants it for the sound.
 
       case 'damaged':
         this.health = message.health_remaining;
@@ -393,6 +470,16 @@ export class LocalPlayer {
         this.tables = message.tables ?? [];
         this.queuedMap = message.queued_map ?? null;
         this.queuedFor = message.queued_for ?? null;
+        // Lobby messages only reach players who are not in a match, so one
+        // arriving means any match that was being found for this player is
+        // not happening.
+        this.found = null;
+        if (this.queuedFor !== null) {
+          this.queueRequested = null;
+          if (this.queuedAt === null) this.queuedAt = performance.now();
+        } else if (!this.queueRequested) {
+          this.queuedAt = null;
+        }
         this.place = message.place ?? 0;
         this.formingInMs = this.queuedTable?.forming_in_ms ?? 0;
         return true;
@@ -403,6 +490,12 @@ export class LocalPlayer {
         this.matchId = message.match_id;
         this.mapName = message.map_name ?? null;
         this.tier = message.tier ?? null;
+        this.matchPlayers = message.players ?? 0;
+        this.startsInMs = message.starts_in_ms ?? 0;
+        this.warmingUp = this.startsInMs > 0;
+        this.found = null;
+        this.queueRequested = null;
+        this.queuedAt = null;
         this.inMatch = true;
         this.eliminated = false;
         this.killedBy = null;

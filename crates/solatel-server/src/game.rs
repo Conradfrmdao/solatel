@@ -146,6 +146,18 @@ const MATCH_FLOOR: usize = 4;
 /// Overridden by `SOLATEL_QUEUE_WAIT`, in seconds.
 const QUEUE_WAIT: f32 = 120.0;
 
+/// How long a match holds everybody on their spawn before it goes live.
+///
+/// Fifteen seconds, which is Counter-Strike's freeze time and about what a
+/// Call of Duty lobby counts down. A match that went live the instant its
+/// map finished loading would start with whoever's machine loaded fastest
+/// already moving, and on a slow connection a player's first sight of the
+/// map could be the shot that ends their stake. So everybody is placed,
+/// frozen, and told how long: they may look round and nothing else, and
+/// nobody can hurt anybody. The match clock and the circle start when it
+/// ends. Overridden by `SOLATEL_WARMUP`, in seconds.
+pub const WARMUP: f32 = 15.0;
+
 /// How long a forming match waits for its entry fees to land.
 ///
 /// Every purchase is a database round trip, and against a database on the
@@ -445,6 +457,9 @@ struct Match {
     /// The tick this match started running on. `None` while it is still
     /// forming - that is, while the entry fees are still being taken.
     started_tick: Option<u32>,
+    /// Ticks of warm-up after `started_tick` before the match goes live.
+    /// See [`WARMUP`].
+    warmup_ticks: u32,
     /// Game time after which a forming match stops waiting for money.
     forming_until: f32,
     /// Players whose entry fee is still in flight.
@@ -468,10 +483,32 @@ struct LiveGrenade {
 }
 
 impl Match {
+    /// Seconds since the match went live. Zero while forming and all
+    /// through the warm-up, so the match clock and the circle both start
+    /// when the players can first move.
     fn elapsed(&self, tick: u32) -> f32 {
         match self.started_tick {
-            Some(start) => tick.wrapping_sub(start) as f32 * TICK_DT,
+            Some(start) => {
+                tick.wrapping_sub(start).saturating_sub(self.warmup_ticks) as f32 * TICK_DT
+            }
             None => 0.0,
+        }
+    }
+
+    /// Whether everybody is still being held on their spawn.
+    fn warming_up(&self, tick: u32) -> bool {
+        self.started_tick
+            .is_some_and(|start| tick.wrapping_sub(start) < self.warmup_ticks)
+    }
+
+    /// Milliseconds of warm-up left, for the countdown the client shows.
+    fn starts_in_ms(&self, tick: u32) -> u32 {
+        match self.started_tick {
+            Some(start) => {
+                let left = self.warmup_ticks.saturating_sub(tick.wrapping_sub(start));
+                (left as f32 * TICK_DT * 1000.0).round() as u32
+            }
+            None => (self.warmup_ticks as f32 * TICK_DT * 1000.0).round() as u32,
         }
     }
 
@@ -514,6 +551,8 @@ struct Lobby {
     /// How long a line waits before starting short of full. See
     /// [`QUEUE_WAIT`].
     wait: f32,
+    /// Seconds a started match holds everybody still. See [`WARMUP`].
+    warmup: f32,
     connections: HashMap<PlayerId, Connection>,
     matches: HashMap<MatchId, Match>,
     tick: u32,
@@ -530,6 +569,7 @@ impl Lobby {
             tiers: vec![Stakes::DEFAULT],
             floor: MATCH_FLOOR,
             wait: QUEUE_WAIT,
+            warmup: WARMUP,
             connections: HashMap::new(),
             matches: HashMap::new(),
             tick: 0,
@@ -789,6 +829,7 @@ impl Lobby {
                 map,
                 stakes,
                 started_tick: None,
+                warmup_ticks: (self.warmup / TICK_DT).round() as u32,
                 forming_until: self.game_time() + FORMING_TIMEOUT,
                 awaiting: players.iter().copied().collect(),
                 bodies: HashMap::new(),
@@ -803,11 +844,18 @@ impl Lobby {
             "match forming"
         );
 
+        let found = ServerMsg::MatchFound {
+            match_id: id,
+            map_name: map.name.to_string(),
+            tier: tier_of(stakes),
+            players: seats as u32,
+        };
         for player_id in &players {
             // Out of the queue and into this match before the money moves, so
             // the next pass over the lines cannot place them twice.
             if let Some(connection) = self.connections.get_mut(player_id) {
                 connection.at = Whereabouts::Playing(id);
+                connection.send(found.clone());
             }
         }
         if self.request_entries(id, players.clone()) {
@@ -1552,6 +1600,8 @@ impl Lobby {
         // wall in a slightly different place for whoever was stepped last.
         let zone = game.zone(self.tick);
         let burn = zone_damage_per_second(game.elapsed(self.tick));
+        // Held on the spawn: the aim is theirs, nothing else is.
+        let frozen = game.warming_up(self.tick);
         let ground = game.map;
         let ids: Vec<PlayerId> = game.bodies.keys().copied().collect();
         let mut shots: Vec<(PlayerId, InputCommand)> = Vec::new();
@@ -1576,7 +1626,12 @@ impl Lobby {
                 // why there is no catch-up path here, however tempting one
                 // looks.
                 match body.pending.pop_front() {
-                    Some(command) => {
+                    Some(mut command) => {
+                        if frozen {
+                            command.forward = 0.0;
+                            command.right = 0.0;
+                            command.buttons = Buttons::empty();
+                        }
                         body.starved_ticks = 0;
                         body.last_applied_seq = command.seq;
                         body.last_input = command;
@@ -1740,7 +1795,13 @@ impl Lobby {
 
     /// `killer` gets the kill: the count, the reward, and the victim's stake.
     /// The victim's health is already at zero.
-    fn credit_kill(&mut self, match_id: MatchId, killer: PlayerId, victim: PlayerId, cause: DeathCause) {
+    fn credit_kill(
+        &mut self,
+        match_id: MatchId,
+        killer: PlayerId,
+        victim: PlayerId,
+        cause: DeathCause,
+    ) {
         let reward = self
             .matches
             .get(&match_id)
@@ -1822,7 +1883,13 @@ impl Lobby {
     /// A blast: everybody in reach and in sight of it is hurt, and anybody
     /// it finishes is the thrower's kill - or, if it was their own grenade,
     /// a death credited to whoever last hurt them.
-    fn explode(&mut self, match_id: MatchId, thrower: PlayerId, at: solatel_protocol::glam::Vec3, now: f32) {
+    fn explode(
+        &mut self,
+        match_id: MatchId,
+        thrower: PlayerId,
+        at: solatel_protocol::glam::Vec3,
+        now: f32,
+    ) {
         self.to_match(match_id, &ServerMsg::Exploded { at, thrower });
         let Some(game) = self.matches.get_mut(&match_id) else {
             return;
@@ -1930,10 +1997,7 @@ impl Lobby {
         // the shooter's own history, against the aim of the shot. Counted
         // only if it hits, and only ever judged over many hits.
         let flicked = {
-            let then = shooter.state_at(
-                self.tick,
-                crate::records::SNAP_WINDOW_SECONDS * 1000.0,
-            );
+            let then = shooter.state_at(self.tick, crate::records::SNAP_WINDOW_SECONDS * 1000.0);
             let before = solatel_protocol::sim::look_direction(then.yaw, then.pitch);
             direction.dot(before).clamp(-1.0, 1.0).acos()
                 > crate::records::SNAP_DEGREES.to_radians()
@@ -2198,6 +2262,7 @@ impl Lobby {
             tier: tier_of(game.stakes),
             duration_ms: (MATCH_DURATION * 1000.0) as u32,
             players: game.bodies.len() as u32,
+            starts_in_ms: game.starts_in_ms(self.tick),
         })
     }
 
@@ -2303,6 +2368,7 @@ impl Lobby {
         };
         let zone = game.zone(self.tick);
         let remaining_ms = ((MATCH_DURATION - game.elapsed(self.tick)).max(0.0) * 1000.0) as u32;
+        let starts_in_ms = game.starts_in_ms(self.tick);
         // Only the living are drawn. A body that has been eliminated is kept
         // for the board, not for the map: a corpse lying where somebody died
         // for the rest of the match is scenery nobody asked for.
@@ -2353,6 +2419,7 @@ impl Lobby {
                     .unwrap_or(0),
                 grenades: body.grenades,
                 live_grenades: live_grenades.clone(),
+                starts_in_ms,
             });
         }
     }
@@ -2393,6 +2460,16 @@ pub fn channel() -> (GameHandle, GameCommands) {
     (GameHandle { commands: tx }, GameCommands(rx))
 }
 
+/// How matches are made on this server: the fewest a match starts with, how
+/// long a short line waits, and how long a started match holds everybody on
+/// their spawn. See [`MATCH_FLOOR`], [`QUEUE_WAIT`] and [`WARMUP`].
+#[derive(Debug, Clone, Copy)]
+pub struct Matchmaking {
+    pub floor: usize,
+    pub wait: f32,
+    pub warmup: f32,
+}
+
 /// Starts the lobby.
 ///
 /// `ledger` is `None` for free play: no charging, no payouts, and an empty
@@ -2403,8 +2480,7 @@ pub fn spawn(
     records: Option<crate::records::RecordsHandle>,
     wallet: Option<crate::wallet::Terms>,
     tiers: Vec<Stakes>,
-    floor: usize,
-    wait: f32,
+    rules: Matchmaking,
 ) {
     let GameCommands(mut rx) = commands;
 
@@ -2414,8 +2490,9 @@ pub fn spawn(
         lobby.records = records;
         lobby.wallet = wallet;
         lobby.tiers = tiers;
-        lobby.floor = floor.max(1);
-        lobby.wait = wait.max(0.0);
+        lobby.floor = rules.floor.max(1);
+        lobby.wait = rules.wait.max(0.0);
+        lobby.warmup = rules.warmup.max(0.0);
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs_f32(TICK_DT));
         // Falling behind must not be made up by replaying ticks back to back;
         // for an authoritative server that would fast-forward the game.

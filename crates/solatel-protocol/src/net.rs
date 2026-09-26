@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -410,6 +410,12 @@ pub enum ServerMsg {
         /// Grenades in the air or on the ground, still to go off.
         #[serde(default)]
         live_grenades: Vec<GrenadeSnapshot>,
+        /// Milliseconds of warm-up left before the match goes live: everybody
+        /// on their spawn, looking round, unable to move, shoot or be hurt.
+        /// Zero once it is live. The match clock and the circle start when
+        /// this reaches zero, not when the players were placed.
+        #[serde(default)]
+        starts_in_ms: u32,
     },
     /// A shot was fired, for drawing tracers. Purely cosmetic: the damage it
     /// did, if any, arrives as [`ServerMsg::Damaged`].
@@ -460,7 +466,10 @@ pub enum ServerMsg {
     },
     /// A grenade went off, for the flash, the smoke and the bang. The damage
     /// it did arrives the usual way.
-    Exploded { at: Vec3, thrower: PlayerId },
+    Exploded {
+        at: Vec3,
+        thrower: PlayerId,
+    },
     /// This player is out of the match: killed, and not coming back.
     ///
     /// Sent to the player it happened to, on top of the [`ServerMsg::Killed`]
@@ -487,6 +496,20 @@ pub enum ServerMsg {
         /// Their place in that line, counting from one. Zero when not queued.
         place: u32,
     },
+    /// A line has become a match with this player in it, and the entry fees
+    /// are being taken. Nothing has been charged yet by the time this
+    /// arrives; `MatchStarted` follows once it has, or the player is back in
+    /// the lobby if the match did not get enough stakes.
+    ///
+    /// The "match found" moment every matchmaker has. Without it the queue
+    /// goes quiet for the seconds the buy-in takes and then a map appears.
+    MatchFound {
+        match_id: MatchId,
+        map_name: String,
+        tier: Tier,
+        /// How many are in it.
+        players: u32,
+    },
     /// A match has formed around this player and they are in it. Their entry
     /// fee has been taken by the time this arrives.
     MatchStarted {
@@ -504,6 +527,9 @@ pub enum ServerMsg {
         duration_ms: u32,
         /// How many bought into it.
         players: u32,
+        /// Milliseconds of warm-up left: see `Snapshot::starts_in_ms`.
+        #[serde(default)]
+        starts_in_ms: u32,
     },
     /// The match is over. The board is final, and a new one starts now.
     ///
@@ -647,6 +673,7 @@ mod tests {
                 id: 1,
                 position: Vec3::new(1.0, 0.1, 2.0),
             }],
+            starts_in_ms: 15_000,
         };
         let wire = encode(&snapshot).unwrap();
         assert!(matches!(

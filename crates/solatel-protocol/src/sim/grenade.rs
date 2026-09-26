@@ -106,7 +106,10 @@ mod tests {
     };
 
     static FLOOR: &[Brush] = &[
-        Brush::new(Vec3::new(-100.0, -1.0, -100.0), Vec3::new(100.0, 0.0, 100.0)),
+        Brush::new(
+            Vec3::new(-100.0, -1.0, -100.0),
+            Vec3::new(100.0, 0.0, 100.0),
+        ),
         // A wall at x 5..6, three metres tall.
         Brush::new(Vec3::new(5.0, 0.0, -10.0), Vec3::new(6.0, 3.0, 10.0)),
     ];
@@ -136,9 +139,20 @@ mod tests {
         for _ in 0..(64 * 4) {
             flight.step(map, TICK_DT);
         }
-        assert!(flight.position.y > 0.0 && flight.position.y < 0.2, "at {:?}", flight.position);
-        assert!(flight.velocity.length() < 1.0, "still moving at {:?}", flight.velocity);
-        assert!(flight.position.x < -5.0, "it should have gone where it was thrown");
+        assert!(
+            flight.position.y > 0.0 && flight.position.y < 0.2,
+            "at {:?}",
+            flight.position
+        );
+        assert!(
+            flight.velocity.length() < 1.0,
+            "still moving at {:?}",
+            flight.velocity
+        );
+        assert!(
+            flight.position.x < -5.0,
+            "it should have gone where it was thrown"
+        );
     }
 
     #[test]
@@ -149,7 +163,11 @@ mod tests {
         let mut flight = Flight::thrown_by(&thrower);
         for _ in 0..(64 * 3) {
             flight.step(map, TICK_DT);
-            assert!(flight.position.x < 5.0, "went into the wall at {:?}", flight.position);
+            assert!(
+                flight.position.x < 5.0,
+                "went into the wall at {:?}",
+                flight.position
+            );
         }
     }
 
@@ -165,6 +183,10 @@ mod tests {
         // Behind the wall, well within range of a grenade just in front of it.
         let by_the_wall = Vec3::new(4.5, 0.1, 0.0);
         assert!(blast_damage(by_the_wall, &standing(3.0), map) > 0);
-        assert_eq!(blast_damage(by_the_wall, &standing(7.0), map), 0, "through a wall");
+        assert_eq!(
+            blast_damage(by_the_wall, &standing(7.0), map),
+            0,
+            "through a wall"
+        );
     }
 }

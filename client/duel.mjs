@@ -158,6 +158,7 @@ class Client {
           ]),
         );
         this.pool = msg.pool_micro_usd;
+        this.startsInMs = msg.starts_in_ms ?? 0;
         break;
       case 'funds':
         this.funds = msg;
@@ -284,6 +285,11 @@ if (potBefore < wanted) {
       `in escrow; the pot says $${(potBefore / 1e6).toFixed(2)}`,
   );
 }
+
+// A match holds everybody on their spawn for its warm-up, and a trigger
+// pulled in it does nothing. Wait for it to go live.
+while (clients.some((c) => (c.startsInMs ?? 0) > 0)) await sleep(200);
+console.log('>> the warm-up is over; the match is live');
 
 // Sweep. Each client cycles its aim across every other player, firing the
 // whole time. The trigger is held rather than pulsed because the server rate
