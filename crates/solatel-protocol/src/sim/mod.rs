@@ -19,6 +19,7 @@
 
 pub mod broadphase;
 pub mod collide;
+pub mod grenade;
 pub mod hitscan;
 pub mod map;
 
@@ -87,6 +88,50 @@ pub const MAX_HEALTH: i16 = 100;
 /// Every region divides into [`MAX_HEALTH`] exactly, so the shots-to-kill are
 /// the numbers rather than something that falls out of rounding.
 pub const WEAPON_DAMAGE: i16 = 25;
+
+// --- Crouching, the magazine, grenades, and getting health back ----------
+
+/// Running speed while crouched. Under half of standing, so crouching is a
+/// choice to be steadier and smaller, not a way to move.
+pub const CROUCH_SPEED: f32 = 3.6;
+
+/// How far crouching lowers the eyes and the top of the body that can be
+/// shot. The head box goes down with it, so aiming at a crouched player's
+/// head means aiming lower. The collision box does not change: a crouched
+/// player cannot get under anything a standing one cannot, which keeps the
+/// map's collision one shape for everybody.
+pub const CROUCH_DROP: f32 = 0.55;
+
+/// Rounds in a magazine, and seconds to put a fresh one in.
+pub const MAGAZINE: u32 = 30;
+pub const RELOAD_SECONDS: f32 = 2.2;
+
+/// Grenades a player starts a life with.
+pub const GRENADES_PER_LIFE: u32 = 2;
+
+/// Seconds from the throw to the bang.
+pub const GRENADE_FUSE: f32 = 2.5;
+
+/// How hard a grenade is thrown, in metres per second along the aim, plus a
+/// little lift so a throw at the horizon still arcs.
+pub const GRENADE_THROW_SPEED: f32 = 15.0;
+pub const GRENADE_LIFT: f32 = 3.0;
+
+/// The blast: full damage within the inner radius, falling off to nothing at
+/// the outer one. Anything between the grenade and a player blocks it.
+pub const GRENADE_INNER_RADIUS: f32 = 2.0;
+pub const GRENADE_RADIUS: f32 = 7.0;
+pub const GRENADE_DAMAGE: i16 = 100;
+
+/// Health comes back on its own: nothing for this long after the last
+/// damage, then all of it over [`REGEN_SECONDS`].
+pub const REGEN_DELAY: f32 = 5.0;
+pub const REGEN_SECONDS: f32 = 11.0;
+
+/// A death that is nobody's shot - the zone, a fall, their own grenade - is
+/// still credited to whoever last hurt them, if they did so this recently.
+/// Running into the zone to die is then no way out of a fight already lost.
+pub const KILL_CREDIT_SECONDS: f32 = 15.0;
 
 /// Where a shot landed, which is what decides how much it hurt.
 ///
@@ -245,20 +290,21 @@ pub const ZONE_STAGES: f32 = 4.0;
 /// Where it stops. Big enough for a fight, small enough that nobody hides.
 pub const ZONE_FINAL_RADIUS: f32 = 12.0;
 
-/// How fast a player outside the circle is pushed back towards it.
-///
-/// Half of running speed. Firm enough that standing still and ignoring it is
-/// not an option, gentle enough that being caught by the edge is a nudge
-/// rather than being fired out of a cannon.
-pub const ZONE_PUSH_SPEED: f32 = 4.0;
+/// Health lost per second outside the circle, by how far it has closed: the
+/// first stage stings, the last one kills in a few seconds.
+pub const ZONE_DAMAGE_PER_SECOND: [f32; 5] = [4.0, 6.0, 9.0, 14.0, 20.0];
 
-/// The circle players are kept inside, centred on the map's origin.
+/// The circle players are fought inside, centred on the map's origin.
 ///
-/// It does no damage. Conrad's call, and a good one: a zone that kills is a
-/// second way to die that nobody is paid for, and in a game where a kill is
-/// somebody's win, a death that pays nobody is money leaving the table. This
-/// one only ever pushes, so every death in a match is still a kill with a
-/// name on it.
+/// It is not a wall. It used to be one - it pushed anybody outside back
+/// towards the middle - and a push is a velocity, which a wall stops: a
+/// player caught behind a building as the circle closed was pressed against
+/// it and left there, outside, for the rest of the match. So it hurts
+/// instead, on the server, at [`ZONE_DAMAGE_PER_SECOND`]; movement ignores
+/// it entirely, and whoever is outside can walk back in whichever way the
+/// map allows. A death to it is credited to whoever last hurt the player
+/// (see [`KILL_CREDIT_SECONDS`]), so it pays somebody whenever a fight put
+/// them there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Zone {
     /// Metres from the origin. Infinite for no limit at all.
@@ -307,6 +353,19 @@ pub fn zone_at(full: f32, elapsed: f32) -> Zone {
     }
 }
 
+impl Zone {
+    /// Whether a point on the ground is outside the circle.
+    pub fn excludes(&self, position: Vec3) -> bool {
+        self.radius.is_finite() && Vec2::new(position.x, position.z).length() > self.radius
+    }
+}
+
+/// Health lost per second outside the circle this far into a match.
+pub fn zone_damage_per_second(elapsed: f32) -> f32 {
+    let stage = ((elapsed / ZONE_STEP).floor() as usize).min(ZONE_DAMAGE_PER_SECOND.len() - 1);
+    ZONE_DAMAGE_PER_SECOND[stage]
+}
+
 /// Minimum seconds between shots.
 pub const WEAPON_FIRE_INTERVAL: f32 = 0.12;
 
@@ -324,6 +383,10 @@ pub struct PlayerState {
     pub pitch: f32,
     pub on_ground: bool,
     pub health: i16,
+    /// Crouched this tick. Lowers the eyes and the top of the hit box, and
+    /// slows movement; see [`CROUCH_DROP`].
+    #[serde(default)]
+    pub crouched: bool,
 }
 
 impl PlayerState {
@@ -335,6 +398,7 @@ impl PlayerState {
             pitch: 0.0,
             on_ground: false,
             health: MAX_HEALTH,
+            crouched: false,
         }
     }
 
@@ -344,7 +408,21 @@ impl PlayerState {
 
     /// Where this player's eyes are. Shots originate here.
     pub fn eye_position(&self) -> Vec3 {
-        self.position + Vec3::new(0.0, EYE_OFFSET, 0.0)
+        self.position + Vec3::new(0.0, self.eye_offset(), 0.0)
+    }
+
+    /// Eye height above the centre of the collision box, crouched or not.
+    pub fn eye_offset(&self) -> f32 {
+        if self.crouched {
+            EYE_OFFSET - CROUCH_DROP
+        } else {
+            EYE_OFFSET
+        }
+    }
+
+    /// How much lower than standing the top of this player's body is.
+    pub fn crouch_drop(&self) -> f32 {
+        if self.crouched { CROUCH_DROP } else { 0.0 }
     }
 
     /// Unit vector the player is looking along.
@@ -361,6 +439,13 @@ pub struct Buttons(pub u8);
 impl Buttons {
     pub const JUMP: u8 = 1 << 0;
     pub const FIRE: u8 = 1 << 1;
+    /// Held to stay crouched.
+    pub const CROUCH: u8 = 1 << 2;
+    /// Held to put in a fresh magazine; the server ignores it on a full one.
+    pub const RELOAD: u8 = 1 << 3;
+    /// Pressed to throw a grenade. The server throws on the press, not while
+    /// it is held, so holding it throws one.
+    pub const THROW: u8 = 1 << 4;
 
     pub const fn empty() -> Self {
         Self(0)
@@ -384,6 +469,18 @@ impl Buttons {
 
     pub const fn fire(self) -> bool {
         self.contains(Self::FIRE)
+    }
+
+    pub const fn crouch(self) -> bool {
+        self.contains(Self::CROUCH)
+    }
+
+    pub const fn reload(self) -> bool {
+        self.contains(Self::RELOAD)
+    }
+
+    pub const fn throw(self) -> bool {
+        self.contains(Self::THROW)
     }
 }
 
@@ -455,7 +552,7 @@ pub fn look_direction(yaw: f32, pitch: f32) -> Vec3 {
 ///
 /// `dt` is a parameter rather than a constant only so tests can explore other
 /// step sizes; in production both sides pass [`TICK_DT`].
-pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, zone: Zone, dt: f32) {
+pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
     state.yaw = input.yaw;
     state.pitch = input.pitch;
 
@@ -470,12 +567,15 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, zone: Zone
     }
 
     let wish_direction = wish_direction(input);
+    state.crouched = input.buttons.crouch();
 
     if state.on_ground {
         apply_friction(state, dt);
-        accelerate(state, wish_direction, MAX_GROUND_SPEED, GROUND_ACCEL, dt);
+        let top = if state.crouched { CROUCH_SPEED } else { MAX_GROUND_SPEED };
+        accelerate(state, wish_direction, top, GROUND_ACCEL, dt);
 
-        if input.buttons.jump() {
+        // No jumping from a crouch: standing up is the first half of a jump.
+        if input.buttons.jump() && !state.crouched {
             state.velocity.y = JUMP_SPEED;
             state.on_ground = false;
         }
@@ -487,56 +587,7 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, zone: Zone
         apply_gravity(state, dt);
     }
 
-    // Before the move, not after. Constraining the velocity here means the
-    // player never crosses the boundary in the first place; doing it
-    // afterwards would let them step through by a tick's worth of travel and
-    // then be dragged back, which reads as the wall stuttering.
-    apply_zone(state, zone);
-
     integrate(state, map, dt);
-}
-
-/// Keeps a player inside the match's circle.
-///
-/// Two behaviours, and they are different situations rather than two halves
-/// of one rule. A player pressing against the edge simply loses the outward
-/// part of their movement - the zone is a wall, and walking into a wall stops
-/// you rather than shoving you. A player who is *outside* it, because the
-/// circle shrank past them while they were standing still, is pushed back in
-/// at a fixed speed until they are not.
-///
-/// It never touches `y`. Falling is not something the zone has an opinion on,
-/// and a push that fought gravity would hold a player up in mid-air at the
-/// boundary.
-fn apply_zone(state: &mut PlayerState, zone: Zone) {
-    if !zone.radius.is_finite() {
-        return;
-    }
-    let here = Vec2::new(state.position.x, state.position.z);
-    let distance = here.length();
-    // Dead centre. There is no outward direction to speak of, and nothing
-    // that needs one.
-    if distance < 1e-3 {
-        return;
-    }
-    let outward = here / distance;
-    let radial = Vec2::new(state.velocity.x, state.velocity.z).dot(outward);
-
-    if distance > zone.radius {
-        // Outside, and the circle is not coming back. Overrides whatever
-        // they were doing, including running further out.
-        if radial > -ZONE_PUSH_SPEED {
-            let correction = -ZONE_PUSH_SPEED - radial;
-            state.velocity.x += outward.x * correction;
-            state.velocity.z += outward.y * correction;
-        }
-    } else if radial > 0.0 && distance > zone.radius - PLAYER_HALF_EXTENTS.x {
-        // At the edge and pushing outward. That component goes; anything
-        // along the boundary is left alone, so a player can still run around
-        // the inside of it rather than sticking.
-        state.velocity.x -= outward.x * radial;
-        state.velocity.z -= outward.y * radial;
-    }
 }
 
 /// The direction the player is asking to move, in world space, on the XZ plane.
@@ -618,8 +669,8 @@ fn integrate(state: &mut PlayerState, map: &Map, dt: f32) {
 }
 
 /// Convenience for callers stepping at the canonical rate.
-pub fn step_tick(state: &mut PlayerState, input: &InputCommand, map: &Map, zone: Zone) {
-    step(state, input, map, zone, TICK_DT);
+pub fn step_tick(state: &mut PlayerState, input: &InputCommand, map: &Map) {
+    step(state, input, map, TICK_DT);
 }
 
 #[cfg(test)]
@@ -644,7 +695,7 @@ mod tests {
         let mut state = PlayerState::spawned_at(FLAT_MAP.spawn(0));
         // Let them fall onto the floor first.
         for _ in 0..120 {
-            step_tick(&mut state, &idle(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &idle(), &FLAT_MAP);
         }
         assert!(state.on_ground, "test setup: player should have landed");
         state
@@ -682,7 +733,7 @@ mod tests {
     fn running_reaches_top_speed_but_not_beyond() {
         let mut state = grounded_player();
         for _ in 0..200 {
-            step_tick(&mut state, &running_forward(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &running_forward(), &FLAT_MAP);
         }
         let speed = Vec2::new(state.velocity.x, state.velocity.z).length();
         assert!(
@@ -696,7 +747,7 @@ mod tests {
         let mut straight = grounded_player();
         let mut diagonal = grounded_player();
         for _ in 0..200 {
-            step_tick(&mut straight, &running_forward(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut straight, &running_forward(), &FLAT_MAP);
             step_tick(
                 &mut diagonal,
                 &InputCommand {
@@ -705,7 +756,6 @@ mod tests {
                     ..idle()
                 },
                 &FLAT_MAP,
-                Zone::OPEN,
             );
         }
         let straight_speed = Vec2::new(straight.velocity.x, straight.velocity.z).length();
@@ -720,10 +770,10 @@ mod tests {
     fn releasing_the_controls_brings_a_player_to_a_stop() {
         let mut state = grounded_player();
         for _ in 0..100 {
-            step_tick(&mut state, &running_forward(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &running_forward(), &FLAT_MAP);
         }
         for _ in 0..200 {
-            step_tick(&mut state, &idle(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &idle(), &FLAT_MAP);
         }
         let speed = Vec2::new(state.velocity.x, state.velocity.z).length();
         assert!(speed < 0.05, "player kept sliding at {speed} m/s");
@@ -736,13 +786,13 @@ mod tests {
             buttons: Buttons(Buttons::JUMP),
             ..idle()
         };
-        step_tick(&mut state, &jump, &FLAT_MAP, Zone::OPEN);
+        step_tick(&mut state, &jump, &FLAT_MAP);
         assert!(!state.on_ground, "should be airborne right after jumping");
 
         let peak_start = state.position.y;
         let mut peak = peak_start;
         for _ in 0..200 {
-            step_tick(&mut state, &idle(), &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &idle(), &FLAT_MAP);
             peak = peak.max(state.position.y);
         }
         assert!(state.on_ground, "should have landed again");
@@ -775,7 +825,7 @@ mod tests {
         let run = || {
             let mut state = grounded_player();
             for input in &inputs {
-                step_tick(&mut state, input, &FLAT_MAP, Zone::OPEN);
+                step_tick(&mut state, input, &FLAT_MAP);
             }
             state
         };
@@ -788,7 +838,7 @@ mod tests {
         // This one deliberately uses the real map: the point is the geometry.
         let mut state = PlayerState::spawned_at(TEST_MAP.spawn(0));
         for _ in 0..120 {
-            step_tick(&mut state, &idle(), &TEST_MAP, Zone::OPEN);
+            step_tick(&mut state, &idle(), &TEST_MAP);
         }
         for i in 0..600 {
             let input = InputCommand {
@@ -803,7 +853,7 @@ mod tests {
                     Buttons::empty()
                 },
             };
-            step_tick(&mut state, &input, &TEST_MAP, Zone::OPEN);
+            step_tick(&mut state, &input, &TEST_MAP);
             assert!(
                 !collide::overlaps_any(state.position, PLAYER_HALF_EXTENTS, &TEST_MAP),
                 "tick {i}: player ended inside geometry at {:?}",
@@ -826,7 +876,7 @@ mod tests {
         .sanitized();
 
         for _ in 0..200 {
-            step_tick(&mut state, &hostile, &FLAT_MAP, Zone::OPEN);
+            step_tick(&mut state, &hostile, &FLAT_MAP);
             assert!(
                 state.position.is_finite(),
                 "position became {:?}",
@@ -967,76 +1017,48 @@ mod tests {
     }
 
     #[test]
-    fn the_zone_stops_a_player_walking_out_of_it() {
-        // Running flat out at the boundary, for long enough that anything
-        // leaky would show. The wall holds rather than the player drifting
-        // through it a tick at a time.
-        let zone = Zone { radius: 6.0 };
-        let mut state = grounded_player();
-        let mut running = running_forward();
-        // Face +X so "forward" is straight at the wall.
-        running.yaw = -std::f32::consts::FRAC_PI_2;
-        for _ in 0..400 {
-            step_tick(&mut state, &running, &FLAT_MAP, zone);
-        }
-        let out = Vec2::new(state.position.x, state.position.z).length();
-        assert!(
-            out <= zone.radius + 0.05,
-            "a player ran {out:.2} m out of a {} m circle",
-            zone.radius
-        );
-    }
-
-    #[test]
-    fn the_zone_pushes_back_a_player_it_closed_past() {
-        // Standing still, well outside, as though the circle had shrunk over
-        // them. It does not kill them and it does not teleport them: it
-        // walks them back in.
-        let zone = Zone { radius: 5.0 };
+    fn the_zone_does_not_move_anybody() {
+        // Well outside a small circle, standing still. The circle is damage
+        // now, dealt by the server; movement has no opinion on it, so a
+        // player caught behind a wall is never pinned there by a push.
         let mut state = grounded_player();
         state.position.x = 30.0;
-        let start = state.position.x;
-
-        step_tick(&mut state, &idle(), &FLAT_MAP, zone);
-        assert!(
-            state.position.x < start,
-            "a player outside the circle was not moved towards it"
-        );
-        assert!(
-            state.health > 0,
-            "the circle killed somebody, which it must never do"
-        );
-
-        for _ in 0..600 {
-            step_tick(&mut state, &idle(), &FLAT_MAP, zone);
+        let start = state.position;
+        for _ in 0..64 {
+            step_tick(&mut state, &idle(), &FLAT_MAP);
         }
-        let out = Vec2::new(state.position.x, state.position.z).length();
-        assert!(
-            out <= zone.radius + 0.5,
-            "a player left {out:.2} m outside a {} m circle",
-            zone.radius
-        );
+        assert!((state.position - start).length() < 0.05, "the zone moved a player");
+        assert!(Zone { radius: 5.0 }.excludes(state.position));
+        assert!(!Zone::OPEN.excludes(state.position));
     }
 
     #[test]
-    fn the_zone_leaves_movement_along_it_alone() {
-        // Pressed against the edge and running around it rather than at it.
-        // Removing the whole velocity would make the boundary sticky; only
-        // the part pointing out of it goes.
-        let zone = Zone { radius: 6.0 };
-        let mut state = grounded_player();
-        state.position.x = 5.9;
-        let mut sideways = running_forward();
-        // Facing -Z, which at x = 5.9 is a tangent to the circle.
-        sideways.yaw = 0.0;
-
-        for _ in 0..64 {
-            step_tick(&mut state, &sideways, &FLAT_MAP, zone);
+    fn the_zone_hurts_more_as_it_closes() {
+        let mut last = 0.0;
+        for minute in 0..6 {
+            let rate = zone_damage_per_second(minute as f32 * ZONE_STEP + 1.0);
+            assert!(rate >= last, "the zone got gentler at minute {minute}");
+            last = rate;
         }
-        assert!(
-            state.position.z.abs() > 2.0,
-            "a player hugging the boundary could not move along it"
-        );
+    }
+
+    #[test]
+    fn crouching_is_slower_lower_and_cannot_jump() {
+        let mut standing = grounded_player();
+        let mut crouched = grounded_player();
+        let mut low = running_forward();
+        low.buttons = Buttons(Buttons::CROUCH | Buttons::JUMP);
+        for _ in 0..128 {
+            step_tick(&mut standing, &running_forward(), &FLAT_MAP);
+            step_tick(&mut crouched, &low, &FLAT_MAP);
+        }
+        let fast = Vec2::new(standing.velocity.x, standing.velocity.z).length();
+        let slow = Vec2::new(crouched.velocity.x, crouched.velocity.z).length();
+        assert!(slow <= CROUCH_SPEED + 0.01, "crouched at {slow:.2} m/s");
+        assert!(fast > slow * 1.5, "crouching was not slower");
+        assert!(crouched.on_ground, "a crouched player jumped");
+        assert!(crouched.crouched);
+        assert!(crouched.eye_position().y < standing.eye_position().y - 0.5 + (crouched.position.y - standing.position.y));
     }
 
     #[test]

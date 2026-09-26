@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 10;
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -163,6 +163,26 @@ pub enum ClientMsg {
 }
 
 /// One player as the server sees them.
+/// What ended a life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathCause {
+    #[default]
+    Rifle,
+    Grenade,
+    /// Outside the circle for too long.
+    Zone,
+    /// Out of the world, or the resume window closing.
+    Fall,
+}
+
+/// A grenade that has not gone off yet.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GrenadeSnapshot {
+    pub id: u32,
+    pub position: Vec3,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerSnapshot {
     pub id: PlayerId,
@@ -377,6 +397,19 @@ pub enum ServerMsg {
         match_remaining_ms: u32,
         server_time_ms: f64,
         players: Vec<PlayerSnapshot>,
+        /// The receiving player's own weapon: rounds in the magazine,
+        /// milliseconds of reload left (0 when not reloading), and grenades
+        /// left. Only ever about the player it is sent to - what is in
+        /// somebody else's magazine is not theirs to know.
+        #[serde(default)]
+        ammo: u32,
+        #[serde(default)]
+        reload_ms: u32,
+        #[serde(default)]
+        grenades: u32,
+        /// Grenades in the air or on the ground, still to go off.
+        #[serde(default)]
+        live_grenades: Vec<GrenadeSnapshot>,
     },
     /// A shot was fired, for drawing tracers. Purely cosmetic: the damage it
     /// did, if any, arrives as [`ServerMsg::Damaged`].
@@ -421,7 +454,13 @@ pub enum ServerMsg {
         killer: Option<PlayerId>,
         killer_name: Option<String>,
         headshot: bool,
+        /// What did it, for the killfeed.
+        #[serde(default)]
+        cause: DeathCause,
     },
+    /// A grenade went off, for the flash, the smoke and the bang. The damage
+    /// it did arrives the usual way.
+    Exploded { at: Vec3, thrower: PlayerId },
     /// This player is out of the match: killed, and not coming back.
     ///
     /// Sent to the player it happened to, on top of the [`ServerMsg::Killed`]
@@ -601,6 +640,13 @@ mod tests {
                 id: PlayerId::new(),
                 state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
             }],
+            ammo: 30,
+            reload_ms: 0,
+            grenades: 2,
+            live_grenades: vec![GrenadeSnapshot {
+                id: 1,
+                position: Vec3::new(1.0, 0.1, 2.0),
+            }],
         };
         let wire = encode(&snapshot).unwrap();
         assert!(matches!(
@@ -672,6 +718,7 @@ mod tests {
             killer: None,
             killer_name: None,
             headshot: true,
+            cause: DeathCause::Fall,
         })
         .unwrap();
         assert!(wire.contains("\"victim_name\":\"Victim\""), "{wire}");

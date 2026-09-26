@@ -895,7 +895,84 @@ export class World {
     slot.remaining = TRACER_SECONDS;
   }
 
+  /**
+   * Grenades still to go off, as the server last placed them. Each is eased
+   * towards its reported position so a grenade at twenty snapshots a second
+   * rolls rather than hops. Purely drawn: where it goes off, and whom it
+   * hurts, is the server's.
+   */
+  setGrenades(list) {
+    this._grenades = this._grenades ?? new Map();
+    const seen = new Set();
+    for (const g of list) {
+      seen.add(g.id);
+      let entry = this._grenades.get(g.id);
+      if (!entry) {
+        entry = { mesh: makeGrenade(), target: new THREE.Vector3() };
+        entry.mesh.position.set(g.position[0], g.position[1], g.position[2]);
+        this.scene.add(entry.mesh);
+        this._grenades.set(g.id, entry);
+      }
+      entry.target.set(g.position[0], g.position[1], g.position[2]);
+    }
+    for (const [id, entry] of this._grenades) {
+      if (seen.has(id)) continue;
+      this.scene.remove(entry.mesh);
+      this._grenades.delete(id);
+    }
+  }
+
+  /** A grenade went off here: a flash, a light, and smoke that rises. */
+  explode(at) {
+    this._blasts = this._blasts ?? [];
+    let blast = this._blasts.find((b) => b.age >= BLAST_SECONDS);
+    if (!blast) {
+      blast = makeBlast();
+      this.scene.add(blast.group);
+      this._blasts.push(blast);
+    }
+    blast.group.position.set(at[0], at[1], at[2]);
+    blast.age = 0;
+    blast.group.visible = true;
+    for (const puff of blast.puffs) {
+      puff.mesh.position.set(
+        (Math.random() - 0.5) * 1.6,
+        Math.random() * 0.6,
+        (Math.random() - 0.5) * 1.6,
+      );
+      puff.rise = 0.6 + Math.random() * 0.9;
+      puff.grow = 1.4 + Math.random() * 1.6;
+    }
+  }
+
   update(dt) {
+    if (this._grenades) {
+      const k = 1 - Math.exp(-18 * dt);
+      for (const entry of this._grenades.values()) {
+        entry.mesh.position.lerp(entry.target, k);
+        entry.mesh.rotation.x += dt * 6;
+        entry.mesh.rotation.z += dt * 4;
+      }
+    }
+    for (const blast of this._blasts ?? []) {
+      if (blast.age >= BLAST_SECONDS) continue;
+      blast.age += dt;
+      const t = blast.age;
+      if (t >= BLAST_SECONDS) {
+        blast.group.visible = false;
+        continue;
+      }
+      const flash = Math.max(0, 1 - t / 0.22);
+      blast.fireball.scale.setScalar(0.4 + (1 - flash) * 3.2);
+      blast.fireball.material.opacity = flash;
+      blast.light.intensity = flash * 60;
+      for (const puff of blast.puffs) {
+        puff.mesh.position.y += puff.rise * dt;
+        const life = t / BLAST_SECONDS;
+        puff.mesh.scale.setScalar(0.5 + puff.grow * Math.sqrt(life));
+        puff.mesh.material.opacity = 0.55 * (1 - life) * Math.min(1, t / 0.08);
+      }
+    }
     for (const slot of this._tracers) {
       if (slot.remaining <= 0) continue;
       slot.remaining -= dt;
@@ -920,4 +997,48 @@ export class World {
     this.sun.target.position.copy(target);
     this.sun.target.updateMatrixWorld();
   }
+}
+
+/** How long a blast's smoke hangs. */
+const BLAST_SECONDS = 2.6;
+
+function makeGrenade() {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3d4a2c, roughness: 0.8, metalness: 0.2 }),
+  );
+  body.scale.set(1, 1.25, 1);
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.022, 0.026, 0.05, 8),
+    new THREE.MeshStandardMaterial({ color: 0x8a8d90, roughness: 0.4, metalness: 0.8 }),
+  );
+  cap.position.y = 0.085;
+  group.add(body, cap);
+  group.castShadow = true;
+  return group;
+}
+
+function makeBlast() {
+  const group = new THREE.Group();
+  const fireball = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xffc070,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  const light = new THREE.PointLight(0xffa550, 0, 18, 2);
+  light.position.y = 0.5;
+  const smoke = new THREE.MeshLambertMaterial({ color: 0x55504a, transparent: true, depthWrite: false });
+  const puffs = [];
+  for (let i = 0; i < 7; i += 1) {
+    const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 1), smoke.clone());
+    group.add(mesh);
+    puffs.push({ mesh, rise: 1, grow: 2 });
+  }
+  group.add(fireball, light);
+  return { group, fireball, light, puffs, age: BLAST_SECONDS };
 }

@@ -301,6 +301,59 @@ export class Audio {
     thud.stop(now + 0.32);
   }
 
+  /**
+   * A grenade going off: a crack, a long low roll, and debris after it.
+   * Placed like a shot, so it has a side and arrives late from far away.
+   */
+  boom(at, listener, forward) {
+    if (!this.ready) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    const { context } = this;
+    const start = context.currentTime + place.delay;
+    const out = place.input;
+    this.burst(out, start, {
+      gain: 1.8 * place.gain, attack: 0.001, decay: 0.08, type: 'bandpass', frequency: 1400, q: 0.5,
+    });
+    this.burst(out, start, {
+      gain: 2.2 * place.gain, attack: 0.004, decay: 0.9, type: 'lowpass', frequency: 320, q: 0.7,
+    });
+    const thud = context.createOscillator();
+    const gain = context.createGain();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(90, start);
+    thud.frequency.exponentialRampToValueAtTime(28, start + 0.6);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(1.4 * place.gain, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.8);
+    thud.connect(gain).connect(out);
+    thud.start(start);
+    thud.stop(start + 0.85);
+    this.burst(out, start + 0.25, {
+      gain: 0.25 * place.gain, attack: 0.05, decay: 0.4, type: 'highpass', frequency: 2600, q: 0.4,
+    });
+  }
+
+  /** The magazine out, and a moment later the new one in and the bolt. */
+  reload(seconds) {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    const click = (at, frequency, gain) =>
+      this.burst(this.master, at, { gain, attack: 0.001, decay: 0.03, type: 'bandpass', frequency, q: 3 });
+    click(now + 0.12, 1900, 0.35);
+    click(now + seconds * 0.62, 1500, 0.45);
+    click(now + seconds * 0.85, 2400, 0.4);
+    click(now + seconds * 0.88, 1200, 0.35);
+  }
+
+  /** An empty magazine. */
+  dryFire() {
+    if (!this.ready) return;
+    this.burst(this.master, this.context.currentTime, {
+      gain: 0.25, attack: 0.001, decay: 0.02, type: 'bandpass', frequency: 2800, q: 4,
+    });
+  }
+
   /** Landing. Scaled by how hard, so a hop and a drop are different events. */
   land(speed) {
     if (!this.ready || speed < 1.5) return;

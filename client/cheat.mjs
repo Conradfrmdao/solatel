@@ -22,6 +22,8 @@
 //   * values the wire cannot carry - a button byte of 65535, a speed that is
 //     a string - and one message with ten thousand commands in it, far past
 //     the size limit; each of those should end the connection;
+//   * a grenade thrown every other command, for as many as the server will
+//     let go of - two a life, whatever the client says;
 //   * queueing for a second match from inside the first, which would be a
 //     second life for one stake if it worked;
 //   * a withdrawal of a negative amount;
@@ -42,6 +44,8 @@ const MAX_GROUND_SPEED = 8.0;
 const WEAPON_FIRE_INTERVAL = 0.12;
 const FIRE = 1 << 1;
 const JUMP = 1 << 0;
+const THROW = 1 << 4;
+const GRENADES_PER_LIFE = 2;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -59,6 +63,7 @@ class Wire {
     this.me = null;
     this.matchStarts = 0;
     this.refusals = [];
+    this.explosions = 0;
   }
 
   async connect(hello = {}) {
@@ -104,6 +109,9 @@ class Wire {
             this.me = { at: p.state.position, health: p.state.health, yaw: p.state.yaw };
           }
         }
+        break;
+      case 'exploded':
+        if (msg.thrower === this.playerId) this.explosions += 1;
         break;
       case 'shot_fired':
         if (msg.shooter === this.playerId) this.shots += 1;
@@ -259,6 +267,26 @@ check(
   back.balance === undefined || back.balance === balanceInMatch,
   'and its balance is what the ledger says, not what it claimed',
   `balance ${back.balance ?? '(no change sent)'}`,
+);
+
+// ---- more grenades than a life carries -----------------------------------------
+// The throw button pressed and released every other command, forty times:
+// forty rising edges, each one a throw if the client were believed. Last,
+// and thrown high, because a grenade is as dangerous to its thrower as to
+// anybody and the checks above want the cheat alive.
+for (let k = 0; k < 80; k += 1) {
+  back.seq += 1;
+  back.send({
+    t: 'inputs',
+    commands: [{ seq: back.seq, forward: 0, right: 0, yaw: heading, pitch: 0.9, buttons: k % 2 ? 0 : THROW }],
+  });
+  await sleep(20);
+}
+await sleep(4000); // past the fuse
+check(
+  back.explosions <= GRENADES_PER_LIFE,
+  'forty throws in a row let go of no more grenades than a life carries',
+  `${back.explosions} went off, at most ${GRENADES_PER_LIFE}`,
 );
 
 // ---- values the wire cannot carry ---------------------------------------------

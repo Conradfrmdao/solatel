@@ -40606,7 +40606,7 @@ pub use ARENA as TEST_MAP;
 mod tests {
     use super::*;
     use crate::sim::collide::overlaps_any;
-    use crate::sim::{PLAYER_HALF_EXTENTS, Zone};
+    use crate::sim::PLAYER_HALF_EXTENTS;
 
     /// Every map in the build, because every one of them ships.
     ///
@@ -40773,7 +40773,7 @@ mod tests {
             for (i, spawn) in map.spawns.iter().enumerate() {
                 let mut state = crate::sim::PlayerState::spawned_at(*spawn);
                 for _ in 0..400 {
-                    crate::sim::step_tick(&mut state, &idle(spawn.yaw), map, Zone::OPEN);
+                    crate::sim::step_tick(&mut state, &idle(spawn.yaw), map);
                 }
                 assert!(
                     state.on_ground,
@@ -40810,7 +40810,7 @@ mod tests {
             for (i, spawn) in map.spawns.iter().enumerate() {
                 let mut state = crate::sim::PlayerState::spawned_at(*spawn);
                 for _ in 0..400 {
-                    crate::sim::step_tick(&mut state, &idle(spawn.yaw), map, Zone::OPEN);
+                    crate::sim::step_tick(&mut state, &idle(spawn.yaw), map);
                 }
                 let moved = Vec3::new(
                     state.position.x - spawn.position.x,
@@ -40859,7 +40859,7 @@ mod tests {
                     command.buttons.set(crate::sim::Buttons::JUMP, true);
 
                     for _ in 0..ticks {
-                        crate::sim::step_tick(&mut state, &command, map, Zone::OPEN);
+                        crate::sim::step_tick(&mut state, &command, map);
 
                         if state.position.y < -1.0 {
                             escapes.push(format!(
@@ -40933,7 +40933,7 @@ mod tests {
 
             let mut highest = state.position.y;
             for _ in 0..(SECONDS * crate::net::TICK_HZ as usize) {
-                crate::sim::step_tick(&mut state, &command, &ARENA, Zone::OPEN);
+                crate::sim::step_tick(&mut state, &command, &ARENA);
                 highest = highest.max(state.position.y);
             }
 
@@ -40978,7 +40978,7 @@ mod tests {
 
         let mut highest = state.position.y;
         for _ in 0..(SECONDS * crate::net::TICK_HZ as usize) {
-            crate::sim::step_tick(&mut state, &command, &ARENA, Zone::OPEN);
+            crate::sim::step_tick(&mut state, &command, &ARENA);
             highest = highest.max(state.position.y);
         }
 
@@ -41045,7 +41045,7 @@ mod tests {
                 let mut reached = 0.0_f32;
                 let mut across_at_top = None;
                 for _ in 0..ticks {
-                    crate::sim::step_tick(&mut state, &command, &ARENA, Zone::OPEN);
+                    crate::sim::step_tick(&mut state, &command, &ARENA);
                     reached = reached.max(state.position.y);
                     if across_at_top.is_none() && state.position.y >= TOP_OF_FLIGHT {
                         across_at_top = Some((state.position - start).dot(sideways).abs());
@@ -41099,7 +41099,7 @@ mod tests {
                     let yaw = step as f32 * std::f32::consts::TAU / 16.0;
                     let mut state = crate::sim::PlayerState::spawned_at(*spawn);
                     for _ in 0..60 {
-                        crate::sim::step_tick(&mut state, &idle(yaw), map, Zone::OPEN);
+                        crate::sim::step_tick(&mut state, &idle(yaw), map);
                     }
                     let start = state.position;
                     let ahead = crate::sim::look_direction(yaw, 0.0);
@@ -41117,7 +41117,7 @@ mod tests {
                         } else {
                             command.buttons.set(crate::sim::Buttons::JUMP, false);
                         }
-                        crate::sim::step_tick(&mut state, &command, map, Zone::OPEN);
+                        crate::sim::step_tick(&mut state, &command, map);
 
                         if crate::sim::collide::overlaps_any(
                             state.position,
@@ -41249,7 +41249,7 @@ mod tests {
 
         let mut state = crate::sim::PlayerState::spawned_at(ARENA.spawn(0));
         for _ in 0..200 {
-            crate::sim::step_tick(&mut state, &idle(0.0), &ARENA, Zone::OPEN);
+            crate::sim::step_tick(&mut state, &idle(0.0), &ARENA);
         }
         let reached = walk_from(&ARENA, state.position);
 
@@ -41280,14 +41280,14 @@ mod tests {
             // Settle the first spawn, then walk everywhere from it.
             let mut state = crate::sim::PlayerState::spawned_at(map.spawn(0));
             for _ in 0..200 {
-                crate::sim::step_tick(&mut state, &idle(0.0), map, Zone::OPEN);
+                crate::sim::step_tick(&mut state, &idle(0.0), map);
             }
             let reached = walk_from(map, state.position);
 
             for (i, spawn) in map.spawns.iter().enumerate().skip(1) {
                 let mut other = crate::sim::PlayerState::spawned_at(*spawn);
                 for _ in 0..200 {
-                    crate::sim::step_tick(&mut other, &idle(spawn.yaw), map, Zone::OPEN);
+                    crate::sim::step_tick(&mut other, &idle(spawn.yaw), map);
                 }
                 let here = (
                     (other.position.x / CELL).round() as i32,
@@ -41327,6 +41327,39 @@ mod tests {
             yaw,
             pitch: 0.0,
             buttons: crate::sim::Buttons::empty(),
+        }
+    }
+
+    #[test]
+    fn the_final_circle_is_ground_everybody_can_walk_to() {
+        // The circle burns anybody outside it and closes on the map's
+        // middle. If that middle were a sealed room, or a roof with no
+        // stairs, the last minute of every match would kill everybody in it
+        // - and a match where nobody is left alive is stakes settled as
+        // abandons, not a winner. So there must be floor inside the final
+        // circle, reachable on foot from the spawns, and room on it for a
+        // fight rather than a queue.
+        const CELL: f32 = 0.5;
+        const ENOUGH_SQUARE_METRES: f32 = 60.0;
+        let inside = crate::sim::ZONE_FINAL_RADIUS - 1.0;
+        for map in maps() {
+            let mut state = crate::sim::PlayerState::spawned_at(map.spawn(0));
+            for _ in 0..200 {
+                crate::sim::step_tick(&mut state, &idle(0.0), map);
+            }
+            let reached = walk_from(map, state.position);
+            let cells = reached
+                .keys()
+                .filter(|(x, z)| {
+                    (*x as f32 * CELL).hypot(*z as f32 * CELL) <= inside
+                })
+                .count();
+            let area = cells as f32 * CELL * CELL;
+            assert!(
+                area >= ENOUGH_SQUARE_METRES,
+                "{}: only {area} m2 inside the final circle can be walked to",
+                map.name
+            );
         }
     }
 }

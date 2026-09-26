@@ -71,6 +71,12 @@ export class Input {
     this._keys = new Set();
     this._fire = false;
     this._aim = false;
+    /** Crouching is a toggle on C: holding a key down for a whole fight is
+     *  a cramp, and Ctrl, the other habit, is Ctrl+W in a browser. */
+    this._crouch = false;
+    /** Keys pressed since the last sample, so a tap shorter than a tick
+     *  still reaches the server as one command with the button down. */
+    this._tapped = new Set();
     /** Turning is scaled by this, so the view turns the same distance on
      *  screen per inch of mouse with the sights up as without. Set each
      *  frame from how far the view is zoomed. */
@@ -130,6 +136,10 @@ export class Input {
 
     window.addEventListener('keydown', (event) => {
       this._keys.add(event.code);
+      if (!event.repeat && (this.locked || !this.requireLock)) {
+        this._tapped.add(event.code);
+        if (event.code === 'KeyC') this._crouch = !this._crouch;
+      }
       // Space scrolls the page and the arrow keys move the caret; neither is
       // wanted while the mouse is captured.
       if (this.locked && SWALLOWED.has(event.code)) event.preventDefault();
@@ -140,6 +150,7 @@ export class Input {
     // running comes back still running.
     window.addEventListener('blur', () => {
       this._keys.clear();
+      this._tapped.clear();
       this._fire = false;
       this._aim = false;
     });
@@ -333,7 +344,8 @@ export class Input {
     if (this.requireLock && !this.locked) {
       // A player who has released the mouse should not keep running into a
       // wall.
-      return { forward: 0, right: 0, jump: false, fire: false };
+      this._tapped.clear();
+      return { forward: 0, right: 0, jump: false, fire: false, crouch: this._crouch, reload: false, throw: false };
     }
     let forward = 0;
     let right = 0;
@@ -341,12 +353,24 @@ export class Input {
     if (this._keys.has('KeyS')) forward -= 1;
     if (this._keys.has('KeyD')) right += 1;
     if (this._keys.has('KeyA')) right -= 1;
-    return {
+    const held = (code) => this._keys.has(code) || this._tapped.has(code);
+    const intent = {
       forward,
       right,
       jump: this._keys.has('Space'),
       fire: this._fire,
+      crouch: this._crouch,
+      reload: held('KeyR'),
+      throw: held('KeyG'),
     };
+    this._tapped.clear();
+    return intent;
+  }
+
+  /** Stand up: a match starting, or dying, should not leave the next life
+   *  beginning on its knees. */
+  resetCrouch() {
+    this._crouch = false;
   }
 
   /** Whether the aim button is held. Not sent anywhere: aiming down the
@@ -365,6 +389,7 @@ export class Input {
       right: this._keys.has('KeyD'),
       jump: this._keys.has('Space'),
       fire: this._fire,
+      crouch: this._crouch,
     };
   }
 }

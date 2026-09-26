@@ -18,7 +18,13 @@
 // player was shot or lied to themselves, the correction is the server's answer,
 // every time.
 
-import { BUTTON_FIRE, BUTTON_JUMP } from './net.js';
+import {
+  BUTTON_CROUCH,
+  BUTTON_FIRE,
+  BUTTON_JUMP,
+  BUTTON_RELOAD,
+  BUTTON_THROW,
+} from './net.js';
 import { Predictor, SIM } from './sim.js';
 
 /**
@@ -133,6 +139,17 @@ export class LocalPlayer {
     this.lastPredictedShot = -Infinity;
     /** Shots this client expects the server to have fired, not yet shown. */
     this.predictedShots = 0;
+    /** Rounds in the magazine. The server's figure, run down locally between
+     *  snapshots only so the kick stops on the shot the server will refuse. */
+    this.ammo = SIM.magazine ?? 30;
+    /** Milliseconds of reload left, from the server, run down locally. */
+    this.reloadMs = 0;
+    /** Grenades left this life. */
+    this.grenades = SIM.grenadesPerLife ?? 2;
+    /** Grenades still to go off, `{id, position}`, straight from the server. */
+    this.liveGrenades = [];
+    /** Whether the body is crouched, as the simulation has it. */
+    this.crouched = false;
 
     /** Everything staked on this match, in micro-USD, straight from the
      *  server. Null until the first snapshot arrives. */
@@ -183,6 +200,9 @@ export class LocalPlayer {
     let buttons = 0;
     if (intent.jump) buttons |= BUTTON_JUMP;
     if (intent.fire) buttons |= BUTTON_FIRE;
+    if (intent.crouch) buttons |= BUTTON_CROUCH;
+    if (intent.reload) buttons |= BUTTON_RELOAD;
+    if (intent.throw) buttons |= BUTTON_THROW;
 
     const command = {
       seq: this.nextSeq,
@@ -205,7 +225,6 @@ export class LocalPlayer {
       command.yaw,
       command.pitch,
       command.buttons,
-      this.zoneRadius,
     );
     this._readPredictor();
 
@@ -218,16 +237,36 @@ export class LocalPlayer {
     // round trip from now. A predicted shot the server refused costs one
     // flash that meant nothing.
     this.gameTime += dt;
+    this.reloadMs = Math.max(0, this.reloadMs - dt * 1000);
+    const armed = this.matchId && !this.eliminated && this.health > 0;
+    // A reload is the server's to start and finish; this only shows it
+    // starting now rather than a round trip from now, on the same rules: a
+    // full magazine does not reload, and pulling the trigger on an empty one
+    // does.
+    if (
+      armed &&
+      this.reloadMs === 0 &&
+      this.ammo < SIM.magazine &&
+      (intent.reload || (intent.fire && this.ammo === 0))
+    ) {
+      this.reloadMs = SIM.reloadSeconds * 1000;
+      this.reloadStarted = true;
+    }
     if (
       intent.fire &&
-      this.matchId &&
-      !this.eliminated &&
-      this.health > 0 &&
+      armed &&
+      this.reloadMs === 0 &&
+      this.ammo > 0 &&
       this.gameTime - this.lastPredictedShot >= SIM.weaponFireInterval
     ) {
       this.lastPredictedShot = this.gameTime;
       this.predictedShots += 1;
+      this.ammo -= 1;
     }
+    if (intent.throw && !this._throwHeld && armed && this.grenades > 0) {
+      this.thrown = true;
+    }
+    this._throwHeld = intent.throw;
 
     this.link.send({
       t: 'inputs',
@@ -308,6 +347,17 @@ export class LocalPlayer {
         if (typeof message.match_remaining_ms === 'number') {
           this.matchRemainingMs = message.match_remaining_ms;
         }
+        // The weapon's state is the server's. A reload the server has not
+        // heard about yet is left running rather than cancelled by a
+        // snapshot that was on its way before the key was pressed.
+        if (typeof message.ammo === 'number') {
+          if (message.reload_ms > 0 || this.reloadMs === 0) {
+            this.ammo = message.ammo;
+            this.reloadMs = message.reload_ms ?? 0;
+          }
+          this.grenades = message.grenades ?? this.grenades;
+        }
+        this.liveGrenades = message.live_grenades ?? [];
         this._reconcile(message);
         return true;
 
@@ -364,6 +414,11 @@ export class LocalPlayer {
         this.place = 0;
         this.unacked.length = 0;
         this.predictionError = 0;
+        this.ammo = SIM.magazine;
+        this.reloadMs = 0;
+        this.grenades = SIM.grenadesPerLife;
+        this.liveGrenades = [];
+        this.input.resetCrouch?.();
         return true;
 
       case 'match_ended':
@@ -434,6 +489,7 @@ export class LocalPlayer {
       state.pitch,
       state.on_ground,
       state.health,
+      Boolean(state.crouched),
     );
     for (const command of this.unacked) {
       this.predictor.step(
@@ -442,7 +498,6 @@ export class LocalPlayer {
         command.yaw,
         command.pitch,
         command.buttons,
-        this.zoneRadius,
       );
     }
     this._readPredictor();
@@ -474,6 +529,8 @@ export class LocalPlayer {
     this._lastFall = p.vy;
 
     this.onGround = p.on_ground;
+    this.crouched = p.crouched;
+    this.eyeOffset = p.eye_offset;
     this.speed = p.speed;
     this.health = p.health;
   }
@@ -483,6 +540,29 @@ export class LocalPlayer {
     const shots = this.predictedShots;
     this.predictedShots = 0;
     return shots;
+  }
+
+  /** Whether a reload started since this was last asked, once. */
+  takeReloadStart() {
+    const started = Boolean(this.reloadStarted);
+    this.reloadStarted = false;
+    return started;
+  }
+
+  /** Whether a grenade left this player's hand since last asked, once. */
+  takeThrow() {
+    const thrown = Boolean(this.thrown);
+    this.thrown = false;
+    return thrown;
+  }
+
+  /** Whether this player is standing outside the circle, and burning. */
+  get outsideZone() {
+    return (
+      this.inMatch &&
+      Number.isFinite(this.zoneRadius) &&
+      Math.hypot(this.current.x, this.current.z) > this.zoneRadius
+    );
   }
 
   /** How hard the last landing was, in metres per second, once. */
@@ -495,7 +575,7 @@ export class LocalPlayer {
   /** Eye position for this frame, interpolated between the last two ticks. */
   eyePosition(alpha, out, dt) {
     const raw =
-      this.previous.y + (this.current.y - this.previous.y) * alpha + SIM.eyeOffset;
+      this.previous.y + (this.current.y - this.previous.y) * alpha + (this.eyeOffset ?? SIM.eyeOffset);
 
     if (this.eyeY === null || !this.onGround || Math.abs(raw - this.eyeY) > EYE_SNAP) {
       // Airborne, just spawned, or moved by something that was not a step.

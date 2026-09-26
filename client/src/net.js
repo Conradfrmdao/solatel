@@ -32,6 +32,9 @@ export const LinkState = Object.freeze({
 /** Bits in an input command's `buttons` field. Matches `sim::Buttons`. */
 export const BUTTON_JUMP = 1 << 0;
 export const BUTTON_FIRE = 1 << 1;
+export const BUTTON_CROUCH = 1 << 2;
+export const BUTTON_RELOAD = 1 << 3;
+export const BUTTON_THROW = 1 << 4;
 
 /** Where the resume token lives between page loads.
  *

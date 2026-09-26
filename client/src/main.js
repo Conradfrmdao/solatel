@@ -448,6 +448,9 @@ async function boot() {
         menu.setWallet(link.wallet);
       } else if (message.t === 'scoreboard') {
         hud.setScores(message.entries);
+      } else if (message.t === 'exploded') {
+        world.explode(message.at);
+        audio.boom(message.at, eye, forward);
       } else if (message.t === 'killed') {
         hud.addKill(message);
         if (message.killer === local.id) {
@@ -479,6 +482,8 @@ async function boot() {
       viewmodel.onShotFired();
       audio.shot(Audio.OWN, eye, forward);
     }
+    if (local.takeReloadStart()) audio.reload(SIM.reloadSeconds);
+    if (local.takeThrow()) viewmodel.onThrow();
 
     // 4. Render state, interpolated between the last two ticks.
     const alpha = Math.min(1, accumulator / tickDt);
@@ -528,7 +533,12 @@ async function boot() {
     }
 
     const playing = Boolean(local.matchId) && world.ready && !link.parked;
-    viewmodel.setAiming(playing && input.aiming && local.health > 0);
+    // No sights while the rifle is on its side for a reload.
+    viewmodel.setAiming(playing && input.aiming && local.health > 0 && local.reloadMs === 0);
+    viewmodel.setReload(
+      local.reloadMs > 0 ? 1 - local.reloadMs / (SIM.reloadSeconds * 1000) : null,
+    );
+    viewmodel.setEyeOffset(local.eyeOffset ?? SIM.eyeOffset);
     if (!playing) {
       menu.update(local, link);
       renderer.clear();
@@ -540,6 +550,7 @@ async function boot() {
     world.followWithShadows(eye);
     world.positionSky(eye, camera.far);
     world.setZone(local.zoneRadius);
+    world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     hud.update(now, link, local, input);

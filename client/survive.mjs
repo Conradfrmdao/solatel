@@ -13,6 +13,9 @@
 // client would sit in the queue forever. They all stand still, nobody shoots
 // anybody, and at the whistle every one of them should have their stake back.
 //
+// Still, but not stupid: the circle burns anybody outside it, so a survivor
+// the zone closes past walks back towards the middle.
+//
 // It waits for the match to run its length, which is `MATCH_DURATION`. There
 // is no way to hurry that from a client, and a client that could would be a
 // client that could end everybody else's match too.
@@ -86,9 +89,14 @@ class Client {
         if (msg.match_id !== this.matchId) break;
         const mine = msg.players.find((p) => p.id === this.playerId);
         this.alive = (mine?.state.health ?? 0) > 0;
+        if (mine) this.at = mine.state.position;
+        this.zone = msg.zone_radius;
         this.remainingMs = msg.match_remaining_ms;
         break;
       }
+      case 'eliminated':
+        this.eliminated = true;
+        break;
       case 'match_ended':
         if (msg.match_id === this.matchId) this.ended = true;
         break;
@@ -101,12 +109,41 @@ class Client {
     this.ws.send(JSON.stringify(msg));
   }
 
-  /** Stand still. Doing nothing is the whole point of this test. */
+  /** Stand still - doing nothing is the whole point of this test - unless
+   *  the circle is closing on this spot, then walk towards the middle. */
   idle() {
     this.seq += 1;
+    let forward = 0;
+    let right = 0;
+    let yaw = 0;
+    let buttons = 0;
+    const now = Date.now();
+    if (this.at && Number.isFinite(this.zone)) {
+      const [x, , z] = this.at;
+      if (Math.hypot(x, z) > this.zone * 0.7 - 2) {
+        forward = 1;
+        yaw = Math.atan2(x, z); // facing is (-sin yaw, -cos yaw)
+        // Straight at the middle runs into walls. Stuck for a second means
+        // a sidestep along the wall for a couple, with a hop, then try again.
+        if (!this.checkAt || now - this.checkAt > 1000) {
+          const moved = this.checkPos ? Math.hypot(x - this.checkPos[0], z - this.checkPos[2]) : 1;
+          if (moved < 0.4 && !(this.sidestepUntil > now)) {
+            this.sidestepUntil = now + 2500;
+            this.side = Math.random() < 0.5 ? -1 : 1;
+          }
+          this.checkAt = now;
+          this.checkPos = [...this.at];
+        }
+        if (this.sidestepUntil > now) {
+          forward = 0.3;
+          right = this.side;
+          buttons = this.seq % 20 === 0 ? 1 : 0;
+        }
+      }
+    }
     this.send({
       t: 'inputs',
-      commands: [{ seq: this.seq, forward: 0, right: 0, yaw: 0, pitch: 0, buttons: 0 }],
+      commands: [{ seq: this.seq, forward, right, yaw, pitch: 0, buttons }],
     });
   }
 }
@@ -160,6 +197,8 @@ let lastRemaining = clients[0].remainingMs ?? 0;
 while (!clients.every((c) => c.ended)) {
   for (const client of clients) client.idle();
   await sleep(200);
+  const dead = clients.find((c) => (!c.alive || c.eliminated) && !c.ended);
+  if (dead) fail(`${dead.name} died with nobody shooting, at ${dead.at?.map((n) => n.toFixed(1)).join(', ')}`);
   const remaining = clients[0].remainingMs ?? 0;
   if (remaining < lastRemaining) {
     lastRemaining = remaining;
