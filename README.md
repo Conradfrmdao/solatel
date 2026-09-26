@@ -50,9 +50,11 @@ hands, with a red-dot sight built in code, and the map itself.
 `scripts/prepare-assets.py` and `scripts/build-soldier.sh` record what was done
 to them.
 
-There are two maps. `arena` is a 34 by 66 metre deathmatch box; `yard` is 116
-by 252 metres of open ground. The server runs both at once, and players pick a
-map and a stake from the menu.
+There are three maps. `arena` is a 34 by 66 metre deathmatch box; `yard` is
+116 by 252 metres of open ground; `facility` is a 320 metre square industrial
+works with a river, bridges and hills, built by `scripts/build-facility.py`.
+The server runs all three at once, and players pick a map and a stake from the
+menu.
 
 Every spawn on a map is reachable on foot from every other, which
 `every_spawn_can_reach_every_other` checks by walking the map with the real

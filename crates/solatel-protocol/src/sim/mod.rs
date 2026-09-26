@@ -571,7 +571,11 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
 
     if state.on_ground {
         apply_friction(state, dt);
-        let top = if state.crouched { CROUCH_SPEED } else { MAX_GROUND_SPEED };
+        let top = if state.crouched {
+            CROUCH_SPEED
+        } else {
+            MAX_GROUND_SPEED
+        };
         accelerate(state, wish_direction, top, GROUND_ACCEL, dt);
 
         // No jumping from a crouch: standing up is the first half of a jump.
@@ -1027,7 +1031,10 @@ mod tests {
         for _ in 0..64 {
             step_tick(&mut state, &idle(), &FLAT_MAP);
         }
-        assert!((state.position - start).length() < 0.05, "the zone moved a player");
+        assert!(
+            (state.position - start).length() < 0.05,
+            "the zone moved a player"
+        );
         assert!(Zone { radius: 5.0 }.excludes(state.position));
         assert!(!Zone::OPEN.excludes(state.position));
     }
@@ -1058,7 +1065,10 @@ mod tests {
         assert!(fast > slow * 1.5, "crouching was not slower");
         assert!(crouched.on_ground, "a crouched player jumped");
         assert!(crouched.crouched);
-        assert!(crouched.eye_position().y < standing.eye_position().y - 0.5 + (crouched.position.y - standing.position.y));
+        assert!(
+            crouched.eye_position().y
+                < standing.eye_position().y - 0.5 + (crouched.position.y - standing.position.y)
+        );
     }
 
     #[test]

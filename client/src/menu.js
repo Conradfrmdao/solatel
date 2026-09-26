@@ -24,6 +24,7 @@ const PANES = ['play', 'wallet', 'profile', 'settings'];
 const MAP_BLURB = {
   arena: 'close quarters · stairs and rooftops',
   yard: 'open ground · long sightlines',
+  facility: 'a walled works in open country · a river, a hill, every range',
 };
 
 /** Micro-USD as a string, the way the rest of the client formats money. */
@@ -519,6 +520,9 @@ const TEMPLATE = `
         <span><kbd>left click</kbd> shoot</span>
         <span><kbd>right click</kbd> aim</span>
         <span><kbd>space</kbd> jump</span>
+        <span><kbd>C</kbd> crouch</span>
+        <span><kbd>R</kbd> reload</span>
+        <span><kbd>G</kbd> grenade</span>
         <span><kbd>tab</kbd> scores</span>
         <span><kbd>esc</kbd> free the mouse</span>
       </div>
