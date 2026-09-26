@@ -96,6 +96,12 @@ const BONE = {
   spine1: 'mixamorigSpine1',
   spine2: 'mixamorigSpine2',
   neck: 'mixamorigNeck',
+  upLegL: 'mixamorigLeftUpLeg',
+  legL: 'mixamorigLeftLeg',
+  footL: 'mixamorigLeftFoot',
+  upLegR: 'mixamorigRightUpLeg',
+  legR: 'mixamorigRightLeg',
+  footR: 'mixamorigRightFoot',
   ...HAND,
 };
 
@@ -132,6 +138,15 @@ const LAND_RECOVERY = 9;
 /** The death clip is 3.8 s; the body stays down a little after it. */
 const DEATH_LINGER_SECONDS = 5;
 
+/** How far the hips come down in a crouch, in metres. A little more than
+ *  the simulation lowers the eye, because the head also tips forward. */
+const CROUCH_HIPS = 0.5;
+/** How far back the trailing foot goes, so a crouch reads as a kneel
+ *  rather than a squat. */
+const KNEEL_BACK = 0.32;
+/** How quickly the body goes down and comes up, per second. */
+const CROUCH_RATE = 12;
+
 /** Beyond these, animate less often. */
 const NEAR = 35;
 const FAR = 70;
@@ -149,6 +164,19 @@ const _q = new THREE.Quaternion();
 const _qWorld = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const _hip = new THREE.Vector3();
+const _knee = new THREE.Vector3();
+const _foot = new THREE.Vector3();
+const _goal = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _pole = new THREE.Vector3();
+const _newKnee = new THREE.Vector3();
+const _from = new THREE.Vector3();
+const _to = new THREE.Vector3();
+const _qTurn = new THREE.Quaternion();
+const _qFoot = new THREE.Quaternion();
+const _goalL = new THREE.Vector3();
+const _goalR = new THREE.Vector3();
 
 /** A copy of `clip` with only the tracks `keep` accepts. */
 function split(clip, name, keep) {
@@ -342,6 +370,7 @@ export class Remotes {
       reverse: false,
       flash: 0,
       dip: 0,
+      crouch: 0,
       wasOnGround: true,
       diedAt: null,
       age: 0,
@@ -406,6 +435,11 @@ export class Remotes {
     aimVector(entry.yaw, entry.pitch, _aim);
     this._aimSpine(player, _aim);
 
+    // Down on one knee: the hips lowered and each leg solved so its foot
+    // stays where the clip put it, the trailing one drawn back.
+    player.crouch += ((entry.crouched ? 1 : 0) - player.crouch) * (1 - Math.exp(-CROUCH_RATE * step));
+    if (player.crouch > 0.01) this._kneel(player, entry, player.crouch);
+
     // A dip in the hips when they come down.
     if (entry.onGround && !player.wasOnGround) player.dip = LAND_DIP;
     player.wasOnGround = entry.onGround;
@@ -418,6 +452,29 @@ export class Remotes {
     this._placeRifle(player, _aim);
     player.flash = Math.max(0, player.flash - step);
     player.flashSprite.visible = player.flash > 0 && distance < FAR;
+  }
+
+  /**
+   * Crouches the body by `weight`, 0 to 1. The feet are fixed where the
+   * clip left them, the hips go down, and each leg is solved back onto its
+   * foot with the knee bent the way it was already bending - so a crouch
+   * walks with whatever stride the run clip is playing.
+   */
+  _kneel(player, entry, weight) {
+    const { bones } = player;
+    if (!bones.hips || !bones.upLegL || !bones.upLegR) return;
+    bones.footL.getWorldPosition(_goalL);
+    bones.footR.getWorldPosition(_goalR);
+    // The trailing foot is the right, behind the body along where it faces.
+    aimVector(entry.yaw, 0, _dir);
+    _goalR.addScaledVector(_dir, -KNEEL_BACK * weight);
+    _goalR.y -= 0.04 * weight;
+
+    bones.hips.position.y -= (CROUCH_HIPS * weight) / player.hipsScale;
+    bones.hips.updateMatrixWorld(true);
+
+    solveLeg(bones.upLegL, bones.legL, bones.footL, _goalL, _dir);
+    solveLeg(bones.upLegR, bones.legR, bones.footR, _goalR, _dir);
   }
 
   /**
@@ -557,6 +614,67 @@ function rotateWorld(bone, axis, angle) {
   bone.updateMatrixWorld(true);
 }
 
+/** Turns a bone by a world-space rotation. */
+function turnWorld(bone, turn) {
+  bone.getWorldQuaternion(_qWorld);
+  _qWorld.premultiply(turn);
+  if (bone.parent) {
+    bone.parent.getWorldQuaternion(_qParent);
+    _qWorld.premultiply(_qParent.invert());
+  }
+  bone.quaternion.copy(_qWorld);
+  bone.updateMatrixWorld(true);
+}
+
+/**
+ * Two-bone IK for a leg: thigh and shin turned so the foot lands on `goal`,
+ * the knee towards where it already pointed (or `forward` if the leg was
+ * straight). The foot keeps its world orientation, so it stays flat.
+ */
+function solveLeg(upper, lower, foot, goal, forward) {
+  foot.getWorldQuaternion(_qFoot);
+  upper.getWorldPosition(_hip);
+  lower.getWorldPosition(_knee);
+  foot.getWorldPosition(_foot);
+  const l1 = _hip.distanceTo(_knee);
+  const l2 = _knee.distanceTo(_foot);
+  if (l1 < 1e-4 || l2 < 1e-4) return;
+
+  _dir.subVectors(goal, _hip);
+  let d = _dir.length();
+  if (d < 1e-4) return;
+  _dir.divideScalar(d);
+  d = Math.min(Math.max(d, Math.abs(l1 - l2) + 1e-3), (l1 + l2) * 0.999);
+
+  // Which way the knee goes: where it is now, off the hip-foot line, with a
+  // little of the facing so a straight leg still bends forwards.
+  _pole.addVectors(_hip, _foot).multiplyScalar(0.5);
+  _pole.subVectors(_knee, _pole).addScaledVector(forward, 0.05);
+  _pole.addScaledVector(_dir, -_pole.dot(_dir));
+  if (_pole.lengthSq() < 1e-8) _pole.copy(forward);
+  _pole.normalize();
+
+  const cos = (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d);
+  const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+  _newKnee.copy(_hip).addScaledVector(_dir, l1 * cos).addScaledVector(_pole, l1 * sin);
+
+  _from.subVectors(_knee, _hip).normalize();
+  _to.subVectors(_newKnee, _hip).normalize();
+  turnWorld(upper, _qTurn.setFromUnitVectors(_from, _to));
+
+  lower.getWorldPosition(_knee);
+  foot.getWorldPosition(_foot);
+  _goal.copy(_hip).addScaledVector(_dir, d);
+  _from.subVectors(_foot, _knee).normalize();
+  _to.subVectors(_goal, _knee).normalize();
+  turnWorld(lower, _qTurn.setFromUnitVectors(_from, _to));
+
+  // Back to the foot's own orientation, in its new parent.
+  lower.getWorldQuaternion(_qParent);
+  foot.quaternion.copy(_qParent.invert().multiply(_qFoot));
+  foot.updateMatrixWorld(true);
+}
+
 function pickGait(speed, onGround) {
   if (!onGround) return 'air';
   if (speed < IDLE_SPEED) return 'idle';
@@ -598,6 +716,7 @@ function snapshotToEntries(older, newer, alpha) {
       speed: Math.hypot(velocity[0], velocity[2]),
       onGround: b.on_ground,
       health: b.health,
+      crouched: Boolean(b.crouched),
     });
     byId.delete(old.id);
   }
@@ -618,6 +737,7 @@ function snapshotToEntries(older, newer, alpha) {
       speed: Math.hypot(s.velocity[0], s.velocity[2]),
       onGround: s.on_ground,
       health: s.health,
+      crouched: Boolean(s.crouched),
     });
   }
 

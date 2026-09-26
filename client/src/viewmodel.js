@@ -350,6 +350,9 @@ function redDot(optic) {
   return group;
 }
 
+/** How long the rifle is out of the way for a throw. */
+const THROW_SECONDS = 0.65;
+
 export class Viewmodel {
   constructor(config = RIFLE) {
     this.config = config;
@@ -822,6 +825,28 @@ export class Viewmodel {
   }
 
   /**
+   * How far through a reload the weapon is, 0 to 1, or null when it is not
+   * reloading. The server decides when a reload starts and ends; this only
+   * draws it - the rifle tipped over to show the magazine well, a seat of
+   * the fresh magazine two thirds of the way through, and back up.
+   */
+  setReload(progress) {
+    this.reloadProgress = progress;
+  }
+
+  /** A grenade left the player's hand: the rifle drops out of the way and
+   *  comes back. */
+  onThrow() {
+    this.throwAt = this.time;
+  }
+
+  /** The eye's height over the feet, which crouching changes. Casings land
+   *  on the floor under the player, and this is how far down it is. */
+  setEyeOffset(offset) {
+    this.eyeOffset = offset;
+  }
+
+  /**
    * A shot left the weapon.
    *
    * Called the moment the client fires, not when the server echoes it: the
@@ -883,7 +908,7 @@ export class Viewmodel {
       }
       this.eye.copy(eye);
       this.hasEye = true;
-      if (onGround) this.floor = eye.y - SIM.eyeOffset - SIM.halfExtentY;
+      if (onGround) this.floor = eye.y - (this.eyeOffset ?? SIM.eyeOffset) - SIM.halfExtentY;
     }
     this.view.setFromEuler(_euler.set(pitch, yaw, 0, 'YXZ'));
 
@@ -933,14 +958,33 @@ export class Viewmodel {
     for (const key of ['back', 'rise', 'yaw', 'roll']) r[key] = damp(r[key], 0, c.recoil.recovery, dt);
     this.cameraRoll = damp(this.cameraRoll, 0, c.recoil.cameraRecovery, dt);
 
+    // Reload and throw are envelopes over the whole pose: eased in, held,
+    // eased out, so the weapon never snaps between poses.
+    let reload = 0;
+    let seat = 0;
+    if (this.reloadProgress !== null && this.reloadProgress !== undefined) {
+      const p = this.reloadProgress;
+      reload = smooth(Math.min(1, p / 0.18)) * smooth(Math.min(1, (1 - p) / 0.2));
+      seat = Math.max(0, 1 - Math.abs(p - 0.62) / 0.06);
+    }
+    let thrown = 0;
+    if (this.throwAt !== undefined) {
+      const since = this.time - this.throwAt;
+      if (since < THROW_SECONDS) {
+        const p = since / THROW_SECONDS;
+        thrown = smooth(Math.min(1, p / 0.2)) * smooth(Math.min(1, (1 - p) / 0.45));
+      }
+    }
+
     const a = this.aim;
     const hip = this.hipPosition;
     const ads = this.adsPosition;
     this.root.position.set(
       hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
-        + (this.airLift - this.landDip) * steady(c.ads.bobScale),
-      hip.z + (ads.z - hip.z) * a + r.back,
+        + (this.airLift - this.landDip) * steady(c.ads.bobScale)
+        - reload * 0.09 + seat * 0.02 - thrown * 0.38,
+      hip.z + (ads.z - hip.z) * a + r.back + reload * 0.05,
     );
     const hr = this.hipRotation;
     const ar = this.adsRotation;
@@ -949,9 +993,9 @@ export class Viewmodel {
     // must not, or they would leave the middle.
     this.root.rotation.set(
       hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch
-        + pitch * 0.05 * (1 - a),
-      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale,
-      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll,
+        + pitch * 0.05 * (1 - a) + reload * 0.32 - thrown * 0.7,
+      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + reload * 0.25,
+      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + reload * 0.75 + seat * 0.06,
       'YXZ',
     );
 

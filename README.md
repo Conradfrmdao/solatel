@@ -5,7 +5,10 @@ fee in Solana and earn real money per kill.
 
 **Status: Phase 4 — the wallet, on Solana devnet.** The game opens on a menu:
 pick a map and a table, wait in line, and play one life for your stake. WASD to
-move, mouse to look, space to jump, click to shoot; Escape releases the mouse.
+move, mouse to look, space to jump, click to shoot, right click to aim, C to
+crouch, R to reload, G to throw a grenade; Escape releases the mouse. Health
+comes back after five seconds out of a fight, and the closing circle burns
+anybody outside it.
 Matches, stakes, kill rewards and the ledger are live. Deposits and withdrawals
 in SOL are built and run against devnet only.
 

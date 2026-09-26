@@ -513,10 +513,19 @@ where the shot goes, and on real stakes a player should always see it.
 **None of it changes where a shot goes.** Recoil kicks the weapon and rolls
 the camera around its own axis; a roll leaves the middle of the screen where
 it was aimed. A recoil pattern that actually walks the aim, bullet spread
-that differs between hip and sights, sprinting, magazines and reloading are
-all *not built*, on purpose: each changes who wins a fight, so each has to be
-enforced by the server, and a client-only version would be a lie a cheater
-removes in one line. They are Conrad's decision and server work first.
+that differs between hip and sights, and sprinting are all *not built*, on
+purpose: each changes who wins a fight, so each has to be enforced by the
+server, and a client-only version would be a lie a cheater removes in one
+line. They are Conrad's decision and server work first. Magazines, reloading,
+crouching and grenades went that way round - server first - and are in
+*Health, the circle, and what a life carries*.
+
+**Reloading and throwing are drawn, not animated.** `setReload` tips the
+rifle over to show the magazine well, seats the new one two thirds of the way
+through and brings it back, all as an envelope over the whole pose; `onThrow`
+drops the rifle out of the way for 0.65 s. The sights cannot come up during a
+reload. Mixamo has reload and throw clips for the third-person body; they are
+not in `soldier.glb` yet.
 
 **The arms are the soldier's own.** `setArms` clones the same Mixamo soldier
 other players are drawn with and keeps only the triangles skinned to the arm
@@ -1005,6 +1014,56 @@ are both, and dropping them outright turns "big⇥red" into "bigred" rather than
 the two words somebody typed. Nothing is ever keyed on a name — anything that
 moved money by name would be paying whoever typed the name.
 
+## Health, the circle, and what a life carries
+
+Protocol 11. All of it is decided in `step_match` and the shared simulation;
+the client predicts crouching (it moves the body) and draws the rest from the
+snapshot.
+
+**The circle hurts; it never moves anybody.** It used to push a player
+inward, and a player pinned against a wall by that push was left stranded
+outside as it closed past them. Now standing outside it costs health every
+tick, faster as it closes (`ZONE_DAMAGE_PER_SECOND`, 4 to 20 a second), and
+nothing about movement changes. The HUD says OUTSIDE THE ZONE while it
+burns. Health comes off in whole points with the fraction carried, so the
+rate is exact at 64 ticks a second.
+
+**Health comes back.** After `REGEN_DELAY` (5 s) without being hurt, a
+player regains the whole bar over `REGEN_SECONDS` (11 s), and never while
+outside the circle. Regen is the server's and arrives in the snapshot.
+
+**A death nobody shot is still somebody's kill.** Burning in the zone,
+falling off the map, or catching your own grenade credits whoever last hurt
+the victim, if that was within `KILL_CREDIT_SECONDS` (15 s), and settles as
+a kill - their reward, the victim's stake. Otherwise it settles as an abandon,
+exactly as a fall always did. Without the credit, a player losing a fight
+could walk out of the circle, or off a roof, and deny the winner the stake.
+`die_unshot` is the one place that decision is made; the killfeed carries a
+`cause` (`rifle`, `grenade`, `zone`, `fall`).
+
+**Crouching** (C, a toggle - Ctrl is Ctrl+W in a browser) caps speed at
+`CROUCH_SPEED`, forbids jumping, and lowers the eye and the top of both hit
+boxes by `CROUCH_DROP` without moving the feet. It is in `PlayerState`
+because it changes the body, so it is predicted, and the wasm's `adopt`
+takes it. Other players drop to one knee: `remotes.js` lowers the hips and
+solves each leg back onto the foot the clip placed, the trailing one drawn
+back.
+
+**A magazine is thirty rounds and a reload is 2.2 seconds** (R, or pulling
+the trigger on an empty magazine). The trigger does nothing while reloading.
+The client runs its ammunition down between snapshots only so the kick stops
+on the round the server will refuse; the count it displays is the server's.
+What is in somebody else's magazine is not sent to anybody else.
+
+**Two grenades a life** (G). A throw is the rising edge of the button, so
+holding it throws one; the server steps the flight (`sim/grenade.rs`,
+shared so there is one description of how one moves), sets it off after
+`GRENADE_FUSE`, and hurts everybody it can see within `GRENADE_RADIUS` -
+full damage inside two metres, falling to nothing at seven, and nothing
+through a wall. The thrower is hurt too. `Exploded` is sent for the flash
+and the bang; the damage arrives as `Damaged`. `cheat.mjs` presses the
+button forty times and counts what goes off.
+
 ## Match history, the anti-cheat, and the admin view
 
 Phase 5's foundations and Phase 3's operator view, in `records.rs`,
@@ -1172,6 +1231,35 @@ on that - a client is an untrusted source of inputs, and one asking twice a
 second is a balance query against the database twice a second - so a refusal
 also sets `broke_until`. The answer cannot change without the player doing
 something outside the match anyway.
+
+## Load
+
+`node client/load.mjs --players N --seconds S` connects N clients in the
+same instant, queues them over every table, has them run and shoot for S
+seconds, and judges the join times, that every busy line drained into full
+tables, the snapshot rate, whether every match clock kept up with the wall,
+`/health` latency (timed by `curl` in its own process, because the driver's
+own event loop is the busiest thing on the machine), and the ledger.
+
+Measured on a four-core cloud container, release build, local Postgres, and
+the load generator on **the same four cores**:
+
+| players | welcomed (p95) | in a match (p95) | snapshots | match clock |
+|---|---|---|---|---|
+| 300 | 0.4 s | 4.3 s | 21.3/s | on time |
+| 600 | 0.6 s | 10.3 s | 21.1/s | on time |
+| 1000 | 0.8 s | 25.9 s | 15.4/s at p5 | 17.5 s in 24.2 |
+
+600 holds with nothing late. At 1000 the box is saturated - the server at
+one core and the generator on the rest - and the slow part is joining:
+`ReadBalance` answers were logged at 11 s, and that is the ledger task
+waiting to hand its answer to a lobby loop that is busy sending snapshots,
+not the database. The ceiling on a machine of its own is higher than this
+says, and the first thing to look at when it matters is the lobby loop,
+which does every match's tick and every client's snapshot on one task.
+
+Deployed against a database half a second away, the join numbers are
+dominated by round trips instead; see *Money events are round trips*.
 
 ## Phase 2 note
 

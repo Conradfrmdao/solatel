@@ -13,6 +13,7 @@
 // browser never delivering it?
 
 import { LinkState } from './net.js';
+import { SIM } from './sim.js';
 
 export class Hud {
   constructor(root) {
@@ -21,6 +22,15 @@ export class Hud {
 
     this.stats = root.querySelector('#stats');
     this.health = root.querySelector('#health');
+    this.healthFill = root.querySelector('#health .fill');
+    this.healthText = root.querySelector('#health .value');
+    this.weapon = root.querySelector('#weapon');
+    this.ammo = root.querySelector('#weapon .ammo');
+    this.reloadBar = root.querySelector('#weapon .reload .fill');
+    this.grenadeCount = root.querySelector('#weapon .grenades');
+    this.zoneWarning = root.querySelector('#zone-warning');
+    this.hurtFlash = root.querySelector('#hurt-flash');
+    this._lastHealth = null;
     this.crosshair = root.querySelector('#crosshair');
     this.marker = root.querySelector('#hitmarker');
     this.lockHint = root.querySelector('#lock-hint');
@@ -143,7 +153,15 @@ export class Hud {
       line.innerHTML = `<span class="who">${killer}</span>${mark}<span class="who">${victim}</span>`;
     } else {
       // No killer: a fall, or the world taking them.
-      line.innerHTML = `<span class="who">${victim}</span><span class="hs">fell</span>`;
+      const how = { zone: 'burned in the zone', grenade: 'blew up', fall: 'fell' }[event.cause] ?? 'fell';
+      line.innerHTML = `<span class="who">${victim}</span><span class="hs">${how}</span>`;
+    }
+    // A kill by something other than the rifle says so, because a grenade
+    // through a doorway and a zone that finished off a wounded player are
+    // different stories about the same fight.
+    if (event.killer_name && event.cause && event.cause !== 'rifle') {
+      const how = { grenade: 'grenade', zone: 'zone', fall: 'fall' }[event.cause];
+      if (how) line.insertAdjacentHTML('beforeend', `<span class="cause">${how}</span>`);
     }
 
     this.killfeed.prepend(line);
@@ -300,8 +318,40 @@ export class Hud {
     this.matchClock.textContent = `${mins}:${secs}`;
     this.matchClock.classList.toggle('urgent', seconds <= 30);
 
-    this.health.textContent = `${Math.max(0, local.health)} hp`;
-    this.health.classList.toggle('hurt', local.health <= 34);
+    // Health is a bar as well as a number: at a glance in a fight the
+    // length is read, not the digits. It is the server's figure - regen and
+    // the zone both happen there - and only drawn here.
+    const hp = Math.max(0, local.health);
+    const max = SIM.maxHealth || 100;
+    this.healthText.textContent = String(hp);
+    this.healthFill.style.transform = `scaleX(${hp / max})`;
+    this.health.classList.toggle('hurt', hp <= max / 3);
+    if (this._lastHealth !== null && hp < this._lastHealth && local.inMatch) {
+      this.hurtFlash.classList.remove('flash');
+      void this.hurtFlash.offsetWidth; // restart the animation
+      this.hurtFlash.classList.add('flash');
+    }
+    this.health.classList.toggle('regen', this._lastHealth !== null && hp > this._lastHealth);
+    this._lastHealth = hp;
+
+    const reloading = local.reloadMs > 0;
+    this.ammo.innerHTML = reloading
+      ? '<span class="reloading">RELOADING</span>'
+      : `<b>${local.ammo}</b> / ${SIM.magazine}`;
+    this.ammo.classList.toggle('empty', !reloading && local.ammo === 0);
+    this.ammo.classList.toggle('low', !reloading && local.ammo > 0 && local.ammo <= SIM.magazine / 5);
+    this.reloadBar.parentElement.classList.toggle('hidden', !reloading);
+    if (reloading) {
+      const done = 1 - local.reloadMs / (SIM.reloadSeconds * 1000);
+      this.reloadBar.style.transform = `scaleX(${Math.min(1, Math.max(0, done))})`;
+    }
+    this.grenadeCount.textContent = '●'.repeat(local.grenades) + '○'.repeat(
+      Math.max(0, SIM.grenadesPerLife - local.grenades),
+    );
+
+    // Outside the circle it hurts, and the player is told so in the middle
+    // of the screen, because the edge is behind them by definition.
+    this.zoneWarning.classList.toggle('hidden', !(local.outsideZone && local.isAlive));
 
     this.marker.classList.toggle('show', local.hitMarker > 0);
     this.marker.classList.toggle('head', local.hitMarker > 0 && local.hitWasHead);
@@ -315,7 +365,7 @@ export class Hud {
     // one. A health bar over the lobby says "you are playing" to somebody who
     // is choosing a table, and the crosshair invites them to shoot at it.
     const playing = local.inMatch && local.isAlive;
-    for (const element of [this.health, this.crosshair, this.matchClock, this.pool]) {
+    for (const element of [this.health, this.crosshair, this.matchClock, this.pool, this.weapon]) {
       element.classList.toggle('out-of-match', !playing);
     }
 
@@ -371,7 +421,14 @@ function formatMoney(micros) {
 
 const TEMPLATE = `
   <pre id="stats"></pre>
-  <div id="health">100 hp</div>
+  <div id="health"><span class="value">100</span><span class="bar"><span class="fill"></span></span></div>
+  <div id="weapon">
+    <div class="ammo"><b>30</b> / 30</div>
+    <div class="reload hidden"><span class="fill"></span></div>
+    <div class="grenades" title="grenades (G)">●●</div>
+  </div>
+  <div id="zone-warning" class="hidden">OUTSIDE THE ZONE &middot; get back in</div>
+  <div id="hurt-flash"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
   <div id="balance"><span class="amount">$0.00</span><span class="caption">yours</span></div>
   <div id="winnings" class="hidden"><span class="amount">$0.00</span><span class="caption">won</span></div>

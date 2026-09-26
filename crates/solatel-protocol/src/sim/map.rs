@@ -41329,4 +41329,37 @@ mod tests {
             buttons: crate::sim::Buttons::empty(),
         }
     }
+
+    #[test]
+    fn the_final_circle_is_ground_everybody_can_walk_to() {
+        // The circle burns anybody outside it and closes on the map's
+        // middle. If that middle were a sealed room, or a roof with no
+        // stairs, the last minute of every match would kill everybody in it
+        // - and a match where nobody is left alive is stakes settled as
+        // abandons, not a winner. So there must be floor inside the final
+        // circle, reachable on foot from the spawns, and room on it for a
+        // fight rather than a queue.
+        const CELL: f32 = 0.5;
+        const ENOUGH_SQUARE_METRES: f32 = 60.0;
+        let inside = crate::sim::ZONE_FINAL_RADIUS - 1.0;
+        for map in maps() {
+            let mut state = crate::sim::PlayerState::spawned_at(map.spawn(0));
+            for _ in 0..200 {
+                crate::sim::step_tick(&mut state, &idle(0.0), map);
+            }
+            let reached = walk_from(map, state.position);
+            let cells = reached
+                .keys()
+                .filter(|(x, z)| {
+                    (*x as f32 * CELL).hypot(*z as f32 * CELL) <= inside
+                })
+                .count();
+            let area = cells as f32 * CELL * CELL;
+            assert!(
+                area >= ENOUGH_SQUARE_METRES,
+                "{}: only {area} m2 inside the final circle can be walked to",
+                map.name
+            );
+        }
+    }
 }
