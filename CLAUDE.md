@@ -1045,9 +1045,13 @@ could walk out of the circle, or off a roof, and deny the winner the stake.
 `CROUCH_SPEED`, forbids jumping, and lowers the eye and the top of both hit
 boxes by `CROUCH_DROP` without moving the feet. It is in `PlayerState`
 because it changes the body, so it is predicted, and the wasm's `adopt`
-takes it. Other players drop to one knee: `remotes.js` lowers the hips and
-solves each leg back onto the foot the clip placed, the trailing one drawn
-back.
+takes it. Other players drop to one knee, and it is a *placed* pose rather
+than a squat: `_kneel` lowers the hips until the right knee reaches the
+floor, lays that shin back with the toes tucked, and plants the left foot
+ahead with its shin upright, each leg by two-bone IK. The first version kept
+the idle clip's feet and lowered the hips, which bent both legs the same way
+and read as a deformed squat. Moving crouched cannot be a kneel, so it blends
+to the run clip's stride with the hips lowered 0.38 m.
 
 **A magazine is thirty rounds and a reload is 2.2 seconds** (R, or pulling
 the trigger on an empty magazine). The trigger does nothing while reloading.
