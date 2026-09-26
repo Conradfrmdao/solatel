@@ -7,17 +7,15 @@ requires us to state, and makes it repeatable if an asset is ever re-fetched.
 
     python scripts/prepare-assets.py "C:/Users/DELL/Downloads/assests"
 
-Five things happen here rather than at runtime:
+The soldier is not built here: it comes from Mixamo and is built by
+`scripts/build-soldier.sh`.
+
+Four things happen here rather than at runtime:
 
 * The TDM map ships as .gltf + .bin. Packing it into one .glb halves the number
   of requests the browser makes and removes a class of failure where the .gltf
   loads and its buffer 404s. The larger yard map already ships as one .glb and
   is only copied, with the same near-black pass applied.
-* Two meshes are removed from the soldier. `holster_soldier_0` is broken in the
-  source file - its geometry is authored about 6.5 m below the body and weighted
-  to the right thigh, so in game it is a slab swinging around under the player's
-  feet. `hand_knife_soldier_0` is a knife in the hand, which fights the rifle
-  viewmodel.
 * Near-black materials are lifted so they take light. Both the rifle and the
   arena's ground plane ship at a base colour of about 0.02, which draws as a
   silhouette with no form in it rather than as a surface.
@@ -25,9 +23,8 @@ Five things happen here rather than at runtime:
   ever read - there are no textures in either file, and the client flat-shades
   every map material - and between them they are more than half the larger
   map's bytes. Every player downloads these.
-* Nothing is rescaled. The soldier is already 1.83 m with its feet at the
-  origin, and the map is scaled at load time instead, so that the numbers in
-  map.rs and the numbers in the art stay legible next to each other.
+* Nothing is rescaled. The map is scaled at load time instead, so that the
+  numbers in map.rs and the numbers in the art stay legible next to each other.
 
 Geometry is never touched, which is what lets `derive-brushes.py` keep trusting
 this file: the collision brushes are generated from the same arena.glb, so a
@@ -39,13 +36,6 @@ import os
 import shutil
 import struct
 import sys
-
-# Meshes dropped from the soldier, and why. Matched on mesh name, which is
-# descriptive, rather than node name, which is "Object_54".
-SOLDIER_DROP = {
-    'holster_soldier_0': 'broken bind pose - floats ~6.5 m below the body',
-    'hand_knife_soldier_0': 'knife in hand, clashes with the rifle viewmodel',
-}
 
 
 def read_glb(path):
@@ -122,33 +112,6 @@ def pack_gltf(gltf_path, out_path):
     write_glb(js, bytes(blob), out_path)
 
 
-def drop_meshes(js, names):
-    """Unhook named meshes from the nodes that draw them.
-
-    The node itself stays, so every index in the file remains valid - removing
-    a node would renumber the skin's joint list and the animation targets along
-    with it. An unreferenced mesh is a few hundred wasted bytes; a renumbered
-    skeleton is a silently broken character.
-    """
-    dropped = []
-    for node in js.get('nodes', []):
-        index = node.get('mesh')
-        if index is None:
-            continue
-        name = js['meshes'][index].get('name', '')
-        if name in names:
-            del node['mesh']
-            dropped.append(name)
-    missing = set(names) - set(dropped)
-    if missing:
-        raise SystemExit(f'expected meshes not found, asset changed?: {sorted(missing)}')
-    return dropped
-
-
-# Any material darker than this reads as a hole rather than a surface, and is
-# lifted to `DARK_FLOOR_TARGET` keeping its hue.
-DARK_LIMIT = 0.05
-DARK_FLOOR_TARGET = 0.10
 
 
 def lift_black_materials(js):
@@ -251,8 +214,8 @@ def compact_buffer(js, blob):
     size it went in.
     """
     # Everything that can name an accessor. Maps have none of the last three,
-    # but the soldier does, and a helper that quietly breaks a rig the day it is
-    # pointed at one is worse than no helper.
+    # but a rigged character does, and a helper that quietly breaks a rig the
+    # day it is pointed at one is worse than no helper.
     live_accessors = set()
     for mesh in js.get('meshes', []):
         for prim in mesh['primitives']:
@@ -343,12 +306,6 @@ def compact_buffer(js, blob):
 def main(source):
     if not os.path.isdir(source):
         raise SystemExit(f'no such directory: {source}')
-
-    print('soldier')
-    js, blob = read_glb(os.path.join(source, 'low_poly_soldier_-free.glb'))
-    for name in drop_meshes(js, SOLDIER_DROP):
-        print(f'    dropped {name}: {SOLDIER_DROP[name]}')
-    write_glb(js, blob, 'assets/characters/soldier.glb')
 
     print('arena')
     gltf = os.path.join(source, 'tdm', 'scene.gltf')

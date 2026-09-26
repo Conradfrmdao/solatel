@@ -280,6 +280,9 @@ struct Stats {
     shots_hit: u32,
     headshots: u32,
     damage_dealt: u32,
+    /// Hits that landed at the end of a flick. Never shown to anybody; it is
+    /// one of the things `records` judges a player's record on.
+    snap_hits: u32,
 }
 
 /// Where a connected player is.
@@ -462,6 +465,9 @@ struct Lobby {
     /// What a withdrawal is judged against. `None` when the server has no
     /// chain configured, and every withdrawal is refused with a reason.
     wallet: Option<crate::wallet::Terms>,
+    /// Where finished lives are written, for match history and the
+    /// anti-cheat. `None` in free play, where there is no payout to guard.
+    records: Option<crate::records::RecordsHandle>,
     /// The tables this server runs, cheapest first.
     tiers: Vec<Stakes>,
     /// Fewest players a match will start with. See [`MATCH_FLOOR`].
@@ -481,6 +487,7 @@ impl Lobby {
         Self {
             ledger: None,
             wallet: None,
+            records: None,
             tiers: vec![Stakes::DEFAULT],
             floor: MATCH_FLOOR,
             wait: QUEUE_WAIT,
@@ -606,6 +613,7 @@ impl Lobby {
         let Some(entry) = self.entry_of(match_id, player_id) else {
             return;
         };
+        let request = route(entry);
         if let Some(body) = self
             .matches
             .get_mut(&match_id)
@@ -613,9 +621,57 @@ impl Lobby {
         {
             body.staked = false;
         }
+        self.record_life(match_id, player_id, &request);
         if let Some(ledger) = &self.ledger {
-            ledger.send(route(entry));
+            ledger.send(request);
         }
+    }
+
+    /// Write a life into match history as its stake settles.
+    ///
+    /// Here, because this is the one place every life ends through - a kill,
+    /// the whistle, a walk-away - and the moment its numbers stop changing.
+    fn record_life(
+        &self,
+        match_id: MatchId,
+        player_id: PlayerId,
+        request: &crate::ledger::LedgerRequest,
+    ) {
+        use crate::ledger::LedgerRequest;
+        use crate::records::{Counts, Life, Outcome};
+        let Some(records) = &self.records else {
+            return;
+        };
+        let outcome = match request {
+            LedgerRequest::SettleKill { killer, .. } => Outcome::Killed { killer: *killer },
+            LedgerRequest::AbandonEntry { .. } => Outcome::Abandoned,
+            LedgerRequest::RefundEntry { .. } => Outcome::Survived,
+            _ => return,
+        };
+        let Some(game) = self.matches.get(&match_id) else {
+            return;
+        };
+        let Some(body) = game.bodies.get(&player_id) else {
+            return;
+        };
+        let stats = body.stats;
+        records.send(Life {
+            match_id,
+            player_id,
+            map: game.map.name,
+            stake: game.stakes.entry(),
+            outcome,
+            counts: Counts {
+                kills: stats.kills,
+                shots_fired: stats.shots_fired,
+                shots_hit: stats.shots_hit,
+                headshots: stats.headshots,
+                damage_dealt: stats.damage_dealt,
+                snap_hits: stats.snap_hits,
+            },
+            winnings: solatel_protocol::MicroUsd(body.winnings_micro_usd),
+            alive_ms: (game.elapsed(self.tick) * 1000.0) as u32,
+        });
     }
 
     // ---- matchmaking ----------------------------------------------------
@@ -1592,6 +1648,18 @@ impl Lobby {
         // The look direction comes from the input command, not from the
         // shooter's stored state, so the shot matches the frame they fired on.
         let direction = solatel_protocol::sim::look_direction(command.yaw, command.pitch);
+        // Was this the end of a flick: the aim a tenth of a second ago, from
+        // the shooter's own history, against the aim of the shot. Counted
+        // only if it hits, and only ever judged over many hits.
+        let flicked = {
+            let then = shooter.state_at(
+                self.tick,
+                crate::records::SNAP_WINDOW_SECONDS * 1000.0,
+            );
+            let before = solatel_protocol::sim::look_direction(then.yaw, then.pitch);
+            direction.dot(before).clamp(-1.0, 1.0).acos()
+                > crate::records::SNAP_DEGREES.to_radians()
+        };
 
         // Rewind everyone else to what this shooter could see: half a round
         // trip for the snapshot to reach them, plus the interpolation buffer
@@ -1706,6 +1774,9 @@ impl Lobby {
             shooter.stats.damage_dealt = shooter.stats.damage_dealt.saturating_add(damage as u32);
             if region == HitRegion::Head {
                 shooter.stats.headshots = shooter.stats.headshots.saturating_add(1);
+            }
+            if flicked {
+                shooter.stats.snap_hits = shooter.stats.snap_hits.saturating_add(1);
             }
             if killed {
                 shooter.stats.kills = shooter.stats.kills.saturating_add(1);
@@ -2027,6 +2098,7 @@ pub fn channel() -> (GameHandle, GameCommands) {
 pub fn spawn(
     commands: GameCommands,
     ledger: Option<crate::ledger::LedgerHandle>,
+    records: Option<crate::records::RecordsHandle>,
     wallet: Option<crate::wallet::Terms>,
     tiers: Vec<Stakes>,
     floor: usize,
@@ -2037,6 +2109,7 @@ pub fn spawn(
     tokio::spawn(async move {
         let mut lobby = Lobby::new();
         lobby.ledger = ledger;
+        lobby.records = records;
         lobby.wallet = wallet;
         lobby.tiers = tiers;
         lobby.floor = floor.max(1);

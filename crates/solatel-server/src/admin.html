@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Solatel admin</title>
+<style>
+  :root {
+    --bg: #0e1113; --panel: #161b1f; --line: #262e35; --text: #dde3e8; --dim: #8a96a1;
+    --accent: #9fe8b4; --warn: #f2c14e; --bad: #ef6f6c; --good: #7fd49a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 16px; align-items: center; padding: 12px 16px;
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .08em; }
+  header h1 span { color: var(--accent); }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: none; border: 1px solid transparent; color: var(--dim);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  nav button.on { color: var(--text); border-color: var(--line); background: var(--panel); }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .card, .box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .card b { display: block; font-size: 20px; }
+  .card small, .dim { color: var(--dim); }
+  .box { margin-bottom: 12px; }
+  h2 { font-size: 15px; margin: 18px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--line); margin-right: 4px; }
+  .tag.warn { color: var(--warn); border-color: #5a4a1d; }
+  .tag.bad { color: var(--bad); border-color: #5a2624; }
+  .tag.good { color: var(--good); border-color: #24503a; }
+  a, .link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  input, textarea { background: #0b0e10; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%; }
+  textarea { min-height: 56px; resize: vertical; }
+  button.act { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  button.act:hover { border-color: var(--accent); }
+  button.clear { border-color: #24503a; } button.confirm { border-color: #5a2624; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .msg { color: var(--bad); margin: 8px 0; min-height: 1em; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  #login { max-width: 420px; margin: 12vh auto; }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } main { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>SOLATEL <span>admin</span></h1>
+  <nav id="tabs" hidden>
+    <button data-tab="overview">overview</button>
+    <button data-tab="reviews">reviews</button>
+    <button data-tab="players">players</button>
+    <button data-tab="matches">matches</button>
+  </nav>
+  <span class="dim" style="margin-left:auto">devnet</span>
+</header>
+<main id="main">
+  <div id="login" class="box">
+    <h2 style="margin-top:0">Admin token</h2>
+    <p class="dim">The value of <code>SOLATEL_ADMIN_TOKEN</code> on this server. Kept in this tab only.</p>
+    <input id="token" type="password" autocomplete="off">
+    <div class="msg" id="login-msg"></div>
+    <button class="act" id="login-go">sign in</button>
+  </div>
+</main>
+<script>
+'use strict';
+// Every value from the server goes into the page as text, never as markup:
+// notes and reasons are typed by people, and this page can decide reviews.
+const $ = (id) => document.getElementById(id);
+const main = $('main');
+let token = sessionStorage.getItem('solatel.admin') || '';
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+// Integer micro-USD to dollars, with integer arithmetic: the page formats
+// money and never computes it.
+function usd(micros) {
+  if (micros === null || micros === undefined) return '-';
+  const n = Math.trunc(Number(micros));
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  const cents = Math.floor((abs % 1000000) / 10000);
+  return `${sign}$${Math.floor(abs / 1000000).toLocaleString()}.${String(cents).padStart(2, '0')}`;
+}
+const pct = (part, whole) => (whole > 0 ? `${Math.round((100 * part) / whole)}%` : '-');
+const when = (t) => (t ? new Date(t).toLocaleString() : '-');
+const short = (id) => (id ? String(id).slice(0, 8) : '-');
+
+async function api(path, options = {}) {
+  const res = await fetch(`/admin/api${path}`, {
+    ...options,
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+  });
+  if (res.status === 401) { signOut('That token was not accepted.'); throw new Error('unauthorised'); }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && body.error) || `${res.status}`);
+  return body;
+}
+
+function signOut(message) {
+  token = '';
+  sessionStorage.removeItem('solatel.admin');
+  if (message) sessionStorage.setItem('solatel.admin.msg', message);
+  location.hash = '';
+  location.reload();
+}
+
+function table(columns, rows) {
+  return el('div', { class: 'scroll' }, el('table', {},
+    el('thead', {}, el('tr', {}, columns.map(([label, , cls]) => el('th', { class: cls || '' }, label)))),
+    el('tbody', {}, rows.length
+      ? rows.map((row) => el('tr', {}, columns.map(([, cell, cls]) => el('td', { class: cls || '' }, cell(row)))))
+      : el('tr', {}, el('td', { colspan: columns.length, class: 'dim' }, 'nothing yet')))));
+}
+
+const playerLink = (id) => (id ? el('a', { href: `#players/${id}`, class: 'mono' }, short(id)) : '-');
+const matchLink = (id) => (id ? el('a', { href: `#matches/${id}`, class: 'mono' }, short(id)) : '-');
+const outcomeTag = (o) => el('span', { class: `tag ${o === 'killed' ? 'bad' : o === 'survived' ? 'good' : 'warn'}` }, o);
+const reviewTag = (s) => (s ? el('span', { class: `tag ${s === 'confirmed' ? 'bad' : s === 'cleared' ? 'good' : 'warn'}` }, `review ${s}`) : '');
+
+const lifeColumns = (withPlayer) => [
+  ...(withPlayer ? [['player', (l) => playerLink(l.player_id)]] : [['match', (l) => matchLink(l.match_id)]]),
+  ['map', (l) => l.map],
+  ['stake', (l) => usd(l.stake_micro_usd), 'n'],
+  ['outcome', (l) => outcomeTag(l.outcome)],
+  ['killed by', (l) => playerLink(l.killer_id)],
+  ['kills', (l) => l.kills, 'n'],
+  ['shots', (l) => l.shots_fired, 'n'],
+  ['acc', (l) => pct(l.shots_hit, l.shots_fired), 'n'],
+  ['head', (l) => pct(l.headshots, l.shots_hit), 'n'],
+  ['flick', (l) => pct(l.snap_hits, l.shots_hit), 'n'],
+  ['won', (l) => usd(l.winnings_micro_usd), 'n'],
+  ['alive', (l) => `${Math.round(l.alive_ms / 1000)}s`, 'n'],
+  ['ended', (l) => when(l.ended_at)],
+];
+
+// ---- views ---------------------------------------------------------------
+
+async function overview() {
+  const o = await api('/overview');
+  const a = o.accounts || {};
+  const card = (label, value, note) => el('div', { class: 'card' }, el('small', {}, label), el('b', {}, value), note ? el('small', {}, note) : '');
+  return [
+    el('div', { class: 'cards' },
+      card('players', o.players),
+      card('lives, 24 h', o.lives_24h),
+      card('matches, 24 h', o.matches_24h),
+      card('reviews open', o.reviews_open, o.reviews_open ? 'withdrawals held' : ''),
+      card('confirmed cheats', o.reviews_confirmed),
+      card('withdrawals in flight', o.withdrawals_in_flight)),
+    el('h2', {}, 'Ledger accounts'),
+    el('div', { class: 'cards' },
+      card('player balances', usd(a.player_balance)),
+      card('in escrow', usd(a.match_escrow)),
+      card('platform revenue', usd(a.platform_revenue)),
+      card('treasury', usd(a.treasury)),
+      card('external', usd(a.external), 'the world outside; negative is money in')),
+  ];
+}
+
+function evidenceView(e) {
+  if (!e) return '';
+  return el('div', { class: 'dim' },
+    `${e.lives} lives, ${e.shots_fired} shots: accuracy ${pct(e.shots_hit, e.shots_fired)}, `
+    + `headshots ${pct(e.headshots, e.shots_hit)} of hits, flicks ${pct(e.snap_hits, e.shots_hit)} of hits, `
+    + `${e.kills} kills`);
+}
+
+async function reviews(status = 'open') {
+  const list = await api(`/reviews?status=${status}`);
+  const pick = el('div', { class: 'row' }, ['open', 'cleared', 'confirmed'].map((s) =>
+    el('button', { class: 'act', onclick: () => render('reviews', s) }, s === status ? `[${s}]` : s)));
+  const items = list.map((r) => {
+    const by = el('input', { placeholder: 'your name' });
+    by.value = localStorage.getItem('solatel.admin.by') || '';
+    const note = el('textarea', { placeholder: 'what you looked at, and why you decided' });
+    const msg = el('div', { class: 'msg' });
+    const decide = async (decision) => {
+      msg.textContent = '';
+      try {
+        localStorage.setItem('solatel.admin.by', by.value.trim());
+        await api(`/reviews/${r.id}`, { method: 'POST', body: JSON.stringify({ decision, by: by.value, note: note.value }) });
+        render('reviews', status);
+      } catch (err) { msg.textContent = err.message; }
+    };
+    return el('div', { class: 'box' },
+      el('div', { class: 'row' },
+        el('b', {}, 'player '), playerLink(r.player_id),
+        r.reasons.map((x) => el('span', { class: 'tag warn' }, x)),
+        el('span', { class: 'dim' }, `flagged ${when(r.created_at)} on match `), matchLink(r.match_id)),
+      evidenceView(r.evidence),
+      el('div', { class: 'dim' }, `balance ${usd(r.balance_micro_usd)}, ${r.lives} lives on record`),
+      r.status === 'open'
+        ? el('div', {},
+            el('div', { class: 'grid2', style: 'margin-top:8px' }, by, note),
+            msg,
+            el('div', { class: 'row' },
+              el('button', { class: 'act clear', onclick: () => decide('cleared') }, 'clear: nothing wrong, reopen withdrawals'),
+              el('button', { class: 'act confirm', onclick: () => decide('confirmed') }, 'confirm cheating: keep withdrawals shut')))
+        : el('div', { class: 'dim' }, `${r.status} by ${r.decided_by} on ${when(r.decided_at)}: ${r.note}`));
+  });
+  return [pick, el('p', { class: 'dim' },
+    'A review holds a player\'s withdrawals and nothing else. Their balance stays theirs and playable. ',
+    'Look at their lives and matches before deciding; the lines that tripped are starting points, not proof.'),
+  ...(items.length ? items : [el('p', { class: 'dim' }, `no ${status} reviews`)])];
+}
+
+async function players(id) {
+  if (id) return player(id);
+  const q = el('input', { placeholder: 'player id, or the start of one' });
+  const out = el('div');
+  const search = async () => {
+    const list = await api(`/players?q=${encodeURIComponent(q.value)}`);
+    out.replaceChildren(table([
+      ['player', (p) => playerLink(p.id)],
+      ['joined', (p) => when(p.created_at)],
+      ['balance', (p) => usd(p.balance_micro_usd), 'n'],
+      ['lives', (p) => p.lives, 'n'],
+      ['', (p) => reviewTag(p.review)],
+    ], list));
+  };
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  search();
+  return [el('div', { class: 'row' }, q, el('button', { class: 'act', onclick: search }, 'search')), el('br'), out];
+}
+
+async function player(id) {
+  const p = await api(`/players/${id}`);
+  const r = p.record;
+  const open = p.reviews.find((x) => x.status === 'open' || x.status === 'confirmed');
+  return [
+    el('div', { class: 'box' },
+      el('div', { class: 'row' }, el('b', {}, 'player'), el('span', { class: 'mono' }, p.id), open ? reviewTag(open.status) : ''),
+      el('div', { class: 'dim' }, `joined ${when(p.created_at)}${p.solana_pubkey ? `, wallet ${p.solana_pubkey}` : ''}`)),
+    el('div', { class: 'cards' },
+      el('div', { class: 'card' }, el('small', {}, 'balance'), el('b', {}, usd(p.balance_micro_usd))),
+      el('div', { class: 'card' }, el('small', {}, 'lives'), el('b', {}, r.lives)),
+      el('div', { class: 'card' }, el('small', {}, 'kills'), el('b', {}, r.kills)),
+      el('div', { class: 'card' }, el('small', {}, 'accuracy'), el('b', {}, pct(r.shots_hit, r.shots_fired)), el('small', {}, `${r.shots_hit} of ${r.shots_fired}`)),
+      el('div', { class: 'card' }, el('small', {}, 'headshots of hits'), el('b', {}, pct(r.headshots, r.shots_hit))),
+      el('div', { class: 'card' }, el('small', {}, 'flicks of hits'), el('b', {}, pct(r.snap_hits, r.shots_hit))),
+      el('div', { class: 'card' }, el('small', {}, 'won from kills'), el('b', {}, usd(r.winnings_micro_usd)))),
+    el('h2', {}, 'Lives'), table(lifeColumns(false), p.lives),
+    el('h2', {}, 'Ledger, on their balance'), table([
+      ['when', (e) => when(e.created_at)],
+      ['kind', (e) => e.kind],
+      ['key', (e) => el('span', { class: 'mono' }, e.key)],
+      ['amount', (e) => usd(e.amount_micro_usd), 'n'],
+      ['reason', (e) => e.reason || ''],
+    ], p.ledger),
+    el('h2', {}, 'Withdrawals'), table([
+      ['when', (w) => when(w.created_at)],
+      ['amount', (w) => usd(w.amount_micro_usd), 'n'],
+      ['to', (w) => el('span', { class: 'mono' }, w.destination)],
+      ['status', (w) => w.status],
+      ['signature', (w) => (w.signature ? el('a', { href: `https://explorer.solana.com/tx/${w.signature}?cluster=devnet`, target: '_blank', rel: 'noopener', class: 'mono' }, short(w.signature)) : '-')],
+      ['reason', (w) => w.reason || ''],
+    ], p.withdrawals),
+    el('h2', {}, 'Deposits'), table([
+      ['seen', (d) => when(d.seen_at)],
+      ['credited', (d) => usd(d.micro_usd), 'n'],
+      ['outcome', (d) => d.outcome],
+      ['signature', (d) => el('a', { href: `https://explorer.solana.com/tx/${d.signature}?cluster=devnet`, target: '_blank', rel: 'noopener', class: 'mono' }, short(d.signature))],
+    ], p.deposits),
+    el('h2', {}, 'Reviews'), table([
+      ['flagged', (x) => when(x.created_at)],
+      ['reasons', (x) => x.reasons.join(', ')],
+      ['evidence', (x) => evidenceView(x.evidence)],
+      ['status', (x) => reviewTag(x.status)],
+      ['decision', (x) => (x.decided_by ? `${x.decided_by}: ${x.note}` : '')],
+    ], p.reviews),
+  ];
+}
+
+async function matches(id) {
+  if (id) {
+    const m = await api(`/matches/${id}`);
+    return [
+      el('div', { class: 'box' }, el('b', {}, 'match '), el('span', { class: 'mono' }, m.match_id)),
+      el('h2', {}, 'Lives'), table(lifeColumns(true), m.lives),
+      el('h2', {}, 'Ledger transactions keyed on this match'), table([
+        ['when', (t) => when(t.created_at)],
+        ['kind', (t) => t.kind],
+        ['key', (t) => el('span', { class: 'mono' }, t.key)],
+        ['legs', (t) => el('div', {}, (t.legs || []).map((leg) => el('div', {},
+          `${leg.account}${leg.player_id ? ` ${short(leg.player_id)}` : ''}: ${usd(leg.amount_micro_usd)}`)))],
+      ], m.ledger),
+    ];
+  }
+  const list = await api('/matches');
+  return [table([
+    ['match', (m) => matchLink(m.match_id)],
+    ['ended', (m) => when(m.ended_at)],
+    ['map', (m) => m.map],
+    ['stake', (m) => usd(m.stake_micro_usd), 'n'],
+    ['players', (m) => m.players, 'n'],
+    ['kills', (m) => m.kills, 'n'],
+    ['survivors', (m) => m.survivors, 'n'],
+    ['paid out in kills', (m) => usd(m.winnings_micro_usd), 'n'],
+  ], list)];
+}
+
+const views = { overview, reviews, players, matches };
+
+async function render(tab, arg) {
+  for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab);
+  main.replaceChildren(el('p', { class: 'dim' }, 'loading…'));
+  try {
+    main.replaceChildren(...(await views[tab](arg)));
+  } catch (err) {
+    if (err.message !== 'unauthorised') main.replaceChildren(el('div', { class: 'msg' }, `could not load: ${err.message}`));
+  }
+}
+
+function route() {
+  const [tab, arg] = location.hash.slice(1).split('/');
+  render(views[tab] ? tab : 'overview', arg);
+}
+
+function start() {
+  $('tabs').hidden = false;
+  for (const b of document.querySelectorAll('#tabs button')) {
+    b.addEventListener('click', () => { location.hash = b.dataset.tab; });
+  }
+  window.addEventListener('hashchange', route);
+  route();
+}
+
+if (token) {
+  start();
+} else {
+  $('login-msg').textContent = sessionStorage.getItem('solatel.admin.msg') || '';
+  sessionStorage.removeItem('solatel.admin.msg');
+  const go = async () => {
+    token = $('token').value.trim();
+    try {
+      await api('/overview');
+      sessionStorage.setItem('solatel.admin', token);
+      start();
+    } catch (err) {
+      if (err.message !== 'unauthorised') $('login-msg').textContent = err.message;
+    }
+  };
+  $('login-go').addEventListener('click', go);
+  $('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+}
+</script>
+</body>
+</html>

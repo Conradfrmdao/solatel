@@ -126,8 +126,75 @@ const GRAIN_DEPTH = 0.1;
  *  across it rather than a visible checkerboard. */
 const GRAIN_SCALE = 0.55;
 
+/** The two ways a named surface is drawn: most things weather, and the
+ *  ground additionally carries paint. */
+const WEATHERED = 1;
+const GROUND = 2;
+
 /**
- * Break up large flat surfaces with a faint world-space grain.
+ * How each of the arena's surfaces ages, by the name `extend-arena.py` gives
+ * its material. The colour is the file's; this is everything a flat colour
+ * cannot say. Every number is a strength from 0 to 1 unless it says
+ * otherwise, and anything left out is off.
+ *
+ * - `blotch`: patchiness at the scale of metres - weather, repairs, fading.
+ * - `streak`: dark runs down vertical faces, from rain off the top.
+ * - `foot`: grime at the bottom of every wall, where splash and dirt collect.
+ * - `seams`: formwork joints, as [metres between vertical joints, metres
+ *   between horizontal ones]. Concrete poured in panels shows every one.
+ * - `plinth`: a darker painted band round the base of a building,
+ *   [height in metres, how much darker].
+ * - `rust`: orange-brown bloom, worst low down and in the streaks.
+ * - `chips`: paint knocked off edges and faces, showing bare metal.
+ * - `ribs`: corrugation, metres between ribs, across roofs and containers.
+ * - `planks`: board width in metres, for anything made of timber.
+ *
+ * A surface not listed here - everything in the yard - gets the grain alone,
+ * exactly as before.
+ */
+const CONCRETE = { kind: WEATHERED, blotch: 0.22, streak: 0.85, foot: 0.32 };
+const PLASTER = { kind: WEATHERED, blotch: 0.16, streak: 0.3, foot: 0.25, plinth: [0.45, 0.22] };
+const PAINTED = { kind: WEATHERED, blotch: 0.12, streak: 0.15, foot: 0.2, chips: 0.3 };
+const TIMBER = { kind: WEATHERED, blotch: 0.12, foot: 0.2, planks: 0.2 };
+const SURFACES = {
+  concrete: { ...CONCRETE, seams: [3.0, 3.066] },
+  concrete_dark: CONCRETE,
+  concrete_light: { ...CONCRETE, streak: 0.3 },
+  silo: { ...CONCRETE, seams: [0, 1.53], rust: 0.3 },
+  asphalt: { kind: GROUND, blotch: 0.2 },
+  plaster_tan: PLASTER,
+  plaster_olive: PLASTER,
+  plaster_maroon: PLASTER,
+  plaster_sand: PLASTER,
+  roof_metal: { ...PAINTED, streak: 0, chips: 0, rust: 0.2, ribs: 0.3 },
+  container_rust: { ...PAINTED, rust: 0.45, ribs: 0.25 },
+  steel: { ...PAINTED, rust: 0.35 },
+  steel_stair: { ...PAINTED, chips: 0.5, rust: 0.2 },
+  tank_white: { ...PAINTED, rust: 0.25, streak: 0.4 },
+  car_red: { ...PAINTED, blotch: 0.2, chips: 0, rust: 0.15 },
+  car_blue: { ...PAINTED, blotch: 0.2, chips: 0, rust: 0.15 },
+  barrel_rust: { ...PAINTED, rust: 0.5 },
+  barrel_olive: { ...PAINTED, rust: 0.3 },
+  barrel_blue: { ...PAINTED, rust: 0.3 },
+  crate_olive: { ...PAINTED, chips: 0.45 },
+  crate_rust: { ...PAINTED, rust: 0.4 },
+  wood: TIMBER,
+  wood_dark: TIMBER,
+  wood_pallet: { ...TIMBER, planks: 0.14 },
+  brick: { kind: WEATHERED, blotch: 0.15, foot: 0.2 },
+  sandbag: { kind: WEATHERED, blotch: 0.2, foot: 0.15 },
+};
+
+/** Paint on the ground is one of these, by the index the map stores. */
+const MARKING_COLOURS = [new THREE.Color(0xc9a23a), new THREE.Color(0xd8d6cc)];
+
+/** The colour rust blooms to, and the colour under chipped paint. */
+const RUST = new THREE.Color(0x7c4a2b);
+const BARE_METAL = new THREE.Color(0x77776f);
+
+/**
+ * Break up large flat surfaces with a faint world-space grain, and age the
+ * ones the map says what they are made of.
  *
  * Both maps are untextured flat colour, which is fine on a crate and a real
  * problem on a hundred-metre wall: a surface with no variation in it gives the
@@ -140,15 +207,47 @@ const GRAIN_SCALE = 0.55;
  * stripped when the assets are prepared, because nothing sampled them and they
  * were megabytes - so there is nothing to sample against. And world space is
  * the right space anyway: the patch size comes out the same on every surface
- * however the model happens to be unwrapped, and nothing stretches.
+ * however the model happens to be unwrapped, and nothing stretches. The one
+ * thing a texture would have supplied that world space does not is which way
+ * a face points, and that comes from the screen-space derivatives of the
+ * position - the same trick flat shading already uses for its normals.
  *
- * It fades out with distance, because detail finer than a pixel does not read
- * as detail. It reads as noise crawling over the geometry as the camera moves.
+ * Everything fine fades out with distance, because detail finer than a pixel
+ * does not read as detail. It reads as noise crawling over the geometry as
+ * the camera moves. Lines - seams, planks, ribs, paint - are also faded by
+ * their own width on screen, which is what keeps a wall of joints forty
+ * metres away from turning into moire.
  */
-function addSurfaceGrain(material) {
+function addSurfaceDetail(material) {
+  const surface = SURFACES[material.name];
+  const markings = surface?.kind === GROUND ? material.userData?.markings ?? [] : [];
+
   material.onBeforeCompile = (shader) => {
     shader.uniforms.grainRange = { value: GRAIN_RANGE };
     shader.uniforms.grainDepth = { value: GRAIN_DEPTH };
+    if (surface) {
+      shader.uniforms.surfaceBlotch = { value: surface.blotch ?? 0 };
+      shader.uniforms.surfaceStreak = { value: surface.streak ?? 0 };
+      shader.uniforms.surfaceFoot = { value: surface.foot ?? 0 };
+      shader.uniforms.surfaceSeams = { value: new THREE.Vector2(...(surface.seams ?? [0, 0])) };
+      shader.uniforms.surfacePlinth = { value: new THREE.Vector2(...(surface.plinth ?? [0, 0])) };
+      shader.uniforms.surfaceRust = { value: surface.rust ?? 0 };
+      shader.uniforms.surfaceChips = { value: surface.chips ?? 0 };
+      shader.uniforms.surfaceRibs = { value: surface.ribs ?? 0 };
+      shader.uniforms.surfacePlanks = { value: surface.planks ?? 0 };
+      shader.uniforms.rustColour = { value: RUST };
+      shader.uniforms.bareColour = { value: BARE_METAL };
+    }
+    if (markings.length) {
+      // Two vec4s a line: the segment, then width, dash and colour.
+      shader.uniforms.markingEnds = {
+        value: markings.map(([x0, z0, x1, z1]) => new THREE.Vector4(x0, z0, x1, z1)),
+      };
+      shader.uniforms.markingLook = {
+        value: markings.map(([, , , , width, dash, colour]) => new THREE.Vector4(width, dash, colour, 0)),
+      };
+      shader.uniforms.markingColours = { value: MARKING_COLOURS };
+    }
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -166,6 +265,8 @@ function addSurfaceGrain(material) {
       .replace(
         '#include <common>',
         `#include <common>
+        ${surface ? `#define SURFACE_KIND ${surface.kind}` : ''}
+        ${markings.length ? `#define MARKINGS ${markings.length}` : ''}
         varying vec3 vGrainPosition;
         uniform float grainRange;
         uniform float grainDepth;
@@ -196,7 +297,52 @@ function addSurfaceGrain(material) {
             mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
             f.z);
-        }`,
+        }
+
+        #ifdef SURFACE_KIND
+        uniform float surfaceBlotch;
+        uniform float surfaceStreak;
+        uniform float surfaceFoot;
+        uniform vec2 surfaceSeams;
+        uniform vec2 surfacePlinth;
+        uniform float surfaceRust;
+        uniform float surfaceChips;
+        uniform float surfaceRibs;
+        uniform float surfacePlanks;
+        uniform vec3 rustColour;
+        uniform vec3 bareColour;
+
+        // The same noise in two dimensions, for patterns that live on a face:
+        // half the hashes, and every pattern below is laid out on a plane.
+        float surfaceHash(vec2 cell) {
+          return fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+        }
+        float surfaceNoise(vec2 p) {
+          vec2 cell = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(surfaceHash(cell), surfaceHash(cell + vec2(1.0, 0.0)), f.x),
+            mix(surfaceHash(cell + vec2(0.0, 1.0)), surfaceHash(cell + vec2(1.0, 1.0)), f.x),
+            f.y);
+        }
+
+        // 1 on a line of half-width w repeating every period along t, 0 off
+        // it, soft by one pixel either side - and fading out entirely once
+        // a period is only a few pixels across, where lines turn to moire.
+        float surfaceLines(float t, float period, float w) {
+          float d = abs(fract(t / period + 0.5) - 0.5) * period;
+          float px = fwidth(t);
+          float line = 1.0 - smoothstep(w, w + px, d);
+          return line * (1.0 - smoothstep(period * 0.08, period * 0.25, px));
+        }
+        #endif
+
+        #ifdef MARKINGS
+        uniform vec4 markingEnds[MARKINGS];
+        uniform vec4 markingLook[MARKINGS];
+        uniform vec3 markingColours[2];
+        #endif`,
       )
       .replace(
         '#include <color_fragment>',
@@ -210,6 +356,105 @@ function addSurfaceGrain(material) {
           float fade = 1.0 - smoothstep(
             grainRange * 0.45, grainRange, distance(vGrainPosition, cameraPosition));
           diffuseColor.rgb *= 1.0 + grain * grainDepth * 2.0 * fade;
+
+          #ifdef SURFACE_KIND
+          vec3 P = vGrainPosition;
+          vec3 colour = diffuseColor.rgb;
+          // Which way this face points, from how position changes across the
+          // pixel. Only its axis is wanted, so the sign does not matter.
+          vec3 facing = abs(normalize(cross(dFdx(P), dFdy(P))));
+          bool level = facing.y > 0.7;
+          // Along a vertical face, whichever horizontal axis it runs down.
+          float across = facing.x > facing.z ? P.z : P.x;
+          vec2 face = level ? P.xz : vec2(across, P.y);
+
+          // Metres-scale patches: two octaves, so they are not all one size.
+          float blotch = surfaceNoise(face / 3.1 + 17.0) * 0.65
+                       + surfaceNoise(face / 0.9 + 5.0) * 0.35;
+          colour *= 1.0 + (blotch - 0.5) * surfaceBlotch * 2.0;
+
+          float low = 1.0 - smoothstep(0.0, 1.4, P.y);
+          float stain = 0.0;
+          if (!level) {
+            // Rain runs: long in y, narrow across, and patchy along the top.
+            float run = surfaceNoise(vec2(across * 1.6, P.y * 0.11))
+                      * 0.7 + surfaceNoise(vec2(across * 4.7 + 9.0, P.y * 0.35)) * 0.3;
+            stain = smoothstep(0.5, 0.85, run);
+            colour *= 1.0 - stain * surfaceStreak * 0.5;
+            colour *= 1.0 - low * low * surfaceFoot;
+            if (surfacePlinth.x > 0.0 && P.y < surfacePlinth.x && P.y > -0.1) {
+              colour *= 1.0 - surfacePlinth.y;
+            }
+            if (surfaceSeams.x > 0.0) {
+              colour *= 1.0 - 0.3 * surfaceLines(across, surfaceSeams.x, 0.02);
+            }
+            if (surfaceSeams.y > 0.0) {
+              colour *= 1.0 - 0.3 * surfaceLines(P.y, surfaceSeams.y, 0.02);
+            }
+          }
+
+          if (surfaceRust > 0.0) {
+            float bloom = surfaceNoise(face * 1.3 + 31.0) * 0.6
+                        + surfaceNoise(face * 4.3) * 0.4;
+            float rust = smoothstep(0.55, 0.8, bloom + low * 0.25 + stain * 0.2);
+            colour = mix(colour, rustColour * (0.8 + 0.4 * blotch), rust * surfaceRust);
+          }
+          if (surfaceChips > 0.0) {
+            // Small and sparse: a knock here and there, not a camouflage.
+            float chip = smoothstep(0.86, 0.9, surfaceNoise(face * 26.0 + 3.0))
+                       * smoothstep(0.4, 0.7, surfaceNoise(face * 2.0 + 8.0));
+            colour = mix(colour, bareColour, chip * surfaceChips * fade);
+          }
+          if (surfaceRibs > 0.0) {
+            // Corrugation: shading that rolls with the sheet, fading to flat
+            // once the ribs are too fine to draw.
+            float t = level ? P.x : across;
+            float px = fwidth(t) / surfaceRibs;
+            colour *= 1.0 + sin(t * 6.2832 / surfaceRibs) * 0.09 * (1.0 - smoothstep(0.1, 0.35, px));
+          }
+          if (surfacePlanks > 0.0) {
+            // Boards: horizontal up the sides, along x on top. Each board a
+            // shade of its own, a dark gap between them, and grain along it.
+            float t = level ? P.z : P.y;
+            float along = level ? P.x : across;
+            float board = floor(t / surfacePlanks);
+            float shade = surfaceHash(vec2(board, floor(along / 1.9)));
+            colour *= 0.9 + shade * 0.2;
+            colour *= 1.0 - 0.45 * surfaceLines(t, surfacePlanks, 0.008);
+            colour *= 1.0 + (surfaceNoise(vec2(along * 1.5, t * 30.0)) - 0.5) * 0.12 * fade;
+          }
+
+          #if SURFACE_KIND == ${GROUND}
+          if (level) {
+            // Grit: speckle a few centimetres across, gone at a distance.
+            colour *= 1.0 + (surfaceHash(floor(P.xz * 16.0)) - 0.5) * 0.14 * fade;
+            // Patches where it has been dug up and resurfaced, darker.
+            colour *= 1.0 - 0.14 * smoothstep(0.6, 0.63, surfaceNoise(P.xz / 7.0 + 3.0));
+            // Oil and water stains, only in some parts of the map.
+            float spill = smoothstep(0.7, 0.8, surfaceNoise(P.xz / 1.4 + 40.0))
+                        * smoothstep(0.45, 0.7, surfaceNoise(P.xz / 11.0));
+            colour *= 1.0 - 0.4 * spill;
+            #ifdef MARKINGS
+            float worn = smoothstep(0.25, 0.6, surfaceNoise(P.xz * 2.3 + 11.0));
+            for (int i = 0; i < MARKINGS; i++) {
+              vec2 a = markingEnds[i].xy;
+              vec2 ab = markingEnds[i].zw - a;
+              vec2 ap = P.xz - a;
+              float h = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+              float d = length(ap - ab * h);
+              vec4 look = markingLook[i];
+              float dash = look.y > 0.0 ? step(fract(h * length(ab) / look.y), 0.5) : 1.0;
+              float px = fwidth(d);
+              float paint = (1.0 - smoothstep(look.x * 0.5, look.x * 0.5 + px, d)) * dash;
+              colour = mix(colour, markingColours[int(look.z)] * (0.85 + 0.3 * blotch),
+                           paint * (0.35 + 0.55 * worn));
+            }
+            #endif
+          }
+          #endif
+
+          diffuseColor.rgb = colour;
+          #endif
         }`,
       )
       .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
@@ -219,8 +464,11 @@ function addSurfaceGrain(material) {
   // Three.js caches compiled programs per material configuration and does not
   // know that `onBeforeCompile` changed the source. Without a key of its own,
   // a grained material and a plain one with the same settings would share one
-  // program and whichever compiled first would win.
-  material.customProgramCacheKey = () => 'solatel-grain';
+  // program and whichever compiled first would win. Every setting that is a
+  // uniform can share a program; what changes the source is the kind and the
+  // number of markings, so those are the key.
+  material.customProgramCacheKey = () =>
+    `solatel-surface-${surface?.kind ?? 0}-${markings.length}`;
 }
 
 /** How far out the sun and the cloud deck sit. Inside the far plane, which is
@@ -340,11 +588,14 @@ export class World {
     // roof genuinely black - which is not what a real interior looks like,
     // because light gets in sideways and off the floor. This is the cheap
     // version of that, and the difference between a room and a hole.
-    const bounce = new THREE.DirectionalLight(0xbfd4ff, 0.85);
+    const bounce = new THREE.DirectionalLight(0xccd6e6, 0.85);
     bounce.position.set(-22, 12, -16);
     this.scene.add(bounce);
 
-    const sky = new THREE.HemisphereLight(0xa8c8ff, 0x7a6449, 1.9);
+    // Paler than the sky it stands for. At full saturation every shadow on
+    // the ground came out navy, which reads as a cartoon's night rather
+    // than as shade on a sunny day - grey asphalt in shadow is grey.
+    const sky = new THREE.HemisphereLight(0xbccbe0, 0x7a6449, 1.9);
     this.scene.add(sky);
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.16));
@@ -595,16 +846,19 @@ export class World {
         // Left at the default these read as wet plastic, and at fully rough
         // they read as paper. This is closer to the painted metal and concrete
         // the shapes are meant to be, and leaves enough sheen for the key
-        // light to pick out which way a surface faces.
-        material.roughness = 0.72;
-        material.metalness = 0.04;
+        // light to pick out which way a surface faces. A surface the map
+        // names carries its own roughness from the palette, and keeps it.
+        if (!SURFACES[material.name]) {
+          material.roughness = 0.72;
+          material.metalness = 0.04;
+        }
         // The model has no normals worth interpolating - every face is one
         // flat colour - so shading it flat is both truer to the art and what
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
         // Vertex colours are present on some of the arena meshes and multiply
         // the base colour to near black if the material does not expect them.
-        addSurfaceGrain(material);
+        addSurfaceDetail(material);
         material.needsUpdate = true;
       }
     });

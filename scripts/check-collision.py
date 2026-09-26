@@ -206,7 +206,7 @@ def scale_of(name):
         'derive_maps', os.path.join(ROOT, 'scripts', 'derive-maps.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for map_name, scale in module.MAPS:
+    for map_name, scale, *_ in module.MAPS:
         if map_name == name:
             return scale
     raise SystemExit(f'no map called {name!r} in derive-maps.py')

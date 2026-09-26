@@ -16,10 +16,10 @@
 //!
 //! So money is asked for, not taken: the world sends a [`LedgerRequest`] and
 //! carries on, and the answer comes back later as a `GameCommand`. That
-//! ordering is also what makes the rules honest. **A life is spawned only
-//! after it has been paid for**, never before with a promise to charge later,
-//! because "later" is a window in which a player can be shot while occupying a
-//! life nobody paid for.
+//! ordering is also what makes the rules honest. **Nobody is put on the map
+//! until their stake has been paid**, never before with a promise to charge
+//! later, because "later" is a window in which a player can be shot while
+//! standing in a match nobody paid for.
 //!
 //! # What an idempotency key is for
 //!
@@ -211,8 +211,8 @@ impl LedgerHandle {
 /// The system accounts are created by the migration and never change; a
 /// balance account is created the first time its player is seen and never
 /// changes either. Looking either one up is a database round trip, and
-/// against a managed Postgres the round trips *are* the cost: buying a life
-/// took ten of them and three and a half seconds measured, which is three
+/// against a managed Postgres the round trips *are* the cost: one player's
+/// buy-in took ten of them and three and a half seconds measured, which is three
 /// and a half seconds between a player dying and being allowed back in.
 ///
 /// No balance is cached here, only ids. A balance is the thing that changes.
@@ -359,14 +359,13 @@ async fn handle(
         LedgerRequest::ReadBalance { player_id } => {
             // Creates the account if this is the first time we have seen
             // them, so a brand new player is told zero rather than nothing.
-            balance_account(pool, accounts, player_id).await?;
-            let balance = balance(pool, player_id).await.unwrap_or(MicroUsd::ZERO);
+            let (balance, withdrawals) = read_wallet(pool, accounts, player_id).await?;
             game.send(GameCommand::BalanceChanged {
                 player_id,
                 balance_micro_usd: balance.micros(),
             })
             .await;
-            for row in recent_withdrawals(pool, player_id).await? {
+            for row in withdrawals {
                 game.send(GameCommand::Tell {
                     player_id,
                     message: row.message(),
@@ -969,6 +968,30 @@ async fn settle_orphaned_entries(pool: &PgPool, accounts: &mut Accounts) -> Resu
     Ok(())
 }
 
+/// A player's balance, and the status of any review that holds their
+/// withdrawals - open or confirmed - in one round trip.
+pub(crate) async fn balance_and_review(
+    pool: &PgPool,
+    player_id: PlayerId,
+) -> Result<(MicroUsd, Option<String>)> {
+    let (micros, review): (Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT b.balance_micro_usd
+                   FROM ledger_accounts a
+                   JOIN ledger_account_balances b ON b.account_id = a.id
+                  WHERE a.kind = 'player_balance' AND a.player_id = $1),
+                (SELECT r.status::text
+                   FROM reviews r
+                  WHERE r.player_id = $1 AND r.status IN ('open', 'confirmed')
+                  ORDER BY r.status = 'confirmed' DESC
+                  LIMIT 1)",
+    )
+    .bind(player_id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .context("reading a balance and any review")?;
+    Ok((MicroUsd(micros.unwrap_or(0)), review))
+}
+
 /// What a player could withdraw right now.
 pub async fn balance(pool: &PgPool, player_id: PlayerId) -> Result<MicroUsd> {
     let micros: Option<i64> = sqlx::query_scalar(
@@ -1003,11 +1026,11 @@ pub async fn owed(pool: &PgPool) -> Result<MicroUsd> {
     Ok(MicroUsd(micros))
 }
 
-/// Everything currently staked on lives in progress.
+/// Everything currently staked in matches in progress.
 ///
 /// This is the pot, and it is a sum over the ledger rather than a count of
 /// players times the entry fee. Those agree only while every player has
-/// exactly one paid life and nothing has been settled, which stops being true
+/// exactly one stake in and nothing has been settled, which stops being true
 /// the moment somebody dies.
 pub async fn escrow_total(pool: &PgPool) -> Result<MicroUsd> {
     let micros: i64 = sqlx::query_scalar(
@@ -1020,7 +1043,7 @@ pub async fn escrow_total(pool: &PgPool) -> Result<MicroUsd> {
     .await
     .context("reading the pot")?;
     if micros < 0 {
-        bail!("escrow is negative, which means a life was settled twice");
+        bail!("escrow is negative, which means a stake was settled twice");
     }
     Ok(MicroUsd(micros))
 }
@@ -1173,6 +1196,96 @@ async fn recent_withdrawals(pool: &PgPool, player_id: PlayerId) -> Result<Vec<Wi
     Ok(rows)
 }
 
+/// Everything the menu shows about a player's wallet, in one statement: their
+/// balance account (made if this is the first time we have seen them), the
+/// balance, and their last few withdrawals, oldest first.
+///
+/// One statement because every player who arrives asks for this, on the
+/// ledger's one sequential queue, and every statement is round trips. Against
+/// a database half a second away the five separate statements this replaced
+/// held the queue for five to seven seconds per arrival, so thirteen people
+/// arriving together kept a match's buy-in waiting past `FORMING_TIMEOUT` and
+/// the match dissolved with nobody in it.
+///
+/// A data-modifying CTE does not see its own inserts, so the account comes
+/// from `made` when it is new and from the table when it is not. The one case
+/// where neither answers is a concurrent insert of the same account committing
+/// mid-statement; that falls back to the step-by-step path, which sees it.
+async fn read_wallet(
+    pool: &PgPool,
+    accounts: &mut Accounts,
+    player_id: PlayerId,
+) -> Result<(MicroUsd, Vec<WithdrawalRow>)> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        "WITH player AS (
+             INSERT INTO players (id) VALUES ($1) ON CONFLICT (id) DO NOTHING
+         ),
+         made AS (
+             INSERT INTO ledger_accounts (kind, player_id) VALUES ('player_balance', $1)
+             ON CONFLICT DO NOTHING
+             RETURNING id
+         ),
+         account AS (
+             SELECT id FROM made
+             UNION ALL
+             SELECT id FROM ledger_accounts WHERE kind = 'player_balance' AND player_id = $1
+         )
+         SELECT a.id AS account_id,
+                COALESCE(b.balance_micro_usd, 0)::bigint AS balance_micro_usd,
+                w.id, w.player_id, w.destination, w.amount_micro_usd, w.lamports,
+                w.status, w.signature, w.signed_transaction,
+                w.last_valid_block_height, w.reason
+           FROM account a
+           LEFT JOIN ledger_account_balances b ON b.account_id = a.id
+           LEFT JOIN LATERAL (
+               SELECT id, player_id, destination, amount_micro_usd, lamports,
+                      status::text AS status, signature, signed_transaction,
+                      last_valid_block_height, reason, created_at
+                 FROM withdrawals
+                WHERE player_id = $1
+                ORDER BY created_at DESC
+                LIMIT 5
+           ) w ON true
+          ORDER BY w.created_at",
+    )
+    .bind(player_id.as_uuid())
+    .fetch_all(pool)
+    .await
+    .context("reading a player's wallet")?;
+
+    let Some(first) = rows.first() else {
+        balance_account(pool, accounts, player_id).await?;
+        let balance = balance(pool, player_id).await?;
+        return Ok((balance, recent_withdrawals(pool, player_id).await?));
+    };
+    accounts
+        .players
+        .insert(player_id, first.try_get("account_id")?);
+    let balance = MicroUsd(first.try_get("balance_micro_usd")?);
+
+    let mut withdrawals = Vec::new();
+    for row in &rows {
+        let Some(id) = row.try_get::<Option<Uuid>, _>("id")? else {
+            continue;
+        };
+        withdrawals.push(WithdrawalRow {
+            id,
+            player_id: row.try_get("player_id")?,
+            destination: row.try_get("destination")?,
+            amount_micro_usd: row.try_get("amount_micro_usd")?,
+            lamports: row.try_get("lamports")?,
+            status: row.try_get("status")?,
+            signature: row.try_get("signature")?,
+            signed_transaction: row.try_get("signed_transaction")?,
+            last_valid_block_height: row.try_get("last_valid_block_height")?,
+            reason: row.try_get("reason")?,
+        });
+    }
+    Ok((balance, withdrawals))
+}
+
 /// Take a withdrawal out of the player's balance and put it on the queue.
 ///
 /// The money leaves their reach here, before anything is signed: it cannot
@@ -1193,7 +1306,21 @@ async fn request_withdrawal(
     // Checked first, as a buy-in is, so "not enough" is an answer the player
     // can read rather than an overdraw error from the trigger. The trigger is
     // still the guarantee.
-    let held = balance(pool, player_id).await?;
+    //
+    // A review is read in the same statement. While one is open the
+    // anti-cheat has asked a person to look at this player's record, and a
+    // payout is exactly what that look is meant to come before; once one is
+    // confirmed, the answer was cheating. Either way nothing leaves for the
+    // chain, and nothing leaves the balance either - it stays playable.
+    let (held, review) = balance_and_review(pool, player_id).await?;
+    if let Some(status) = review {
+        return Ok(Err(match status.as_str() {
+            "confirmed" => "withdrawals are closed on this account after a review".to_string(),
+            _ => "your recent matches are being reviewed; withdrawals open again when that \
+                  is done, and your balance is untouched meanwhile"
+                .to_string(),
+        }));
+    }
     if held < quote.amount {
         return Ok(Err(format!(
             "you have {held}, which is less than {}",
@@ -1330,4 +1457,110 @@ pub async fn withdrawals_in_flight(pool: &PgPool) -> Result<i64> {
         .fetch_one(pool)
         .await
         .context("counting withdrawals in flight")
+}
+
+#[cfg(test)]
+mod review_hold {
+    use super::*;
+    use crate::wallet::{Quote, SolUsd};
+    use solatel_protocol::ids::WithdrawalId;
+
+    /// Against a real Postgres: an open review refuses a withdrawal and
+    /// leaves the balance where it was, a cleared one lets it through, and a
+    /// confirmed one shuts it again.
+    ///
+    /// Ignored by default because it needs a database. Run it with
+    /// `DATABASE_URL=... cargo test -p solatel-server -- --ignored review_hold`.
+    /// It posts a test deposit to a player of its own and returns the one
+    /// withdrawal it makes, so it leaves nothing in flight.
+    #[tokio::test]
+    #[ignore = "needs a Postgres at DATABASE_URL"]
+    async fn a_review_holds_a_withdrawal_and_nothing_else() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = crate::db::connect(&url).await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let mut accounts = Accounts::default();
+
+        let player = PlayerId::new();
+        let account = balance_account(&pool, &mut accounts, player).await.unwrap();
+        let external = system_account(&pool, &mut accounts, "external").await.unwrap();
+        let ten = MicroUsd::from_usd(10).micros();
+        assert!(
+            post(
+                &pool,
+                "deposit",
+                &format!("test-deposit:{player}"),
+                &[(external, -ten), (account, ten)],
+            )
+            .await
+            .unwrap()
+        );
+
+        let rate = SolUsd::parse("140").unwrap();
+        let quote = Quote {
+            amount: MicroUsd::from_usd(5),
+            lamports: rate.lamports_for(MicroUsd::from_usd(5).micros()),
+            destination: crate::solana::Address::parse(
+                "5du3i7LTZa3dNPdG6Hthzo5v2ACL9yDKkpAgKe2CuUk2",
+            )
+            .unwrap(),
+            rate,
+        };
+
+        sqlx::query(
+            "INSERT INTO reviews (player_id, reasons, evidence)
+             VALUES ($1, ARRAY['accuracy'], '{}'::jsonb)",
+        )
+        .bind(player.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let refused =
+            request_withdrawal(&pool, &mut accounts, WithdrawalId::new(), player, &quote)
+                .await
+                .unwrap();
+        assert!(
+            matches!(&refused, Err(reason) if reason.contains("reviewed")),
+            "an open review should refuse the withdrawal: {refused:?}"
+        );
+        assert_eq!(
+            balance(&pool, player).await.unwrap(),
+            MicroUsd::from_usd(10),
+            "a held withdrawal takes nothing out of the balance"
+        );
+
+        sqlx::query(
+            "UPDATE reviews SET status = 'cleared', decided_by = 'test',
+                    note = 'nothing wrong', decided_at = now()
+              WHERE player_id = $1",
+        )
+        .bind(player.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (row, left) =
+            request_withdrawal(&pool, &mut accounts, WithdrawalId::new(), player, &quote)
+                .await
+                .unwrap()
+                .expect("a cleared review should let the withdrawal through");
+        assert_eq!(left, MicroUsd::from_usd(5));
+        assert!(return_withdrawal(&pool, &mut accounts, &row, "test").await.unwrap());
+        assert_eq!(balance(&pool, player).await.unwrap(), MicroUsd::from_usd(10));
+
+        sqlx::query(
+            "INSERT INTO reviews (player_id, reasons, evidence, status, decided_by, note, decided_at)
+             VALUES ($1, ARRAY['snaps'], '{}'::jsonb, 'confirmed', 'test', 'aimbot', now())",
+        )
+        .bind(player.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let shut = request_withdrawal(&pool, &mut accounts, WithdrawalId::new(), player, &quote)
+            .await
+            .unwrap();
+        assert!(
+            matches!(&shut, Err(reason) if reason.contains("closed")),
+            "a confirmed review should keep withdrawals shut: {shut:?}"
+        );
+    }
 }

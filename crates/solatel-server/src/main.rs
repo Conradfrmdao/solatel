@@ -4,11 +4,13 @@
 //! untrusted source of *inputs* and never as a source of *facts*.
 
 mod account;
+mod admin;
 mod config;
 mod db;
 mod game;
 mod ledger;
 mod reconcile;
+mod records;
 mod solana;
 mod tick;
 mod wallet;
@@ -51,6 +53,8 @@ pub struct AppState {
     sessions: Arc<AtomicU64>,
     ledger_health: LedgerHealthHandle,
     game: GameHandle,
+    /// The operator's view. `None` unless `SOLATEL_ADMIN_TOKEN` is set.
+    pub admin: Option<admin::AdminKey>,
 }
 
 impl AppState {
@@ -228,7 +232,10 @@ async fn main() -> Result<()> {
         ))
     };
     let terms = wallet.as_ref().map(|w| w.terms.clone());
-    game::spawn(commands, ledger, terms.clone(), tiers.clone(), floor, wait);
+    // Match history and the anti-cheat's review queue. Off in free play,
+    // like the ledger: there is no payout there to hold.
+    let records = (!free_play).then(|| records::spawn(pool.clone()));
+    game::spawn(commands, ledger, records, terms.clone(), tiers.clone(), floor, wait);
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));
 
     let state = AppState {
@@ -240,7 +247,11 @@ async fn main() -> Result<()> {
         sessions: Arc::new(AtomicU64::new(0)),
         ledger_health,
         game,
+        admin: admin::AdminKey::from_env(),
     };
+    if state.admin.is_some() {
+        tracing::info!("admin view on at /admin");
+    }
 
     tick::spawn(state.clone());
 
@@ -249,6 +260,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws::handler))
+        .merge(admin::router(state.clone()))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
         // The client bundle is tens of megabytes and changes on every build.
         // Without this the browser happily serves a cached copy after a

@@ -28,7 +28,7 @@ import { Audio } from './audio.js';
 import { Link, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
-import { SIM, SPAWNS, loadSim, selectMap } from './sim.js';
+import { BRUSHES, SIM, SPAWNS, loadSim, selectMap } from './sim.js';
 import { Menu } from './menu.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
@@ -62,10 +62,13 @@ function storedName() {
   }
 }
 
-/** Vertical angle three.js wants, from the horizontal one a player picks. */
-function verticalFov(horizontal, aspect) {
+/** Vertical angle three.js wants, from the horizontal one a player picks.
+ *
+ *  `zoom` narrows it for the sights: it scales the tangent of the half-angle,
+ *  which is what magnification is, rather than the angle itself. */
+function verticalFov(horizontal, aspect, zoom = 1) {
   const half = (horizontal * Math.PI) / 360;
-  return (2 * Math.atan(Math.tan(half) / aspect) * 180) / Math.PI;
+  return (2 * Math.atan((Math.tan(half) * zoom) / aspect) * 180) / Math.PI;
 }
 
 function storedFov() {
@@ -160,7 +163,9 @@ async function boot() {
   const rifle = await viewmodel.load('assets/weapons/rifle.glb');
   say('loading the soldier…');
   // The same rifle, handed on rather than fetched again.
-  await remotes.load('assets/characters/soldier.glb', rifle);
+  const soldier = await remotes.load('assets/characters/soldier.glb', rifle);
+  // And the same soldier's arms in first person, in the same pose.
+  viewmodel.setArms(soldier, remotes.clips.aim);
 
   const local = new LocalPlayer(link, input);
   // The menu is built before the HUD, because the settings controls live in
@@ -269,6 +274,11 @@ async function boot() {
       renderer, audio, hud,
       get composer() {
         return composer;
+      },
+      /** The current map's collision boxes, for scripts that need to know
+       *  what is solid - a camera placed for a screenshot, say. */
+      get brushes() {
+        return BRUSHES;
       },
       setComposer(on) {
         composer = on ? builtComposer : null;
@@ -405,13 +415,17 @@ async function boot() {
       } else if (message.t === 'shot_fired') {
         world.addTracer(message.from, message.to, message.hit_player);
         const mine = message.shooter === local.id;
-        if (mine) viewmodel.onShotFired();
-        // The player's own weapon is at their shoulder; everyone else's is
-        // wherever the server says it was, which is what gives a shot a
-        // direction and a distance. The round landing is a second sound from
-        // a second place - often the more useful one, because it is where the
-        // shooter was aiming.
-        audio.shot(mine ? Audio.OWN : message.from, eye, forward);
+        // This player's own shot was already kicked, flashed and heard when
+        // they fired it - see the predicted shots below. Doing it again here
+        // would be every shot twice, the second a round trip late. Everyone
+        // else's is wherever the server says it was, which is what gives a
+        // shot a direction and a distance. The round landing is a second
+        // sound from a second place - often the more useful one, because it
+        // is where the shooter was aiming.
+        if (!mine) {
+          audio.shot(message.from, eye, forward);
+          remotes.onShot(message.shooter);
+        }
         if (!message.hit_player) audio.impact(message.to, eye, forward);
         if (mine && message.hit_player) audio.hitConfirmed(false);
       } else if (message.t === 'damaged') {
@@ -460,11 +474,19 @@ async function boot() {
     }
     if (accumulator > tickDt * MAX_TICKS_PER_FRAME) accumulator = 0;
 
+    // This player's own shots, the moment they leave the weapon.
+    for (let shots = local.takePredictedShots(); shots > 0; shots -= 1) {
+      viewmodel.onShotFired();
+      audio.shot(Audio.OWN, eye, forward);
+    }
+
     // 4. Render state, interpolated between the last two ticks.
     const alpha = Math.min(1, accumulator / tickDt);
     local.eyePosition(alpha, eye, dt);
     camera.position.copy(eye);
-    camera.rotation.set(input.pitch, input.yaw, 0, 'YXZ');
+    // Recoil rolls the view around its own axis and nothing else, so the
+    // middle of the screen - where the shot goes - stays where it was aimed.
+    camera.rotation.set(input.pitch, input.yaw, viewmodel.cameraRoll, 'YXZ');
     camera.getWorldDirection(forward);
 
     // A debug-only detached camera, for looking at things that are otherwise
@@ -478,7 +500,10 @@ async function boot() {
     }
 
     const landing = local.takeLanding();
-    if (landing > 0) audio.land(landing);
+    if (landing > 0) {
+      audio.land(landing);
+      viewmodel.onLanded(landing);
+    }
 
     // A match has started for this client. The map arrives with it, and
     // loading it is asynchronous - so the frame loop keeps running over an
@@ -503,6 +528,7 @@ async function boot() {
     }
 
     const playing = Boolean(local.matchId) && world.ready && !link.parked;
+    viewmodel.setAiming(playing && input.aiming && local.health > 0);
     if (!playing) {
       menu.update(local, link);
       renderer.clear();
@@ -514,9 +540,27 @@ async function boot() {
     world.followWithShadows(eye);
     world.positionSky(eye, camera.far);
     world.setZone(local.zoneRadius);
-    remotes.update(now, dt, local.id);
-    viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround);
+    remotes.update(now, dt, local.id, camera.position);
+    viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     hud.update(now, link, local, input);
+
+    // The sights narrow the world's view, and turning slows by the same
+    // factor so a flick covers the same part of the screen either way. The
+    // weapon's own camera narrows by its own factor, to enlarge the sights.
+    // Compared against the camera itself, so a resize or the FOV slider
+    // moving with the sights up is caught the same way.
+    const zoom = viewmodel.zoom;
+    const fov = verticalFov(horizontalFov, camera.aspect, zoom);
+    if (Math.abs(fov - camera.fov) > 1e-4) {
+      camera.fov = fov;
+      camera.updateProjectionMatrix();
+    }
+    input.lookScale = zoom;
+    const weaponFov = verticalFov(horizontalFov, camera.aspect, viewmodel.weaponZoom);
+    if (Math.abs(weaponFov - viewmodel.camera.fov) > 1e-4) {
+      viewmodel.setView(camera.aspect, weaponFov);
+    }
+    hud.setCrosshairOpacity(viewmodel.crosshairOpacity);
 
     // Counters cover the whole frame, not the last pass of it. Three.js
     // clears `info.render` at the top of every `render` call, so with the

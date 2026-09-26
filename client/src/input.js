@@ -70,6 +70,11 @@ export class Input {
     this._dy = 0;
     this._keys = new Set();
     this._fire = false;
+    this._aim = false;
+    /** Turning is scaled by this, so the view turns the same distance on
+     *  screen per inch of mouse with the sights up as without. Set each
+     *  frame from how far the view is zoomed. */
+    this.lookScale = 1;
     this._capturing = false;
     this._retry = 0;
     /** How many movement events have arrived, for the diagnostics. */
@@ -110,13 +115,18 @@ export class Input {
     window.addEventListener('mousedown', (event) => {
       // Only while the mouse is captured. Without this, dragging the
       // sensitivity slider fires the gun.
-      if ((this.locked || !this.requireLock) && event.button === 0) {
-        this._fire = true;
-      }
+      if (!(this.locked || !this.requireLock)) return;
+      if (event.button === 0) this._fire = true;
+      if (event.button === 2) this._aim = true;
     });
     window.addEventListener('mouseup', (event) => {
       if (event.button === 0) this._fire = false;
+      if (event.button === 2) this._aim = false;
     });
+    // The right button aims, so it must not open the browser's menu over the
+    // game. Only over the canvas: a right click in the menu is still the
+    // browser's.
+    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
     window.addEventListener('keydown', (event) => {
       this._keys.add(event.code);
@@ -131,6 +141,7 @@ export class Input {
     window.addEventListener('blur', () => {
       this._keys.clear();
       this._fire = false;
+      this._aim = false;
     });
 
     // Coming back to the window is exactly when raw input registration is
@@ -169,6 +180,7 @@ export class Input {
         this._dy = 0;
         this._keys.clear();
         this._fire = false;
+        this._aim = false;
       }
     });
 
@@ -309,8 +321,9 @@ export class Input {
 
     if (this.requireLock && !this.locked) return;
 
-    this.yaw = wrapAngle(this.yaw - dx * this.sensitivity);
-    this.pitch -= dy * this.sensitivity;
+    const turn = this.sensitivity * this.lookScale;
+    this.yaw = wrapAngle(this.yaw - dx * turn);
+    this.pitch -= dy * turn;
     const limit = SIM.maxPitch;
     this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
   }
@@ -334,6 +347,13 @@ export class Input {
       jump: this._keys.has('Space'),
       fire: this._fire,
     };
+  }
+
+  /** Whether the aim button is held. Not sent anywhere: aiming down the
+   *  sights changes what this client draws and nothing the server decides. */
+  get aiming() {
+    if (this.requireLock && !this.locked) return false;
+    return this._aim;
   }
 
   /** Raw key state, for the HUD's input row. */

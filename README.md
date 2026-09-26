@@ -3,9 +3,11 @@
 A browser-based, skill-based multiplayer shooter where players pay a small entry
 fee in Solana and earn real money per kill.
 
-**Status: Phase 2 — movement and shooting.** Playable: WASD to move, mouse to
-look, space to jump, click to shoot. Click the canvas to capture the mouse and
-Escape to release it. Money is not wired in yet; that is Phase 3.
+**Status: Phase 4 — the wallet, on Solana devnet.** The game opens on a menu:
+pick a map and a table, wait in line, and play one life for your stake. WASD to
+move, mouse to look, space to jump, click to shoot; Escape releases the mouse.
+Matches, stakes, kill rewards and the ledger are live. Deposits and withdrawals
+in SOL are built and run against devnet only.
 
 Because this game pays out real money, correctness and fairness rank above
 visual polish everywhere in this codebase.
@@ -38,28 +40,23 @@ per kill. Rendering, input, assets and everything else are ordinary JavaScript.
 
 ## The maps and the models
 
-The client draws three models from `assets/`: a soldier for other players, a
-rifle for your own hands, and the map itself. `ATTRIBUTION.md` records where
-each came from and under what licence, and `scripts/prepare-assets.py` records
-what was done to it.
+The client draws three models from `assets/`: a soldier for other players - a
+Mixamo special-forces character with rifle animations - a rifle for your own
+hands, with a red-dot sight built in code, and the map itself.
+`ATTRIBUTION.md` records where each came from and under what licence;
+`scripts/prepare-assets.py` and `scripts/build-soldier.sh` record what was done
+to them.
 
 There are two maps. `arena` is a 34 by 66 metre deathmatch box; `yard` is 116
-by 252 metres of open ground. The server picks one at startup:
-
-```
-SOLATEL_MAP=yard ./x server
-```
-
-Add `SOLATEL_MAP_SWITCH=1` and the settings panel grows a map picker, which
-ends the round and reloads everyone onto the other map. It is for looking at
-the maps, not for playing: leave it off anywhere real.
+by 252 metres of open ground. The server runs both at once, and players pick a
+map and a stake from the menu.
 
 Every spawn on a map is reachable on foot from every other, which
 `every_spawn_can_reach_every_other` checks by walking the map with the real
 collision resolver rather than by reasoning about the brush table.
 
-and names it in the handshake, so the client loads the model the server is
-actually colliding against rather than whichever one it happened to cache.
+A match names its map when it starts, so the client loads the model the server
+is actually colliding against rather than whichever one it happened to cache.
 
 The maps are the interesting part, because the server has to collide against
 whatever the client draws. The collision brushes in
@@ -98,9 +95,9 @@ yard's bytes.
 
 ## Getting started
 
-The Rust toolchain runs in a container — this machine has no MSVC linker, and
-the server deploys to Linux regardless. You need Docker running, and a `.env`
-(copy `.env.example`) with a `DATABASE_URL`.
+On Windows the Rust toolchain runs in a container — there is no MSVC linker,
+and the server deploys to Linux regardless. You need Docker running, and a
+`.env` (copy `.env.example`) with a `DATABASE_URL`.
 
 ```
 ./x image      # build the toolchain image (first-time setup, a few minutes)
@@ -123,26 +120,69 @@ headless browser and reports whether the wasm instantiated, the models parsed,
 WebGL came up and the socket reached the server - the failures that otherwise
 present as "the page is blank".
 
-Then open <http://localhost:8080> and click to capture the mouse. The HUD shows
+To start a match on your own, with nobody else queueing:
+
+```
+SOLATEL_MATCH_FLOOR=1 SOLATEL_QUEUE_WAIT=3 ./x server
+```
+
+Then open <http://localhost:8080>, pick a map and a table, and click the game to
+capture the mouse once the match starts. The HUD shows
 link state, ping, and the current prediction error in metres — a number that climbs means client and
 server are drifting, which is the thing the shared simulation exists to prevent.
-`/health` reports database liveness and whether the ledger reconciles.
+`/health` reports database liveness, whether the ledger reconciles, what is in
+escrow, and the wallet's figures. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
+the operator's view: the ledger's accounts, any player's balance, lives and
+ledger history, any match, and the anti-cheat's review queue.
+
+**In a Claude Code on the web session** there is no Docker, and
+`.claude/hooks/session-start.sh` sets the machine up instead (wasm-bindgen, the
+npm packages, a local Postgres). Run the tools directly:
+
+```
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+bash scripts/build-sim.sh && npm --prefix client run build && bash scripts/copy-assets.sh
+cargo run -p solatel-server
+```
+
+The end-to-end drivers `client/duel.mjs`, `client/survive.mjs` and
+`client/menu.mjs` run against a live server started with the two variables
+above.
 
 ## How the money works
 
 Every amount in the system is an `i64` count of **micro-USD**. No floats touch
 the ledger.
 
-The entry fee is charged **per life**, not per match. That is what makes a
-continuous-cycle match self-funding:
+**One entry fee buys one life in one match. There is no respawn.** Pick a
+table - $1, $2, $5 or $10 - and a map; the lobby starts a match when the table
+fills, or after two minutes with at least four in line. Several matches run at
+once, at every stake.
 
-```
-one death  =>  $1.00 in  =>  $0.90 to the killer + $0.10 to the platform
-```
+A kill moves the victim's stake and only that: the reward to the killer, ten
+percent to the platform.
 
-Under a per-match fee with free respawns, payouts scale with kills while income
-stays fixed at a dollar per player, and a skilled player drains the treasury.
-`solatel-protocol/src/economy.rs` asserts this relationship at compile time.
+| stake | reward per kill | rake |
+|---|---|---|
+| $1 | $0.90 | $0.10 |
+| $2 | $1.80 | $0.20 |
+| $5 | $4.50 | $0.50 |
+| $10 | $9.00 | $1.00 |
+
+Winnings and the stake are separate and never netted. Winnings are posted to
+the wallet as each kill happens, so they are the player's by the time anything
+else does. The stake leaves escrow exactly once:
+
+| what happened | the player gets | the platform gets |
+|---|---|---|
+| killed | nothing - the killer gets the reward | the rake |
+| alive at the whistle | the whole stake back | nothing |
+| walked away mid-match | the reward | the rake |
+| the match never formed | the whole stake back | nothing |
+
+`solatel-protocol/src/economy.rs` asserts at compile time that every table
+divides exactly.
 
 The ledger is an append-only double-entry journal. There is no mutable balance
 column: a balance is the sum of immutable entries, and `ledger_account_balances`
@@ -154,12 +194,21 @@ enforces the rules, so a bug in application code cannot corrupt the books:
 - player balances and escrow cannot go negative
 - every money-moving transaction carries a unique idempotency key, so a
   reconnect or a retried event cannot double-pay
-- a paid life sits in `match_escrow` from spawn until the life ends, so
+- a stake sits in `match_escrow` from the buy-in until it settles, so
   "disconnected while still alive" is a known amount of money, not a hole
 
 `./x ledger` asserts all of the above, including that the database refuses a
 one-legged credit, an overdraft, an edit to history, and a replayed idempotency
 key.
+
+**Money in and out is Solana, devnet only.** A player sends SOL to one treasury
+address with their player id as the memo, and the server credits it once the
+transfer is final. Withdrawals leave the wallet the moment they are asked for
+and are returned if the chain never takes them. The rate is fixed by
+configuration (`SOLATEL_SOL_USD`) rather than read from a market; Plisio is the
+planned gateway for real money. A player is an **account key** kept in the
+browser, which is what makes a balance outlive a closed tab. `CLAUDE.md` has
+the details of both.
 
 ## How the netcode works
 
@@ -194,15 +243,22 @@ Two limits exist purely because this game pays money:
 ## Phases
 
 1. ~~Scaffolding — wasm client, server, database, websocket round trip.~~
-2. **Movement and shooting, server-authoritative, with client prediction.** *(current)*
-3. Match lifecycle and the live ledger.
-4. Solana wallet connect and withdrawals — devnet only until Phase 1–3 are solid.
-5. Anti-cheat foundations.
+2. ~~Movement and shooting, server-authoritative, with client prediction.~~
+3. ~~Match lifecycle, the lobby and the live ledger.~~
+4. **Deposits and withdrawals — devnet only.** *(current)* Built; waiting on an
+   end-to-end run with real devnet SOL. Then Plisio, and signing in with a
+   Solana wallet in place of account keys.
+5. **Anti-cheat foundations.** *(started)* Every life is recorded with the
+   server's own counts; implausible records (accuracy, headshots, hits at the
+   end of a flick) open a review that holds withdrawals until a person decides
+   it in the admin view at `/admin`. Still to do: an adversarial client run
+   against a live server, and tuning the lines against real records.
 6. Polish and launch prep.
 
 ## Open decisions
 
-- Payment processor: Plisio vs NOWPayments (PRD §7).
+- The rifle model and the yard map have unconfirmed licences
+  (`scripts/asset-licence.py`) and must not ship until they are settled.
 - Referral bonus mechanics.
 - No geo-gating or KYC is currently planned. That is a deliberate product stance
   in the PRD rather than an oversight, but it is the project's largest

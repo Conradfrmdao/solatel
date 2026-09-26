@@ -32,6 +32,8 @@ const base = flag('--url') ?? 'http://localhost:8080';
 const url = `${base}/?debug=1&nolock=1`;
 
 const CHROME = [
+  // Set by the cloud session's startup hook to the preinstalled Chromium.
+  process.env.CHROME_PATH,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   '/usr/bin/google-chrome',
@@ -46,7 +48,7 @@ function fail(why) {
 }
 
 const fs = await import('node:fs');
-const executablePath = CHROME.find((p) => fs.existsSync(p));
+const executablePath = CHROME.find((p) => p && fs.existsSync(p));
 if (!executablePath) fail('no Chrome found to drive');
 
 const browser = await puppeteer.launch({
@@ -201,7 +203,6 @@ await page.waitForFunction(() => document.body.classList.contains('running'), {
 const entered = await page.evaluate(() => ({
   map: window.solatel.local.mapName,
   menuHidden: document.getElementById('menu').classList.contains('hidden'),
-  brushes: window.solatel.SIM ? window.solatel.world.arena !== null : false,
 }));
 console.log(`>> dropped into ${entered.map}`);
 if (!entered.menuHidden) fail('the menu stayed up over the match');

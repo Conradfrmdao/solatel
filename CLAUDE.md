@@ -15,6 +15,21 @@ mount, because Rust build directories are unusably slow over a Windows bind
 mount. Build outputs that matter are written to `web/dist`, which is on the
 mount and visible from the host.
 
+**Claude Code on the web is the exception.** That container is Linux with
+Rust, Node and Postgres installed natively and no Docker daemon, so `./x`
+does not work there and the tools run directly: `cargo test --workspace`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`bash scripts/build-sim.sh`, `npm --prefix client run build`,
+`bash scripts/copy-assets.sh`, `cargo run -p solatel-server`.
+`.claude/hooks/session-start.sh` installs what is missing and starts a local
+Postgres (`postgres://solatel:solatel@localhost:5432/solatel`, exported as
+`DATABASE_URL` unless the environment sets one). It cannot reach Neon: its
+network passes web traffic only, and a Postgres connection is not.
+`bash scripts/test-ledger-local.sh` runs the ledger invariant tests against
+that Postgres instead of a container, and `cargo test -p solatel-server --
+--ignored` runs the tests that need a database (they make their own players
+and touch nobody else's rows).
+
 ## Editing files on this machine
 
 Two Windows defaults have already corrupted files in this repo:
@@ -150,8 +165,8 @@ not use the same corner every time. The shuffle takes its randomness from the
 caller: the simulation runs on the server *and*, compiled to wasm, in every
 client, so a function that reached for the clock would differ between them.
 
-The client follows its match. `selectMap` now calls `map::switch` rather than
-`map::select`, and it is called **between matches only** - a match is a fresh
+The client follows its match. `selectMap` calls `map::switch`, and it is
+called **between matches only** - a match is a fresh
 start with no world state to carry across, so there is nothing for a changed
 table to contradict. Doing it mid-match would put a player's prediction on
 different ground from the server's, which is the one disagreement this whole
@@ -323,6 +338,102 @@ route a stake can take:
 **Solana stays on devnet** until Conrad explicitly says otherwise. Nothing in
 this repo should be able to move mainnet funds by accident.
 
+## Accounts
+
+`crates/solatel-server/src/account.rs`, migration 0005. A balance hangs off a
+`PlayerId`, and that id used to last as long as the tab did - harmless while
+every dollar was a development grant, and a lost deposit the first time
+somebody closed a tab. So a browser holds an **account key**.
+
+- **32 random bytes, base58, in `localStorage`** (`solatel.account`). Handed
+  over in the `Welcome` only when the account is made; the database keeps
+  only its SHA-256 (`players.account_key_hash`), so the server cannot send it
+  again and a copy of the database is not a copy of everybody's wallet. A
+  plain hash, not a slow one: this is 256 random bits, not a password.
+- **Signed in before the lobby hears of the connection.** `ws.rs` resolves
+  the `Hello`'s `account` to a `PlayerId` in the connection's own task,
+  because it is a database round trip and the lobby's loop never waits on
+  one. A missing or unknown key is a new account.
+- **The account says who; the resume token says which body.** Local storage
+  and shared by every tab, against session storage and one per tab. A token
+  is honoured only for its own account.
+- **A second tab on one account takes the player over.** The first is sent
+  `Rejected` with `TAKEN_OVER` and **stops reconnecting** - it is *parked*,
+  and the menu says "you are playing in another tab" with a *play here
+  instead* button. Without the park the two tabs would sign in over each
+  other every couple of seconds, passing one player back and forth.
+- The profile pane shows the player id and, when asked, the key, with a
+  warning; and takes a saved key to sign in with.
+
+It is the weakest part of the wallet on purpose and for now: lose the key and
+the balance goes with it. The answer is signing in with the Solana wallet the
+money came from, which is what `players.solana_pubkey` is waiting for.
+
+`client/menu.mjs` checks the lot in a real browser: a closed tab comes back as
+the same player, and a second tab takes over while the first stays put.
+
+## The wallet
+
+`wallet.rs`, `solana.rs`, `ledger.rs`, migrations 0004 and 0005. Playing never
+touches a chain; money crosses it exactly twice, in and out. **Devnet only**:
+`solana::Cluster::devnet()` is the only cluster there is.
+
+**The rate is configuration, `SOLATEL_SOL_USD`, and nothing reads a market.**
+That was Conrad's choice: on devnet the SOL is free and the rate only has to
+be deterministic, and on a real network it means we eat the difference from
+the real price. There is no default, because a guessed price is a guess about
+what somebody's deposit is worth; the server refuses to start with the
+treasury key and no rate. Both conversions **round down** - a deposit is never
+credited for more than arrived, a withdrawal never sends more than was taken.
+Plisio replaces this rail for real money.
+
+**In: one treasury address, and the player id as the memo.** A watcher polls
+the treasury's *finalized* history every five seconds, pages back until it
+reaches a signature it has already judged, and judges each new one exactly
+once into `treasury_receipts`: `credited`, `unmatched` (the memo names
+nobody), `too_small` or `not_incoming`. A credit posts `external -> player`
+under `deposit:<signature>`, the chain's own name for the event, in the same
+database transaction as the receipt - so a transfer seen twice is credited
+once. The memo parser tolerates text around the UUID. Most wallets have no
+memo box, so `./x pay <memo> <sol>` sends a test deposit from
+`SOLATEL_DEV_PAYER_KEY`.
+
+**Out: three ledger steps, never one.**
+
+1. *Requested*: `player -> treasury` under `withdraw:<id>`, on the ledger's
+   sequential queue, so it cannot race a buy-in. The money is out of the
+   player's reach before anything is signed.
+2. *Sent*: the wallet loop signs it and **records the signature before
+   sending**. A signature is a transaction's id, so a transfer on record can
+   be sent again, or waited out, and never paid twice.
+3. *Final*: `treasury -> external` (`withdrawn:<id>`, `withdrawal_sent`). If
+   it failed, or expired past its last valid block height plus 32, the money
+   goes back: `treasury -> player` (`withdraw-returned:<id>`,
+   `withdrawal_returned`), with the reason.
+
+Checked before the ledger sees a request: at least `MIN_WITHDRAWAL` ($5); a
+base58 address on the ed25519 curve, which is what a wallet is; not the
+treasury; at least the rent-exempt minimum; five seconds since the player's
+last request; and **refused while `SOLATEL_DEV_GRANT` is set**, because
+development money can be played with and must not leave as SOL. The treasury
+keeps its own rent-exempt minimum plus the fee, and a withdrawal it cannot
+cover is returned with a reason.
+
+Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
+Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms. The
+menu's wallet pane states the rate and shows what the server says it is
+sending; it never converts an amount itself. `/health` has a `wallet` block -
+the treasury against what is owed - which is an operator's number, not a
+reconciliation.
+
+**A player's wallet is read in one statement** (`read_wallet`): the account
+made if new, the balance and the last few withdrawals. Every arrival asks for
+it on the one ledger queue, and as five statements it held that queue for
+five to seven seconds a player against a database half a second away -
+enough for thirteen arrivals to keep a match's buy-in waiting past
+`FORMING_TIMEOUT` until the match dissolved. Every statement costs two or
+three round trips; count them before adding one to that queue.
+
 ## Protocol changes
 
 `ClientMsg` and `ServerMsg` in `solatel-protocol` are the wire contract. Renaming
@@ -374,12 +485,118 @@ WebGL came up and the socket connected.
 The viewmodel is rendered in its own scene over a cleared depth buffer, which is
 what stops a wall the player is standing against cutting through the weapon.
 
+### The weapon in your hands
+
+`viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
+in it, nothing hard-coded in the controller. The pose each frame is layers
+added together: hip-to-sights, sway from turning, a breath when still, a
+figure-of-eight bob paced by *distance covered* (so it quickens with speed),
+a lift in the air and a dip on landing, then recoil. Every layer eases with
+an exponential that takes `dt`, so the feel is the same at any frame rate,
+and most of them are steadied with the sights up.
+
+**Aiming down the sights is solved, not tuned.** `weapons.js` gives the two
+sight points in the model's own units; the rig is pitched until the line
+between them is level and moved so the front point is on the view axis. The
+rifle carries a **red-dot sight** (`optic`), built in code on the carry
+handle - a lathed tube with turrets, tinted glass and an unlit dot - and the
+sight points are the two ends of its tube, so aiming looks down it: a near
+rim, a far rim, the dot in the middle. It is added to the rifle model itself,
+so everyone else's rifle carries it too. The world camera narrows by scaling the tangent of its
+half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
+covers the same part of the screen. The weapon's own camera narrows by its
+own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view
+axis, so magnifying about the middle of the screen does not move them. The
+crosshair dims with the sights up and never disappears: it is
+where the shot goes, and on real stakes a player should always see it.
+
+**None of it changes where a shot goes.** Recoil kicks the weapon and rolls
+the camera around its own axis; a roll leaves the middle of the screen where
+it was aimed. A recoil pattern that actually walks the aim, bullet spread
+that differs between hip and sights, sprinting, magazines and reloading are
+all *not built*, on purpose: each changes who wins a fight, so each has to be
+enforced by the server, and a client-only version would be a lie a cheater
+removes in one line. They are Conrad's decision and server work first.
+
+**The arms are the soldier's own.** `setArms` clones the same Mixamo soldier
+other players are drawn with and keeps only the triangles skinned to the arm
+bones, with their weights given wholly to those bones so nothing of the torso
+can drag them. The shouldered clip `remotes.js` uses supplies the **hands** -
+how each closes on the rifle, measured against the rifle it would be holding
+with `grip.js`, which both modules use. It does not supply the **arms**: the
+first version bolted the whole third-person pose onto the first-person
+rifle, which put the soldier's shoulders in front of the camera and pushed
+the sleeves up through the bottom of the screen as stumps. Each arm now
+hangs from a point below the frame (`arms` in `weapons.js`) and is solved
+every frame (`_poseArms`, two bones, elbow bent towards a pole, the arm
+turned as a whole frame so the elbow hinges the way the clip's did, half
+the hand's roll handed to the forearm). The left palm sits on the handguard
+rather than out by the front sight where the clip holds it, because no arm
+reaches that far from below the screen. `hip.position` is high enough that
+the support forearm is in the frame; lower it and the arm is cut off at the
+wrist.
+
+**Each shot throws a case and leaves a puff of smoke**, both pooled and
+tuned in `weapons.js` (`casings`, `smoke`). Once out of the rifle they live
+in **world** coordinates and are carried into the viewmodel's scene each
+frame, so turning leaves them behind; a case inherits the player's velocity,
+bounces once on the floor under them, and is gone in about a second. The
+smoke is faint on purpose and fainter with the sights up, because it hangs
+between the eye and the target. All of it is local decoration: nothing is
+sent, and other players see only the flash.
+
+**Your own shot is shown when you fire it**, not when the server echoes it a
+round trip later. `LocalPlayer` predicts shots on the same ticks and interval
+the server enforces (`takePredictedShots`), and `main.js` skips the kick and
+sound for the echo of its own shot. The server still decides every hit.
+
+### Other players
+
+**The soldier is a Mixamo character**, "Ch15" - a special-forces operator in
+urban digital camo, helmet with night vision, balaclava, plate carrier - with
+four of Mixamo's rifle clips: idle, run, fire and death.
+`scripts/build-soldier.sh` builds `assets/characters/soldier.glb` from the raw
+downloads: FBX to glTF, 4096 px textures down to 1024 px WebP (98 MB to 2.8),
+the clips copied onto the character's bones by name, root motion taken out of
+idle, run and fire so the soldier runs on the spot the server puts him, and
+the mesh simplified from 46k triangles to 34k. The raw downloads are **not in
+the repository and must not be**: it is public, and Mixamo's terms allow the
+assets inside a game but not as redistributed raw files. Mixamo bone names
+lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
+
+`remotes.js` splits each clip at load into legs (hips down) and upper body
+(spine up):
+
+- **Legs** are idle or run by speed - a walk is the run, slower - turned up
+  to 70 degrees toward the way the player moves, with the run played
+  backwards when backing off.
+- **Upper body** holds the shouldered pose from the fire clip's first frame,
+  with a little of the run's arm swing at a sprint; the fire clip plays over
+  it on every shot the server reports.
+- **Aim is a constraint, not a lean.** After the clips pose the body, the
+  line from the right palm to the left is measured and the spine is turned
+  by exactly the rotation that takes it onto the player's yaw and pitch,
+  shared over three spine bones. That also undoes the leg turn for strafing.
+  An earlier version leaned the spine by the pitch around a fixed axis; on
+  this rig the clip's hands point 55 degrees off the hips, and the lean bent
+  him sideways - measure the rifle against the aim, do not eyeball it.
+- **The rifle is not parented to a bone.** Each frame it is put in the right
+  palm and laid along the aim, so it points exactly where the player looks
+  and the left hand is on it.
+- Death plays the death clip once and leaves the body where it fell for five
+  seconds; landing dips the hips; shots flash the muzzle.
+- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth.
+
+The rifle is a clone of the viewmodel's, which carries that rig's offset and
+scale. Both are reset on the copy - inheriting them is what once made every
+other player hold a toy.
+
 ## Assets
 
 Runtime models live in `assets/` and are copied into `web/dist/assets` by
 `./x client`. They are downloaded by every player, so size is a gameplay
 number. A player fetches only the map being played, so the budget is per map,
-not for the folder: arena is 3.3 MB and yard 11 MB, against 1.6 MB of soldier
+not for the folder: arena is 3.3 MB and yard 11 MB, against 2.5 MB of soldier
 and 0.1 MB of rifle either way. The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.
@@ -401,10 +618,30 @@ separate from `prepare-assets.py` precisely so that "the download is untouched"
 stays true of everything else. It adds Solatel's own buildings, stairs and
 walls to `arena.glb`, and takes down 40 triangles of the original: the east and
 west walls, so the map can continue past them, and a redundant red-orange floor
-quad that was z-fighting with the grey ground plane over the whole arena. It is idempotent: everything it adds goes on
+quad that was z-fighting with the grey ground plane over the whole arena. It
+also takes down `room_0`'s own floor - 60 downward-facing triangles at ground
+level, which the client's double-sided materials drew at exactly the ground's
+depth inside that building. It is idempotent: everything it adds goes on
 the end of each glTF array, the lengths from before are in `asset.extras`, and
 nothing is ever deleted — removed triangles are only pointed away from. Run it,
 then `./x maps`, then bump `MAP_VERSION`.
+
+It is also where the arena's **colours** live. `PALETTE` repaints every
+primitive of the original, by what the piece is, in weathered concrete,
+asphalt, plaster, rusty steel and timber, and the geometry it adds is
+painted from the same list. That changes materials and nothing else, so a
+palette change needs no `MAP_VERSION` bump - but prove it: `python
+scripts/derive-maps.py arena` must leave `map.rs` byte-identical. A piece
+`surface_of` does not recognise is an error rather than a default.
+
+The palette's names are a contract with `world.js`, which keys its shading
+on them: `SURFACES` says how each one weathers - rain streaks, formwork
+joints, grime at the foot of a wall, rust, chipped paint, corrugation,
+planks - and the ground's paint comes from `markings` in the asphalt
+material's `extras`, in world metres. All of it is computed from world
+position in the shader, because the maps have no texture coordinates. A
+material with a name `SURFACES` does not list - the whole yard - gets the
+plain grain it always had.
 
 Two rules govern what may be built, both found the hard way and both in that
 file's docstrings. **Nothing may be built over a column whose own obstacle
@@ -425,22 +662,12 @@ bump `MAP_VERSION` in the same commit, which is what tells a stale cached client
 to reload. Each map carries its own `scale` for the same reason: the client
 draws that model at that scale because its brushes were derived at it.
 
-There are two maps, `arena` and `yard`. The server picks one from `SOLATEL_MAP`
-at startup and names it in the handshake; the client calls `select_map` with
-that name before it loads anything. Neither side may choose for itself, and
-`map::select` refuses to change its mind afterwards — a map that changed under
-a running client is a player walking through a wall the server still believes
-in. Asking again for the map already chosen succeeds, because that is what a
-client does every time it reconnects, and the server restarts a lot.
-
-`map::switch` is the one exception and it is the server's alone. It is safe
-only because the caller drops every connected client immediately with a reason
-beginning `the map changed`, which the client treats as an instruction to
-reload; a reloaded client is a fresh process that calls `select` for itself, so
-nobody ever runs a tick against a table they did not choose. It is reachable
-only when the server is started with `SOLATEL_MAP_SWITCH=1`, which puts a map
-picker in the client's settings panel. Leave it off anywhere real: switching
-ends the round for everyone, and a round is people's money.
+There are two maps, `arena` and `yard`, and the server runs both at once: each
+match holds its own map (see *A table is a map and a stake*), and
+`MatchStarted` names it. The client calls `select_map` with that name
+**between matches only**, which points its prediction at that table through
+`map::switch`. `map::active()` is the client's one map; the lobby never reads
+it. There is no `SOLATEL_MAP`, no `map::select` and no map picker any more.
 
 Tests run over every map in `MAPS`. Two of them pin the arena on purpose —
 what they assert about its two staircases is true of those specifically.
@@ -655,8 +882,8 @@ stays where it was for `RESUME_WINDOW` — standing still, visible, and entirely
 shootable — and is retired only when the window closes. Removing them instead
 would make closing the tab the cheapest escape in the game, and a way to walk
 out of a fight without paying for the life you were about to lose. When the
-window does close, the life is forfeited - the same settlement a fall gets,
-and not a refund.
+window does close, the stake settles as an abandon - the reward back to the
+player, the rake to us, the same settlement a fall gets - and not a refund.
 Their held inputs are cleared on the way out, so a body whose owner
 disconnected mid-sprint stands where it was rather than walking off a roof.
 
@@ -689,7 +916,9 @@ underneath them.
 
 A token the server does not recognise costs the client nothing: it simply
 joins as a new player. That is what makes it safe for the client to always
-send whatever it happens to have.
+send whatever it happens to have. A token is honoured **only for the account
+it belongs to** (see *Accounts*), so holding somebody's token does not make a
+connection them.
 
 It lives in `sessionStorage`, not `localStorage`, and the difference is the
 design. Session storage is per tab and survives a reload, which is exactly the
@@ -697,12 +926,20 @@ set of events a player expects to come back from. Local storage is shared by
 every tab on the origin, so two tabs open on the game would each present the
 same token and fight over one body.
 
+**A reloaded page is told which match it is in.** It knows nothing on arrival
+- not the match, not the map - and without that it discards every snapshot as
+a straggler and sits on the menu while its body stands in the match being
+shot. So a player taken back mid-match is sent `MatchStarted` again, right
+behind the `Welcome`. That broke once when the menu came first, and
+`coming_back_mid_match_is_being_told_which_match_and_which_map` pins it.
+
 `client/resume.mjs` is the end-to-end check, and it is not redundant with the
 Rust tests: those cover which tokens are honoured, but they cannot cover
-whether a real browser keeps one across a real page load. It connects, walks,
-reloads, and asserts the same player id came back within a metre or two of
-where it left — the tolerance is not zero because gravity still applies to the
-body while the page is loading.
+whether a real browser keeps one across a real page load. It queues into a
+match, walks, reloads, and asserts the same player came back into the same
+match on the same map, within a metre or two of where it left — the tolerance
+is not zero because gravity still applies to the body while the page is
+loading.
 
 ## Shooting, and what it is worth
 
@@ -768,7 +1005,53 @@ are both, and dropping them outright turns "big⇥red" into "bigred" rather than
 the two words somebody typed. Nothing is ever keyed on a name — anything that
 moved money by name would be paying whoever typed the name.
 
-## When aim stops responding
+## Match history, the anti-cheat, and the admin view
+
+Phase 5's foundations and Phase 3's operator view, in `records.rs`,
+`admin.rs` and migration 0006.
+
+**Every life is written down when its stake settles** - killed, survived, or
+walked away - as one row in `match_lives`: map, stake, outcome, killer, and
+what the server counted (kills, shots, hits, headshots, damage, flick-hits,
+winnings, time alive). `settle_stake` is the one place every life ends
+through, so that is where `record_life` hangs. None of it is money - the
+money is in the ledger already - and none of it is reported by a client.
+
+**It has its own queue, not the ledger's.** Writing a life is two or three
+statements, and on the ledger's queue each would sit in front of the next
+payout at half a second a round trip. The one place the two meet is a
+withdrawal, and that reads the reviews table in the statement it already
+makes (`balance_and_review`).
+
+**Judging is over a player's last twenty lives**, against three lines, each
+with a minimum sample under which it says nothing: accuracy (70% over 60
+shots), headshots as a share of hits (65% over 25), and hits that ended a
+flick (45% over 15). A **flick** is the aim having swung more than 30 degrees
+in the tenth of a second before the shot, measured from the shooter's own
+history, which lag compensation already keeps. People flick; what people do
+not do is land most of their hits that way. The lines are generous on
+purpose and are starting points to tune against real records, not facts
+about human aim - `judge` is a pure function and its tests say where each
+line sits.
+
+**A review holds withdrawals and nothing else.** Crossing a line opens one
+(one open per player, which the database enforces), and while it is open or
+confirmed `request_withdrawal` refuses with a reason and the balance is
+untouched and playable. That is the product's "manual review before a
+payout is finalized": a payout is money leaving for the chain. Nothing here
+claws money back or stops anybody playing; both are a person's decision.
+Clawing back is a ledger `adjustment` with a reason, made deliberately.
+
+**The admin view** is at `/admin`, off unless `SOLATEL_ADMIN_TOKEN` (24
+characters or more) is set, and its API answers only a request carrying that
+token as a bearer token, compared by SHA-256 so the comparison takes the same
+time whatever it is given. It shows the ledger's accounts, the review queue,
+any player (balance, record, lives, every ledger movement on their balance,
+withdrawals, deposits, reviews) and any match (its lives and every
+transaction keyed on it). Each endpoint is one statement that builds its JSON
+in Postgres. The only write is deciding a review, which the database will not
+accept without who decided and why. The page puts every value in as text,
+never markup: notes are typed by people and the page can decide reviews.
 
 ## When aim stops responding
 

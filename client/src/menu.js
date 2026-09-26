@@ -19,6 +19,13 @@
 
 const PANES = ['play', 'wallet', 'profile', 'settings'];
 
+/** One line about each map's ground, for the card. Cosmetic: the server
+ *  names the maps and seats them, and a map with no line here still shows. */
+const MAP_BLURB = {
+  arena: 'close quarters · stairs and rooftops',
+  yard: 'open ground · long sightlines',
+};
+
 /** Micro-USD as a string, the way the rest of the client formats money. */
 function money(micros) {
   const negative = micros < 0;
@@ -311,6 +318,7 @@ export class Menu {
   }
 
   showPane(name) {
+    this.pane = name;
     for (const pane of PANES) {
       const on = pane === name;
       this.root.querySelector(`.pane[data-pane="${pane}"]`).classList.toggle('hidden', !on);
@@ -341,6 +349,7 @@ export class Menu {
           `type="button" data-map="${escapeHtml(map.name)}">` +
           `<span class="name">${escapeHtml(map.name)}</span>` +
           `<span class="seats">${map.seats} players</span>` +
+          (MAP_BLURB[map.name] ? `<span class="blurb">${MAP_BLURB[map.name]}</span>` : '') +
           `<span class="busy">${busy}</span>` +
           `</button>`
         );
@@ -374,6 +383,7 @@ export class Menu {
           : '';
         return (
           `<button class="table" type="button" data-stake="${tier.dollars}">` +
+          `<span class="caption">stake</span>` +
           `<span class="stake">$${tier.dollars}</span>` +
           `<span class="pays">${pays}</span>` +
           `<span class="busy">${waiting} waiting · ${running} playing</span>` +
@@ -454,8 +464,12 @@ export class Menu {
         `in line for <b>${escapeHtml(local.queuedMap ?? '')} $${local.queuedFor}</b> ` +
         `&middot; ${waiting} of ${needed} &middot; you are #${local.place} &middot; ${soon} ` +
         `<button id="leave-queue" type="button">leave the line</button>`;
+    } else if ((this.pane ?? 'play') === 'play' && this.chosenMap) {
+      // Only on the play pane: a prompt to pick a table means nothing
+      // under the wallet or the settings.
+      status = `pick a table to join the line on <b>${escapeHtml(this.chosenMap)}</b>`;
     } else {
-      status = 'pick a map, then a table';
+      status = '';
     }
     if (status !== this._status) {
       this._status = status;
@@ -469,7 +483,10 @@ export class Menu {
 const TEMPLATE = `
   <div class="menu-shell">
     <header>
-      <div class="brand">SOLATEL</div>
+      <div>
+        <div class="brand">SOLATEL</div>
+        <div class="tagline">one life &middot; real stakes &middot; paid per kill</div>
+      </div>
       <div id="purse"><span class="amount">—</span><span class="caption">wallet</span></div>
     </header>
 
@@ -486,6 +503,41 @@ const TEMPLATE = `
       <div id="menu-maps"></div>
       <div class="label">table</div>
       <div id="menu-tables"></div>
+
+      <div class="label">how it works</div>
+      <div class="rules">
+        <div><b>one life</b><span>Your stake buys one life in one match. No respawn.</span></div>
+        <div><b>paid per kill</b><span>Every kill pays the table's reward into your wallet at once.</span></div>
+        <div><b>survive, get it back</b><span>Alive at the whistle, your whole stake comes back.</span></div>
+        <div><b>killed</b><span>Your stake pays whoever killed you, less a 10% house cut.</span></div>
+      </div>
+
+      <div class="label">controls</div>
+      <div class="keys">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
+        <span><kbd>mouse</kbd> look</span>
+        <span><kbd>left click</kbd> shoot</span>
+        <span><kbd>right click</kbd> aim</span>
+        <span><kbd>space</kbd> jump</span>
+        <span><kbd>tab</kbd> scores</span>
+        <span><kbd>esc</kbd> free the mouse</span>
+      </div>
+      <div class="devices">
+        <div class="device best">
+          <b>mouse <em>recommended</em></b>
+          <span class="pro">Fastest, most precise aim</span>
+          <span class="pro">Turn and shoot while you run</span>
+        </div>
+        <div class="device">
+          <b>laptop touchpad</b>
+          <span class="pro">Works on any laptop</span>
+          <span class="con">Slower, less precise aim against mouse players</span>
+          <span class="con">Windows turns it off while you hold a key. Fix: Settings &rarr;
+            Bluetooth &amp; devices &rarr; Touchpad &rarr; Taps &rarr; Touchpad
+            sensitivity &rarr; <b>Most sensitive</b></span>
+        </div>
+      </div>
+      <p class="needs-keyboard">Solatel is played with a keyboard and mouse. Open it on a computer to play.</p>
     </section>
 
     <section class="pane hidden" data-pane="wallet">
@@ -551,7 +603,7 @@ const TEMPLATE = `
         <label>
           name
           <input id="playername" type="text" maxlength="16" />
-          <span>on reload</span>
+          <span>used from your next reload</span>
         </label>
       </div>
       <div class="wallet-block">
@@ -597,7 +649,7 @@ const TEMPLATE = `
         <label class="check">
           raw mouse
           <input id="rawmouse" type="checkbox" />
-          <span>off if aim sticks</span>
+          <span>turn off if aim sticks after switching windows</span>
         </label>
         <label class="check">
           extra shading
