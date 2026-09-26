@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate every map's collision table in `sim/map.rs` from the art.
 
-    python scripts/derive-maps.py          # both maps
+    python scripts/derive-maps.py          # every map
     python scripts/derive-maps.py yard     # just one
 
 `derive-brushes.py` turns one model into one table. This runs it over all of
@@ -46,6 +46,9 @@ MAPS = [
     # cent more puts ceilings over four metres and widens every opening.
     ('arena', 4.6, 28, 20),
     ('yard', 1.0, 42, 30),
+    # Built by `build-facility.py` in metres. 320 m square with country round
+    # a walled works; thirty seats like the yard, spread wider.
+    ('facility', 1.0, 44, 30),
 ]
 
 

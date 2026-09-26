@@ -183,6 +183,24 @@ const SURFACES = {
   wood_pallet: { ...TIMBER, planks: 0.14 },
   brick: { kind: WEATHERED, blotch: 0.15, foot: 0.2 },
   sandbag: { kind: WEATHERED, blotch: 0.2, foot: 0.15 },
+  // The facility's country, and what it adds to the works.
+  grass: { kind: WEATHERED, blotch: 0.32 },
+  grass_dry: { kind: WEATHERED, blotch: 0.32 },
+  dirt: { kind: WEATHERED, blotch: 0.35 },
+  gravel: { kind: WEATHERED, blotch: 0.25 },
+  rock: { kind: WEATHERED, blotch: 0.3, streak: 0.35, foot: 0.15 },
+  rock_dark: { kind: WEATHERED, blotch: 0.3, streak: 0.35, foot: 0.15 },
+  foliage: { kind: WEATHERED, blotch: 0.25 },
+  foliage_dark: { kind: WEATHERED, blotch: 0.25 },
+  bark: { kind: WEATHERED, blotch: 0.2, foot: 0.1 },
+  rubber: { kind: WEATHERED, blotch: 0.1 },
+  container_blue: { ...PAINTED, rust: 0.4, ribs: 0.25 },
+  container_grey: { ...PAINTED, rust: 0.4, ribs: 0.25 },
+  container_olive: { ...PAINTED, rust: 0.4, ribs: 0.25 },
+  car_olive: { ...PAINTED, blotch: 0.2, chips: 0, rust: 0.15 },
+  car_white: { ...PAINTED, blotch: 0.2, chips: 0, rust: 0.2 },
+  stripe_red: { ...PAINTED, rust: 0.3 },
+  warning: { ...PAINTED, chips: 0.4 },
 };
 
 /** Paint on the ground is one of these, by the index the map stores. */
@@ -476,8 +494,11 @@ function addSurfaceDetail(material) {
 const SKY_DISTANCE = 0.82;
 
 /** Water sits just below the ground so the two never fight over the same
- *  depth, and so the map reads as a platform standing in it. */
+ *  depth, and so the map reads as a platform standing in it. A map can say
+ *  otherwise in its scene's extras - the facility stands well clear of its
+ *  sea and has a river cut down to it. */
 const WATER_DEPTH = -0.4;
+const WATER_COLOUR = 0x2c6b8f;
 
 /** How tall the match boundary is drawn.
  *
@@ -678,7 +699,7 @@ export class World {
       // that is one flat colour taking one light. It still takes the light,
       // which is all that is wanted: the sun should sit on it.
       new THREE.MeshLambertMaterial({
-        color: 0x2c6b8f,
+        color: WATER_COLOUR,
         transparent: true,
         opacity: 0.94,
       }),
@@ -710,7 +731,7 @@ export class World {
     this.sunSprite.position.copy(eye).addScaledVector(toSun, distance);
     this.sunSprite.scale.setScalar(distance * 0.16);
 
-    this.water.position.set(eye.x, WATER_DEPTH, eye.z);
+    this.water.position.set(eye.x, this.waterLevel ?? WATER_DEPTH, eye.z);
     this.water.scale.setScalar(range * 3);
 
     // Carry the shadow camera along with the player, keeping the sun's
@@ -807,7 +828,10 @@ export class World {
    * screen for something already in memory.
    */
   async load(url) {
-    if (this.arena && this._loadedUrl === url) return this.arena;
+    if (this.arena && this._loadedUrl === url) {
+      this._takeWater(this.arena);
+      return this.arena;
+    }
 
     if (this.arena) {
       this.scene.remove(this.arena);
@@ -822,6 +846,7 @@ export class World {
       this.bounds.setFromObject(arena);
       const cached = this.bounds.getSize(new THREE.Vector3());
       this._fogForSize(Math.hypot(cached.x, cached.z));
+      this._takeWater(arena);
       return arena;
     }
 
@@ -868,11 +893,27 @@ export class World {
     this.scene.add(arena);
     this.arena = arena;
     this._loadedUrl = url;
+    this._takeWater(arena);
     this.bounds.setFromObject(arena);
 
     const size = this.bounds.getSize(new THREE.Vector3());
     this._fogForSize(Math.hypot(size.x, size.z));
     return arena;
+  }
+
+  /**
+   * The sea's level and colour, as this map describes them.
+   *
+   * The map's scene extras carry them, the way the asphalt carries its own
+   * paint, so the client stays a renderer of what the file says. Either
+   * left out means the one every map had before a map could say.
+   */
+  _takeWater(map) {
+    const extras = map.userData ?? {};
+    this.waterLevel = typeof extras.water_level === 'number' ? extras.water_level : WATER_DEPTH;
+    this.water?.material.color.set(
+      typeof extras.water_colour === 'string' ? extras.water_colour : WATER_COLOUR,
+    );
   }
 
   /** Whether the world has a map in it to draw. */

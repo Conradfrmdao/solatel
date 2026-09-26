@@ -264,6 +264,13 @@ EDGE_APRON = 6.0
 # hundred times as many. Small maps never reach this and are unaffected.
 MAX_SPAWN_CANDIDATES = 2000
 
+# Rectangles, in game metres, that no spawn may be placed in: the map's own
+# say, from `spawn_exclude` in its scene's extras. The facility keeps its
+# walled works free of spawns so a life starts outside the walls and the
+# fight converges on the middle rather than starting in it. A map that says
+# nothing gets nothing, and its spawns are exactly what they were.
+SPAWN_EXCLUDE = []
+
 
 def stage(what, started=[None]):
     """Print how long the last stage took, and announce the next.
@@ -1544,6 +1551,8 @@ def choose_spawns(brushes, low, high, origin, shape, standing, reachable,
                 continue
             x = origin[0] + (ix + 0.5) * CELL
             z = origin[2] + (iz + 0.5) * CELL
+            if any(x0 <= x <= x1 and z0 <= z <= z1 for x0, z0, x1, z1 in SPAWN_EXCLUDE):
+                continue
             if cover[ix, iz] < SPAWN_COVER_SHARE:
                 continue  # out on the apron with nothing around
             seen = clearance((x, SPAWN_HEIGHT, z), yaws, lows, highs,
@@ -1699,8 +1708,12 @@ def check(brushes):
 
 
 def main(path, name, scale):
-    global SCALE
+    global SCALE, SPAWN_EXCLUDE
     SCALE = scale
+    js, _blob = read_glb(path)
+    extras = js['scenes'][js.get('scene', 0)].get('extras', {})
+    SPAWN_EXCLUDE = [tuple(v * SCALE for v in rect)
+                     for rect in extras.get('spawn_exclude', [])]
 
     stage("reading the model")
     meshes = mesh_nodes(path)

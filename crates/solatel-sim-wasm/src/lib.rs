@@ -97,14 +97,7 @@ impl Predictor {
     /// predicting something the server will never agree to.
     /// The match circle is not an argument: it no longer moves anybody. It
     /// burns whoever is outside it, and that is the server's to decide.
-    pub fn step(
-        &mut self,
-        forward: f32,
-        right: f32,
-        yaw: f32,
-        pitch: f32,
-        buttons: u8,
-    ) {
+    pub fn step(&mut self, forward: f32, right: f32, yaw: f32, pitch: f32, buttons: u8) {
         let command = InputCommand {
             seq: 0,
             forward,
@@ -114,11 +107,7 @@ impl Predictor {
             buttons: Buttons(buttons),
         }
         .sanitized();
-        step_tick(
-            &mut self.state,
-            &command,
-            map::active(),
-        );
+        step_tick(&mut self.state, &command, map::active());
     }
 
     #[wasm_bindgen(getter)]

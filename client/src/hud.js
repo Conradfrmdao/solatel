@@ -29,6 +29,12 @@ export class Hud {
     this.reloadBar = root.querySelector('#weapon .reload .fill');
     this.grenadeCount = root.querySelector('#weapon .grenades');
     this.zoneWarning = root.querySelector('#zone-warning');
+    this.warmup = root.querySelector('#warmup');
+    this.warmupCount = root.querySelector('#warmup .count');
+    this.warmupAbout = root.querySelector('#warmup .about');
+    this.warmupHint = root.querySelector('#warmup .hint');
+    this.go = root.querySelector('#go');
+    this._wasWarming = false;
     this.hurtFlash = root.querySelector('#hurt-flash');
     this._lastHealth = null;
     this.crosshair = root.querySelector('#crosshair');
@@ -349,6 +355,39 @@ export class Hud {
       Math.max(0, SIM.grenadesPerLife - local.grenades),
     );
 
+    // The warm-up: everybody on their spawn, counting down together. The
+    // count is the server's, run down between its messages; "go" is shown
+    // when the server says the match is live, not when the local count
+    // reaches zero, so it is never early.
+    const warming = local.inMatch && local.warmingUp;
+    this.warmup.classList.toggle('hidden', !warming);
+    if (warming) {
+      const seconds = Math.max(1, Math.ceil(local.startsInMs / 1000));
+      if (this.warmupCount.textContent !== String(seconds)) {
+        this.warmupCount.textContent = String(seconds);
+        this.warmupCount.classList.remove('beat');
+        void this.warmupCount.offsetWidth;
+        this.warmupCount.classList.add('beat');
+      }
+      const about = [
+        local.mapName,
+        local.tier ? `$${local.tier.dollars} table` : null,
+        local.matchPlayers ? `${local.matchPlayers} players` : null,
+        local.poolMicroUsd !== null ? `${formatMoney(local.poolMicroUsd)} in play` : null,
+      ].filter(Boolean).join(' · ');
+      if (this.warmupAbout.textContent !== about) this.warmupAbout.textContent = about;
+      const hint = input.locked || !input.requireLock
+        ? 'look around - you can move when it hits zero'
+        : 'click to take the mouse - you can move when it hits zero';
+      if (this.warmupHint.textContent !== hint) this.warmupHint.textContent = hint;
+    }
+    if (this._wasWarming && !warming && local.inMatch) {
+      this.go.classList.remove('show');
+      void this.go.offsetWidth;
+      this.go.classList.add('show');
+    }
+    this._wasWarming = warming;
+
     // Outside the circle it hurts, and the player is told so in the middle
     // of the screen, because the edge is behind them by definition.
     this.zoneWarning.classList.toggle('hidden', !(local.outsideZone && local.isAlive));
@@ -428,6 +467,13 @@ const TEMPLATE = `
     <div class="grenades" title="grenades (G)">●●</div>
   </div>
   <div id="zone-warning" class="hidden">OUTSIDE THE ZONE &middot; get back in</div>
+  <div id="warmup" class="hidden">
+    <div class="caption">match starts in</div>
+    <div class="count">15</div>
+    <div class="about"></div>
+    <div class="hint"></div>
+  </div>
+  <div id="go">GO</div>
   <div id="hurt-flash"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
   <div id="balance"><span class="amount">$0.00</span><span class="caption">yours</span></div>

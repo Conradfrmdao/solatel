@@ -91,6 +91,7 @@ class Client {
         this.alive = (mine?.state.health ?? 0) > 0;
         if (mine) this.at = mine.state.position;
         this.zone = msg.zone_radius;
+        this.startsInMs = msg.starts_in_ms ?? 0;
         this.remainingMs = msg.match_remaining_ms;
         break;
       }

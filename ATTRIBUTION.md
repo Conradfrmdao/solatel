@@ -5,8 +5,9 @@ where, and under what terms. It is not optional paperwork: Solatel charges real
 money to play, which makes shipping an asset we do not have commercial rights to
 a legal problem rather than an etiquette one.
 
-**Two assets are currently unlicensed and must not ship: the rifle and the
-yard map.** Both are usable for development. Neither has a written grant.
+**One asset is currently unlicensed and must not ship: the rifle.** It is
+usable for development and has no written grant. The yard map's terms are
+Conrad's word, recorded below, and are still worth finding in writing.
 
 Licence text embedded in a `.glb` lives in its `asset.extras` field. To re-check
 a file's own claim about itself, or all of them at once:
@@ -93,9 +94,28 @@ flat-shades it, so neither was ever read, and together they were fifteen of its
 twenty-six megabytes. No geometry was touched; the collision brushes are
 derived from this same file.
 
-This must be resolved before launch, the same way as the rifle: find the
-model's page, confirm the terms, and record them here verbatim — or replace the
-map. Until then it is fine for development and must not ship.
+**Conrad confirmed on 2026-09-26 that the yard's asset pack is free for
+anybody to use, for any purpose,** and asked for it to be reused in the
+facility map. That is the owner's statement of the terms and is recorded here
+as such. The written grant from the model's page is still worth finding and
+copying in verbatim before launch, so the record does not rest on a message.
+
+## Facility — `assets/maps/facility.glb`
+
+Built from nothing by `scripts/build-facility.py`, which is the readable
+description of it. Two kinds of content, recorded separately:
+
+- **Solatel's own geometry**: the ground, the river and its walls, the
+  terraced ridge and the mountain with its tunnel, every building, the silos
+  and tanks, the pipe rack, the bridges and the dam, the trees and rock
+  outcrops. Authored in that script from boxes and cylinders; none of it is
+  derived from anybody else's model.
+- **Dressing reused from the yard's asset pack** (see above): trucks, cars,
+  shipping containers, barrels, crates, sandbags, barriers, pallets, trestles
+  and the water tower. Each is taken from one named node of `yard.glb`,
+  scaled to the size of the real object, and repainted in Solatel's palette;
+  the vertices are otherwise the pack's. The script lists every one and what
+  it was painted.
 
 ## Character — `assets/characters/soldier.glb`
 

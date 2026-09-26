@@ -145,6 +145,44 @@ for the floor is for a server being tested by one person and warns in the log.
 The tests set both on the `Lobby` directly - a two minute window would mean
 stepping seven and a half thousand ticks in every test that forms a match.
 
+### Found, loading, warm-up
+
+What every matchmaker does between the click and the fight, in the order
+they all do it, and what each step is here:
+
+1. **Searching** - `matchmaking.js`, over the menu. The table, a clock since
+   the click, how full the table is, the player's place, when it starts short
+   of full (only when that is a real clock - under the floor it says how many
+   more are needed), the price and that nothing is charged yet, and *leave
+   the line*. It is up the moment the table is clicked, before the server
+   has answered, and gives up on a request nobody confirmed after four
+   seconds.
+2. **Match found** - `ServerMsg::MatchFound`, sent the instant a line becomes
+   a match and *before* any money moves, with a chime. Without it the queue
+   went quiet for as long as the buy-in took and then a map appeared. The
+   splash is held for at least 1.6 s so it is seen even when the database
+   answers in milliseconds - which costs nothing, because of step 4.
+3. **Loading** - the same card, saying which map, until the world is drawn.
+4. **Warm-up** - `WARMUP`, fifteen seconds (Counter-Strike's freeze time),
+   `SOLATEL_WARMUP` to change it. Everybody is on their spawn and may look
+   round and nothing else: the server zeroes movement and every button for
+   the warm-up (`step_match`), so nothing can be fired, thrown or bought an
+   advantage with, and the client zeroes the same so it never predicts a
+   step the server refuses. `Snapshot::starts_in_ms` counts it down; the
+   match clock and the circle start when it ends (`Match::elapsed` is time
+   since *live*). The HUD shows the count, ticks the last three seconds and
+   says GO - but only when a snapshot says the match is live, never when
+   the local count reaches zero, so a player starts a hair late rather than
+   early and never rubber-bands.
+
+It is also what makes loading fair: a match that went live when its map
+arrived would start with whoever loaded fastest already moving.
+
+The tests run with no warm-up (`free_play` and `Paid` set it to zero) except
+the three about it. Every end-to-end driver waits for `starts_in_ms` to reach
+zero before it does anything, because anything sent in the warm-up is
+discarded - a speed check run during it would prove nothing.
+
 ### A table is a map and a stake
 
 **There is no server-wide map.** A `Match` holds its own `&'static Map` and
@@ -154,11 +192,12 @@ yard. `SOLATEL_MAP`, `SOLATEL_MAP_SWITCH` and the whole `switch_map` message
 are gone with it - they existed because one process ran one map, and it does
 not.
 
-`Map::max_players` - **20 on the arena, 30 on the yard** - because it is a
-property of the ground rather than of the game: the yard is 252 metres across
-and swallows thirty, while thirty in the arena would be a scrum.
+`Map::max_players` - **20 on the arena, 30 on the yard and the facility** -
+because it is a property of the ground rather than of the game: the yard is
+252 metres across and swallows thirty, while thirty in the arena would be a
+scrum.
 
-There are deliberately **more spawn points than seats** (28 and 42), and
+There are deliberately **more spawn points than seats** (28, 42 and 44), and
 `Map::scatter` shuffles them per match. Two matches running on one map at the
 same time therefore do not line everybody up identically, and one match does
 not use the same corner every time. The shuffle takes its randomness from the
@@ -458,9 +497,9 @@ Do not be tempted to port `step_tick` into JS to save a build step: two
 descriptions of movement drifting apart is the failure this whole design exists
 to prevent, and in a game that pays per kill it pays the wrong player.
 
-The wasm is 974 KB, 293 KB of it over the wire once the server has gzipped
-it, and almost all of that is the two maps' brush tables - 39,000 brushes at
-six floats each is 900 KB on its own, against a simulation of about 50 KB.
+The wasm is 1.5 MB, 429 KB of it over the wire once the server has gzipped
+it, and almost all of that is the three maps' brush tables - 59,000 brushes at
+six floats each is 1.4 MB on its own, against a simulation of about 50 KB.
 That is the price of the client colliding against the server's own table
 rather than a copy, and it is still the right trade, but it is the number to
 watch: it moves with the brush count and nothing else. If it needs to come
@@ -605,7 +644,7 @@ other player hold a toy.
 Runtime models live in `assets/` and are copied into `web/dist/assets` by
 `./x client`. They are downloaded by every player, so size is a gameplay
 number. A player fetches only the map being played, so the budget is per map,
-not for the folder: arena is 3.3 MB and yard 11 MB, against 2.5 MB of soldier
+not for the folder: arena is 3.3 MB, yard 11 MB and facility 2.3 MB, against 2.5 MB of soldier
 and 0.1 MB of rifle either way. The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.
@@ -671,7 +710,8 @@ bump `MAP_VERSION` in the same commit, which is what tells a stale cached client
 to reload. Each map carries its own `scale` for the same reason: the client
 draws that model at that scale because its brushes were derived at it.
 
-There are two maps, `arena` and `yard`, and the server runs both at once: each
+There are three maps, `arena`, `yard` and `facility`, and the server runs them
+all at once: each
 match holds its own map (see *A table is a map and a stake*), and
 `MatchStarted` names it. The client calls `select_map` with that name
 **between matches only**, which points its prediction at that table through
@@ -879,6 +919,53 @@ actually solid. Believe its number only because it judges against floors the
 generator says are reachable: an earlier version took the floor under a sample
 to be the top of whatever brush lay beneath it, counted the outsides of
 fourteen-metre parapets, and reported 7% where the truth was 1%.
+
+### The facility, and building a map from nothing
+
+`scripts/build-facility.py`, then `python scripts/derive-maps.py facility`,
+then bump `MAP_VERSION`. The third map is the first one authored here rather
+than downloaded: a walled works (silos, tanks, hangars, warehouses) in open
+country, a village and a wooded ridge with a road tunnel to the north, a river
+along the south crossed by a road bridge, a dam and a footbridge. 320 m
+square, thirty seats. The structure is boxes from the same kit
+`extend-arena.py` uses; the dressing - trucks, containers, barrels, sandbags,
+the water tower - is the yard's own props, instanced and repainted.
+
+The generator was written for downloaded art, and a map built for it has to
+respect what it assumes. Every one of these was found by a test failing:
+
+- **The playable ground is at y = 0 and nothing below it collides.** The
+  voxel grid starts at the floor. Hills are terraces standing on the ground,
+  never lifted ground, or every building on them reads as solid from the
+  floor up. The river is a cut drawn below zero with the water at the map's
+  own level (`water_level` and `water_colour` in the scene extras, read by
+  `world.js`).
+- **The river cannot be entered, and must be closed at both ends.** Flood
+  walls `FLOOD_WALL` high (over what a jump clears), bridge parapets as tall,
+  and no climbable roof within `RIVER_CLEAR`. Somebody in the cut would stand
+  on the invisible floor over it, and `seal_traps` would fill it in as a pit.
+  Left open to the edge of the grid, `outside_the_art` reads the channel as
+  void and seals it. `the_facility_river_cannot_be_entered` checks it.
+- **Anything tall under a roof is a node of its own** (`Layout.solid`). In the
+  structure mesh a rack or a machine fills a player's height, so
+  `obstacle_heights` extends it to the highest surface in its column - the
+  roof - and it becomes an invisible wall to the ceiling. A node is judged as
+  a prop and collides as exactly its box. Interior stairs need a hole in the
+  roof over the stairwell for the same reason.
+- **Long thin faces are cut** (`Kit.box`, `FACE_ASPECT`). The voxeliser
+  samples a triangle by its area, so a 40 m wall a quarter metre thick comes
+  out as a comb with gaps a player walks through.
+- **Treads are slices a cell deep.** A half-metre tread has an interior cell
+  that no face passes through, which reads as hollow and stops the flight
+  partway.
+- **Walls sit on cell boundaries.** Surfaces are recorded at the bottom of
+  their cell, so a height between boundaries is rounded down.
+- **Spawns stay out of the compound** via `spawn_exclude` in the scene
+  extras, which `derive-brushes.py` reads; lives start outside the walls and
+  converge on the middle.
+
+`FACILITY_CLIMBS` in `map.rs` walks every staircase, ramp and ladder of high
+ground with the real resolver; add to it when adding something to stand on.
 
 ## A player who reloads
 

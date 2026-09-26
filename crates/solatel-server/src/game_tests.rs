@@ -16,8 +16,8 @@
 use super::*;
 use solatel_protocol::glam::Vec3;
 use solatel_protocol::sim::{
-    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAGAZINE, MAX_HEALTH, REGEN_DELAY,
-    REGEN_SECONDS, RELOAD_SECONDS, look_direction,
+    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAGAZINE, MAX_HEALTH,
+    REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, look_direction,
 };
 
 /// Puts a player into the lobby and hands back what it decided.
@@ -90,6 +90,9 @@ fn free_play() -> Lobby {
     let mut lobby = Lobby::new();
     lobby.floor = 1;
     lobby.wait = TEST_WAIT;
+    // Live the moment it starts. The warm-up has tests of its own; every
+    // other test is about what happens once a match is being played.
+    lobby.warmup = 0.0;
     lobby
 }
 
@@ -1315,6 +1318,7 @@ impl Paid {
         let mut lobby = Lobby::new();
         lobby.ledger = Some(handle);
         lobby.floor = 2;
+        lobby.warmup = 0.0;
         Self { lobby, ledger }
     }
 
@@ -2222,8 +2226,16 @@ fn a_kill_writes_the_victims_life_into_history() {
     let life = &written[0];
     assert_eq!(life.player_id, duel.victim);
     assert_eq!(life.match_id, duel.match_id);
-    assert_eq!(life.outcome, Outcome::Killed { killer: duel.shooter });
-    assert_eq!(life.stake, duel.lobby.matches[&duel.match_id].stakes.entry());
+    assert_eq!(
+        life.outcome,
+        Outcome::Killed {
+            killer: duel.shooter
+        }
+    );
+    assert_eq!(
+        life.stake,
+        duel.lobby.matches[&duel.match_id].stakes.entry()
+    );
     assert!(life.alive_ms > 0, "the victim was alive for a while");
 }
 
@@ -2252,7 +2264,10 @@ fn a_survivor_is_written_with_what_they_did() {
         "every shot the weapon took is counted, and only those"
     );
     assert_eq!(shooter.counts.shots_hit, shooter.counts.shots_fired);
-    assert_eq!(shooter.winnings, reward, "the history says what the kill paid");
+    assert_eq!(
+        shooter.winnings, reward,
+        "the history says what the kill paid"
+    );
     assert!(
         !written.iter().any(|l| l.player_id == duel.victim),
         "a life is written once, when it ends, and the victim's already had"
@@ -2294,7 +2309,10 @@ fn a_hit_after_tracking_the_target_is_not_a_flick() {
 
     let stats = duel.stats(duel.shooter);
     assert_eq!(stats.shots_hit, 1);
-    assert_eq!(stats.snap_hits, 0, "aim held on the target is tracking, not a flick");
+    assert_eq!(
+        stats.snap_hits, 0,
+        "aim held on the target is tracking, not a flick"
+    );
 }
 
 // ---- the zone, health coming back, the magazine and grenades ---------------
@@ -2366,9 +2384,17 @@ fn the_zone_burns_whoever_is_outside_it_and_moves_nobody() {
     // The duel is set up around a spawn well away from the middle, so late
     // in a match the victim is outside the circle.
     let zone = duel.lobby.matches[&duel.match_id].zone(duel.lobby.tick);
-    assert!(zone.excludes(before), "test setup: the victim should be outside ({zone:?}, at {before:?}, tick {}, started {:?})", duel.lobby.tick, duel.lobby.matches[&duel.match_id].started_tick);
+    assert!(
+        zone.excludes(before),
+        "test setup: the victim should be outside ({zone:?}, at {before:?}, tick {}, started {:?})",
+        duel.lobby.tick,
+        duel.lobby.matches[&duel.match_id].started_tick
+    );
     duel.steps(seconds(1.0));
-    assert!(duel.health(duel.victim) < MAX_HEALTH, "the zone did no damage");
+    assert!(
+        duel.health(duel.victim) < MAX_HEALTH,
+        "the zone did no damage"
+    );
     let after = duel.position(duel.victim);
     let moved = Vec3::new(after.x - before.x, 0.0, after.z - before.z).length();
     assert!(moved < 0.1, "the zone moved somebody {moved:.2} m");
@@ -2383,7 +2409,10 @@ fn a_zone_death_after_a_shot_is_the_shooters_kill() {
     duel.late_in_the_match();
     duel.body_mut(duel.victim).state.health = 5;
     duel.steps(seconds(2.0));
-    assert!(!duel.alive(duel.victim), "the zone should have finished them");
+    assert!(
+        !duel.alive(duel.victim),
+        "the zone should have finished them"
+    );
     assert!(
         asked_of(&mut ledger).contains(&LedgerRequest::SettleKill {
             entry: EntryId {
@@ -2404,12 +2433,14 @@ fn a_zone_death_nobody_caused_settles_as_a_walk_away() {
     duel.body_mut(duel.victim).state.health = 3;
     duel.steps(seconds(2.0));
     assert!(!duel.alive(duel.victim));
-    assert!(asked_of(&mut ledger).contains(&LedgerRequest::AbandonEntry {
-        entry: EntryId {
-            match_id: duel.match_id,
-            player_id: duel.victim,
-        },
-    }));
+    assert!(
+        asked_of(&mut ledger).contains(&LedgerRequest::AbandonEntry {
+            entry: EntryId {
+                match_id: duel.match_id,
+                player_id: duel.victim,
+            },
+        })
+    );
 }
 
 #[test]
@@ -2419,10 +2450,17 @@ fn health_comes_back_after_a_pause_and_is_full_in_about_eleven_seconds() {
     duel.fire_at(centre);
     duel.body_mut(duel.victim).state.health = 10;
     duel.steps(seconds(REGEN_DELAY - 0.5));
-    assert_eq!(duel.health(duel.victim), 10, "nothing came back during the pause");
+    assert_eq!(
+        duel.health(duel.victim),
+        10,
+        "nothing came back during the pause"
+    );
     duel.steps(seconds(0.5 + REGEN_SECONDS * 0.5));
     let halfway = duel.health(duel.victim);
-    assert!(halfway > 40 && halfway < MAX_HEALTH, "half way through at {halfway}");
+    assert!(
+        halfway > 40 && halfway < MAX_HEALTH,
+        "half way through at {halfway}"
+    );
     duel.steps(seconds(REGEN_SECONDS * 0.5 + 0.5));
     assert_eq!(duel.health(duel.victim), MAX_HEALTH);
 }
@@ -2437,10 +2475,19 @@ fn a_magazine_runs_out_and_a_reload_refills_it() {
         duel.reload();
     }
     let stats = duel.stats(duel.shooter);
-    assert_eq!(stats.shots_fired, MAGAZINE, "fired past the end of the magazine");
-    assert!(duel.body(duel.shooter).reload_until.is_some() || duel.body(duel.shooter).ammo == MAGAZINE);
+    assert_eq!(
+        stats.shots_fired, MAGAZINE,
+        "fired past the end of the magazine"
+    );
+    assert!(
+        duel.body(duel.shooter).reload_until.is_some() || duel.body(duel.shooter).ammo == MAGAZINE
+    );
     duel.steps(seconds(RELOAD_SECONDS + 0.1));
-    assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE, "the reload did not finish");
+    assert_eq!(
+        duel.body(duel.shooter).ammo,
+        MAGAZINE,
+        "the reload did not finish"
+    );
 }
 
 #[test]
@@ -2454,7 +2501,11 @@ fn reloading_by_hand_blocks_the_trigger_until_it_is_done() {
     for _ in 0..10 {
         duel.press(Buttons::FIRE, sky);
     }
-    assert_eq!(duel.stats(duel.shooter).shots_fired, fired, "fired mid-reload");
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        fired,
+        "fired mid-reload"
+    );
     duel.steps(seconds(RELOAD_SECONDS));
     assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE);
 }
@@ -2476,7 +2527,10 @@ fn a_grenade_kill_pays_the_thrower() {
     let shooter = duel.shooter;
     duel.body_mut(shooter).state.position -= away;
     duel.steps(seconds(GRENADE_FUSE + 0.2));
-    assert!(!duel.alive(duel.victim), "the blast should have finished them");
+    assert!(
+        !duel.alive(duel.victim),
+        "the blast should have finished them"
+    );
     assert!(asked_of(&mut ledger).contains(&LedgerRequest::SettleKill {
         entry: EntryId {
             match_id: duel.match_id,
@@ -2484,4 +2538,217 @@ fn a_grenade_kill_pays_the_thrower() {
         },
         killer: duel.shooter,
     }));
+}
+
+// --- The warm-up -----------------------------------------------------------
+
+/// One player, in a match that has just started with a one second warm-up.
+fn warming_up() -> (
+    Lobby,
+    MatchId,
+    PlayerId,
+    SessionId,
+    mpsc::Receiver<ServerMsg>,
+) {
+    let mut lobby = free_play();
+    lobby.warmup = 1.0;
+    let (tx, rx) = mpsc::channel(4096);
+    let (joined, session) = join(&mut lobby, "Eager", None, tx);
+    queue(&mut lobby, joined.player_id, session, 1);
+    run_matchmaker(&mut lobby);
+    let match_id = *lobby
+        .matches
+        .iter()
+        .find(|(_, m)| m.running())
+        .expect("a match")
+        .0;
+    (lobby, match_id, joined.player_id, session, rx)
+}
+
+/// Everything a client could try in one tick: run, jump, shoot, throw,
+/// reload, crouch, and look somewhere new.
+fn everything_at_once(lobby: &mut Lobby, player: PlayerId, session: SessionId, seq: u32, yaw: f32) {
+    lobby.handle(GameCommand::Inputs {
+        player_id: player,
+        session_id: session,
+        commands: vec![InputCommand {
+            seq,
+            forward: 1.0,
+            right: 1.0,
+            yaw,
+            pitch: 0.2,
+            buttons: Buttons(
+                Buttons::JUMP | Buttons::FIRE | Buttons::CROUCH | Buttons::RELOAD | Buttons::THROW,
+            ),
+        }],
+    });
+}
+
+#[test]
+fn the_warm_up_holds_everybody_on_their_spawn_but_lets_them_look() {
+    let (mut lobby, match_id, player, session, _rx) = warming_up();
+    // Onto the floor first: gravity is not held, only the player is.
+    for _ in 0..20 {
+        lobby.step();
+    }
+    let start = lobby.matches[&match_id].bodies[&player].state.position;
+    let warmup_ticks = lobby.matches[&match_id].warmup_ticks;
+    assert!(lobby.matches[&match_id].warming_up(lobby.tick));
+
+    let mut seq = 0;
+    for _ in 20..warmup_ticks.saturating_sub(1) {
+        seq += 1;
+        everything_at_once(&mut lobby, player, session, seq, 1.0);
+        lobby.step();
+    }
+    let game = &lobby.matches[&match_id];
+    let body = &game.bodies[&player];
+    let moved = Vec3::new(
+        body.state.position.x - start.x,
+        0.0,
+        body.state.position.z - start.z,
+    );
+    assert!(
+        moved.length() < 1e-4,
+        "held on the spawn, but moved {moved:?}"
+    );
+    assert_eq!(body.stats.shots_fired, 0, "nothing is fired in the warm-up");
+    assert_eq!(
+        body.grenades, GRENADES_PER_LIFE,
+        "nothing is thrown in the warm-up"
+    );
+    assert!(game.grenades.is_empty());
+    assert!(!body.state.crouched && body.reload_until.is_none());
+    assert!(
+        (body.state.yaw - 1.0).abs() < 1e-4,
+        "the aim is theirs to move"
+    );
+
+    // Past it, the same command does what it says.
+    for _ in 0..40 {
+        seq += 1;
+        everything_at_once(&mut lobby, player, session, seq, 1.0);
+        lobby.step();
+    }
+    let body = &lobby.matches[&match_id].bodies[&player];
+    let moved = Vec3::new(
+        body.state.position.x - start.x,
+        0.0,
+        body.state.position.z - start.z,
+    );
+    assert!(
+        moved.length() > 0.5,
+        "live, and still standing still at {moved:?}"
+    );
+    assert!(
+        body.stats.shots_fired > 0,
+        "live, and the trigger does nothing"
+    );
+}
+
+#[test]
+fn the_match_clock_and_the_circle_start_when_the_warm_up_ends() {
+    let (mut lobby, match_id, _player, _session, mut rx) = warming_up();
+    let started = drain(&mut rx)
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMsg::MatchStarted { starts_in_ms, .. } => Some(starts_in_ms),
+            _ => None,
+        })
+        .expect("told the match started");
+    assert!(
+        (900..=1000).contains(&started),
+        "the start says how long the warm-up is: {started} ms"
+    );
+
+    for _ in 0..30 {
+        lobby.step();
+    }
+    let game = &lobby.matches[&match_id];
+    assert_eq!(
+        game.elapsed(lobby.tick),
+        0.0,
+        "no match time passes in the warm-up"
+    );
+    let full = game.zone(lobby.tick).radius;
+    let snapshot = drain(&mut rx)
+        .into_iter()
+        .filter_map(|m| match m {
+            ServerMsg::Snapshot {
+                starts_in_ms,
+                match_remaining_ms,
+                ..
+            } => Some((starts_in_ms, match_remaining_ms)),
+            _ => None,
+        })
+        .next_back()
+        .expect("snapshots in the warm-up");
+    assert!(
+        snapshot.0 > 0 && snapshot.0 < started,
+        "counting down: {snapshot:?}"
+    );
+    assert_eq!(
+        snapshot.1,
+        (MATCH_DURATION * 1000.0) as u32,
+        "the clock has not started"
+    );
+
+    // Well past the warm-up and a whole stage of the circle.
+    let ticks = ((1.0 + solatel_protocol::sim::ZONE_STEP * 2.0) / TICK_DT) as usize;
+    for _ in 0..ticks {
+        lobby.step();
+    }
+    let game = &lobby.matches[&match_id];
+    let elapsed = game.elapsed(lobby.tick);
+    let since_start = (30 + ticks) as f32 * TICK_DT;
+    assert!(
+        (elapsed - (since_start - 1.0)).abs() < 0.05,
+        "the clock runs from the end of the warm-up: {elapsed} of {since_start}"
+    );
+    assert!(
+        game.zone(lobby.tick).radius < full,
+        "and so does the circle"
+    );
+    let live = drain(&mut rx)
+        .into_iter()
+        .filter_map(|m| match m {
+            ServerMsg::Snapshot { starts_in_ms, .. } => Some(starts_in_ms),
+            _ => None,
+        })
+        .next_back()
+        .expect("snapshots once live");
+    assert_eq!(live, 0, "a live match has no countdown");
+}
+
+#[test]
+fn a_match_found_is_said_the_moment_it_forms_before_any_money_moves() {
+    let mut paid = Paid::new();
+    let (a, a_session, mut a_rx) = paid.join("A");
+    let (b, b_session, mut b_rx) = paid.join("B");
+    queue(&mut paid.lobby, a, a_session, 1);
+    queue(&mut paid.lobby, b, b_session, 1);
+    let ticks = ((paid.lobby.wait + 1.0) / TICK_DT).ceil() as usize;
+    for _ in 0..ticks {
+        paid.lobby.step();
+        if paid.forming().is_some() {
+            break;
+        }
+    }
+    let match_id = paid.forming().expect("a forming match");
+    for rx in [&mut a_rx, &mut b_rx] {
+        let told = drain(rx);
+        assert!(
+            told.iter().any(|m| matches!(
+                m,
+                ServerMsg::MatchFound { match_id: found, players: 2, .. } if *found == match_id
+            )),
+            "each player hears the match was found: {told:?}"
+        );
+        assert!(
+            !told
+                .iter()
+                .any(|m| matches!(m, ServerMsg::MatchStarted { .. })),
+            "and not that it started, because nobody has paid yet"
+        );
+    }
 }

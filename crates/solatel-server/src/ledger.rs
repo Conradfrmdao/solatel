@@ -1483,7 +1483,9 @@ mod review_hold {
 
         let player = PlayerId::new();
         let account = balance_account(&pool, &mut accounts, player).await.unwrap();
-        let external = system_account(&pool, &mut accounts, "external").await.unwrap();
+        let external = system_account(&pool, &mut accounts, "external")
+            .await
+            .unwrap();
         let ten = MicroUsd::from_usd(10).micros();
         assert!(
             post(
@@ -1515,10 +1517,9 @@ mod review_hold {
         .execute(&pool)
         .await
         .unwrap();
-        let refused =
-            request_withdrawal(&pool, &mut accounts, WithdrawalId::new(), player, &quote)
-                .await
-                .unwrap();
+        let refused = request_withdrawal(&pool, &mut accounts, WithdrawalId::new(), player, &quote)
+            .await
+            .unwrap();
         assert!(
             matches!(&refused, Err(reason) if reason.contains("reviewed")),
             "an open review should refuse the withdrawal: {refused:?}"
@@ -1544,8 +1545,15 @@ mod review_hold {
                 .unwrap()
                 .expect("a cleared review should let the withdrawal through");
         assert_eq!(left, MicroUsd::from_usd(5));
-        assert!(return_withdrawal(&pool, &mut accounts, &row, "test").await.unwrap());
-        assert_eq!(balance(&pool, player).await.unwrap(), MicroUsd::from_usd(10));
+        assert!(
+            return_withdrawal(&pool, &mut accounts, &row, "test")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            balance(&pool, player).await.unwrap(),
+            MicroUsd::from_usd(10)
+        );
 
         sqlx::query(
             "INSERT INTO reviews (player_id, reasons, evidence, status, decided_by, note, decided_at)

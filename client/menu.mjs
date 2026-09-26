@@ -184,6 +184,14 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 console.log(`>> in line for ${maps[0]} $${stake}`);
+// And the player can see it: the searching screen, not a line of small
+// print at the foot of the menu.
+await page.waitForFunction(
+  () => document.querySelector('.mm-card')?.dataset.phase === 'searching' &&
+    !document.getElementById('matchmaking').classList.contains('hidden'),
+  { timeout: 10000 },
+);
+console.log('>> the searching screen is up, with a way out of the line');
 
 // The mouse must still be the player's: they are looking at a screen full of
 // buttons, and one of them is "leave the line".
@@ -207,6 +215,15 @@ const entered = await page.evaluate(() => ({
 console.log(`>> dropped into ${entered.map}`);
 if (!entered.menuHidden) fail('the menu stayed up over the match');
 if (entered.map !== maps[0]) fail(`asked for ${maps[0]} and got ${entered.map}`);
+
+// The match counts down on the spawn before it goes live.
+const warm = await page.evaluate(() => ({
+  warming: window.solatel.local.warmingUp,
+  shown: !document.getElementById('warmup').classList.contains('hidden'),
+}));
+if (warm.warming && !warm.shown) fail('held on the spawn with no countdown on screen');
+await page.waitForFunction(() => !window.solatel.local.warmingUp, { timeout: 60000 });
+console.log(`>> ${warm.warming ? 'counted down on the spawn, then' : 'the warm-up was already over;'} live`);
 
 // Give it a moment to draw, then check it is actually rendering the world.
 await sleep(2000);

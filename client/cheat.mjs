@@ -104,6 +104,7 @@ class Wire {
         break;
       case 'snapshot':
         if (msg.match_id !== this.matchId) break;
+        this.startsInMs = msg.starts_in_ms ?? 0;
         for (const p of msg.players) {
           if (p.id === this.playerId) {
             this.me = { at: p.state.position, health: p.state.health, yaw: p.state.yaw };
@@ -155,6 +156,9 @@ if (!cheat.me) {
   console.error('FAIL  never got into a match; is SOLATEL_MATCH_FLOOR=1 set?');
   process.exit(1);
 }
+// Past the warm-up, which holds everybody still whatever they send - a
+// flood sent during it would prove nothing about speed or fire rate.
+for (let i = 0; i < 600 && (cheat.startsInMs ?? 1) > 0; i += 1) await sleep(100);
 await sleep(1500); // onto the floor, and the spawn settled
 const balanceInMatch = cheat.balance;
 const start = { at: [...cheat.me.at], t: performance.now() };

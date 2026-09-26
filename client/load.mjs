@@ -9,7 +9,7 @@
 //   SOLATEL_DEV_GRANT=20 SOLATEL_MATCH_FLOOR=1 SOLATEL_QUEUE_WAIT=3 ./x server
 //
 // Every client connects in the same instant, queues for a table spread over
-// both maps and every stake, and once in a match runs, turns and shoots at
+// every map and every stake, and once in a match runs, turns and shoots at
 // random for S seconds. Measured, and judged:
 //
 //   * how long each waited for its Welcome, and for its match - every one of
@@ -95,6 +95,7 @@ class Player {
         if (msg.match_id !== this.matchId) break;
         this.snapshots += 1;
         this.remainingMs = msg.match_remaining_ms;
+        this.startsInMs = msg.starts_in_ms ?? 0;
         break;
       case 'eliminated':
         this.eliminated = true;
@@ -184,6 +185,15 @@ check(
   'the busiest line was drained into full tables, not dribbled out',
   `${busiest} players in ${busiestMatches} matches, ${expected} needed`,
 );
+
+// ---- wait out the warm-up -------------------------------------------------------
+// Everybody is held on their spawn and the match clock stands still until it
+// ends, so the clock check below would fail against a match that had not
+// started yet.
+const warmupUntil = performance.now() + 60_000;
+while (performance.now() < warmupUntil && matched.some((p) => (p.startsInMs ?? 1) > 0)) {
+  await sleep(200);
+}
 
 // ---- play --------------------------------------------------------------------
 for (const p of matched) {

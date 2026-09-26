@@ -367,7 +367,15 @@ mod tests {
         // Five shots, five hits, five headshots, all flicks: a lucky life,
         // and not enough of one to mean anything.
         assert!(judge(&record(5, 5, 5, 5)).is_empty());
-        assert!(judge(&record(ACCURACY_MIN_SHOTS - 1, ACCURACY_MIN_SHOTS - 1, 0, 0)).is_empty());
+        assert!(
+            judge(&record(
+                ACCURACY_MIN_SHOTS - 1,
+                ACCURACY_MIN_SHOTS - 1,
+                0,
+                0
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -460,9 +468,17 @@ mod tests {
         assert_eq!(record.lives, 3);
         assert_eq!(record.shots_hit, 5 + 57 + 57);
 
-        let (_, held) = crate::ledger::balance_and_review(&pool, cheat).await.unwrap();
-        assert_eq!(held.as_deref(), Some("open"), "the cheat's withdrawals are held");
-        let (_, clear) = crate::ledger::balance_and_review(&pool, honest).await.unwrap();
+        let (_, held) = crate::ledger::balance_and_review(&pool, cheat)
+            .await
+            .unwrap();
+        assert_eq!(
+            held.as_deref(),
+            Some("open"),
+            "the cheat's withdrawals are held"
+        );
+        let (_, clear) = crate::ledger::balance_and_review(&pool, honest)
+            .await
+            .unwrap();
         assert_eq!(clear, None, "an honest record holds nothing");
 
         // A life written twice - a retried settlement - is one row.
