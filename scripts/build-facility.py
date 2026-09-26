@@ -144,8 +144,39 @@ NATURE = {
     'stripe_red':     ('#7a3b33', 0.85),
     'warning':        ('#a4873d', 0.85),
     'solar':          ('#2c3237', 0.55),
+    'meadow':         ('#56603f', 0.97),
+    'glass':          ('#27323a', 0.06),
+    'frame':          ('#c9c5bb', 0.6),
+    'frame_dark':     ('#34373a', 0.5),
+    'roof_tiles':     ('#7d4c3b', 0.85),
+    'cladding':       ('#6f766b', 0.6),
+    'cladding_cream': ('#a8a391', 0.6),
+    'cladding_blue':  ('#5d6b76', 0.55),
+    'steel_stair':    ('#7d7b74', 0.8),
+    'shore':          ('#6d6250', 0.97),
 }
 PALETTE = dict(arena.PALETTE, **NATURE)
+
+# The trees `nature.js` knows how to grow, by the number the file carries.
+TREE_KINDS = ('pine', 'spruce', 'broadleaf', 'pine_far', 'spruce_far', 'broadleaf_far')
+
+# How far the country round the map runs, in metres from the middle. Past
+# about 470 m the fog has it all, so there is nothing to gain beyond.
+COUNTRY = 440.0
+
+
+def tree_kind(x, z, broadleaf):
+    """Which kind of tree stands here, from where it stands.
+
+    A hash of the position rather than a draw from the layout's random
+    stream: every draw from that stream moves everything placed after it,
+    and a change to which trees are oaks should not move a crate.
+    """
+    h = math.sin(x * 12.9898 + z * 78.233) * 43758.5453
+    u = h - math.floor(h)
+    if u < broadleaf:
+        return 2
+    return 0 if (u * 7.0) % 1.0 < 0.3 else 1
 
 
 # --- writing the file --------------------------------------------------------
@@ -274,6 +305,17 @@ FACE_ASPECT = 3.0
 class Kit(arena.Parts):
     """The arena's `Parts`, with what open country and a works need."""
 
+    def __init__(self):
+        super().__init__()
+        # What stands on the ground, as (x0, z0, x1, z1, bottom, top), and
+        # every flat face by surface, as (x0, z0, x1, z1, y): together they
+        # are how `ground_map` knows where grass grows.
+        self.footprints = []
+        self.flats = []
+        # Trees are data, not boxes: the client draws them. See `tree`.
+        self.trees = []
+        self.hidden = None
+
     def box(self, x0, y0, z0, x1, y1, z1, material=arena.STAIR):
         """A box, cut into pieces so no face of it is long and thin.
 
@@ -291,6 +333,7 @@ class Kit(arena.Parts):
         wide. Faces thinner than that are left alone, because the big faces
         beside them already mark every cell they would.
         """
+        self.footprints.append((x0, z0, x1, z1, y0, y1))
         dims = [x1 - x0, y1 - y0, z1 - z0]
         cuts = [1, 1, 1]
         for i, j in ((0, 1), (2, 1), (0, 2), (1, 0), (1, 2)):
@@ -349,6 +392,10 @@ class Kit(arena.Parts):
         """One tread or step, as slices at most a cell deep along `axis`."""
         pieces = max(int(math.ceil((hi - lo) / 0.25 - 1e-6)), 1)
         edges = np.linspace(lo, hi, pieces + 1)
+        if axis == 'x':
+            self.footprints.append((lo, cross0, hi, cross1, bottom, top))
+        else:
+            self.footprints.append((cross0, lo, cross1, hi, bottom, top))
         for a, b in zip(edges, edges[1:]):
             if axis == 'x':
                 arena.Parts.box(self, a, bottom, cross0, b, top, cross1, material)
@@ -357,10 +404,20 @@ class Kit(arena.Parts):
 
     def quad(self, x0, z0, x1, z1, y, material):
         """A flat face looking up: ground, paint, a pad."""
+        self.flats.append((material, min(x0, x1), min(z0, z1), max(x0, x1), max(z0, z1), y))
         verts, faces = self.groups.setdefault(material, ([], []))
         base = len(verts)
         verts.extend([(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)])
         faces.extend([(base, base + 2, base + 1), (base, base + 3, base + 2)])
+        return self
+
+    def poly(self, points, material):
+        """A flat polygon, fanned from its first corner: roof planes, gables."""
+        verts, faces = self.groups.setdefault(material, ([], []))
+        base = len(verts)
+        verts.extend(tuple(float(v) for v in p) for p in points)
+        for i in range(1, len(points) - 1):
+            faces.append((base, base + i, base + i + 1))
         return self
 
     def ground(self, x0, z0, x1, z1, y, material, tile=16.0):
@@ -381,6 +438,7 @@ class Kit(arena.Parts):
 
     def cylinder(self, cx, cz, radius, y0, y1, material, segments=20,
                  top=True, top_material=None):
+        self.footprints.append((cx - radius, cz - radius, cx + radius, cz + radius, y0, y1))
         verts, faces = self.groups.setdefault(material, ([], []))
         # In rings, for the same reason `box` cuts long faces: a side panel
         # eighteen metres tall and a metre and a half wide would be sampled
@@ -454,19 +512,23 @@ class Kit(arena.Parts):
         return self
 
     def tree(self, x, z, y=0.0, height=7.5, kind=0):
-        """A conifer: a trunk and a canopy of three shrinking tiers.
+        """A tree: a trunk to collide with, and the rest for the client.
 
-        Boxes, because everything is, and cheap in collision - a canopy is a
-        closed shell of a few faces, well above a player's head.
+        A tree built of boxes looks like one built of boxes, whatever is done
+        to the boxes. So the file carries where each tree stands, how tall it
+        is and what kind (`TREE_KINDS`), and `nature.js` grows it - a tapered
+        trunk, branches, leaves that move in the wind.
+
+        What collides is the trunk alone, as a box in the hidden collision
+        node: solid up to where the branches start, so it stops a player and
+        a bullet the way a trunk does. The canopy does not collide. Leaves
+        stop sight and not bullets, as they do in every shooter, and nobody
+        can stand in a tree.
         """
-        leaf = ('foliage', 'foliage_dark')[kind % 2]
-        trunk = height * 0.34
-        self.box(x - 0.25, y, z - 0.25, x + 0.25, y + trunk, z + 0.25, 'bark')
-        tiers = ((2.1, 0.0, 0.42), (1.5, 0.42, 0.74), (0.8, 0.74, 1.0))
-        span = height - trunk
-        for half, a, b in tiers:
-            self.box(x - half, y + trunk + span * a, z - half,
-                     x + half, y + trunk + span * b, z + half, leaf)
+        self.trees.append((x, y, z, height, kind))
+        self.footprints.append((x - 0.3, z - 0.3, x + 0.3, z + 0.3, y, y + height))
+        half = 0.2 if kind == 2 else 0.17
+        self.hidden.box(x - half, y, z - half, x + half, y + height * 0.55, z + half, 'bark')
         return self
 
     def guarded_flight(self, axis, start, end, cross0, cross1, y_from, y_to,
@@ -540,6 +602,7 @@ class YardProps:
         self.raw = {}
         self.scales = {}
         self.placed = 0
+        self.footprints = []
 
     # The yard's ten flat colours: 0 plane, 1 yellow, 2 white, 3 dark,
     # 4 blue, 5 red, 6 wood, 7 dark, 8 orange, 9 mid grey.
@@ -599,6 +662,10 @@ class YardProps:
     def place(self, key, x, z, yaw=0.0, y=0.0):
         self.placed += 1
         scale = self.scales[key]
+        sx, sy, sz = self.size(key)
+        reach = 0.5 * (abs(sx * math.cos(yaw)) + abs(sz * math.sin(yaw)))
+        across = 0.5 * (abs(sx * math.sin(yaw)) + abs(sz * math.cos(yaw)))
+        self.footprints.append((x - reach, z - across, x + reach, z + across, y, y + sy))
         return self.glb.node(f'{key}.{self.placed:03d}', self.meshes[key],
                              translation=(x, y, z), yaw=yaw,
                              scale=None if np.allclose(scale, 1.0) else scale)
@@ -671,6 +738,14 @@ class Layout:
         # ramps, doorways, the river. (x0, z0, x1, z1), padded when tested.
         self.clear = []
         self.roofs = []  # climbable roof rectangles, for the river check
+        # Trim drawn and never collided with: windows, frames, cladding,
+        # vents. Everything in it is flush with a wall or out of reach.
+        self.detail = Kit()
+        # Where smoke rises, for the client to draw.
+        self.smoke = []
+        # The share of broadleaf trees in the next forest: villages and
+        # fields have oaks, the hills are pine and spruce.
+        self.broadleaf = 0.35
 
     def keep_clear(self, x0, z0, x1, z1):
         self.clear.append((min(x0, x1), min(z0, z1), max(x0, x1), max(z0, z1)))
@@ -703,6 +778,7 @@ class Layout:
             self.unit[material] = self.props.glb.mesh(
                 f'unit_{material}', [(material, verts, faces)])
         self.props.placed += 1
+        self.props.footprints.append((x0, z0, x1, z1, y0, y1))
         self.props.glb.node(f'{material}.{self.props.placed:03d}', self.unit[material],
                             translation=(x0, y0, z0),
                             scale=(x1 - x0, y1 - y0, z1 - z0))
@@ -738,11 +814,136 @@ class Layout:
         self.kit.quad(x0, z0, x1, z1, y, material)
         self.keep_clear(x0, z0, x1, z1)
 
+    # -- what makes a box a building ---------------------------------------
+
+    def _on_wall(self, side, x0, z0, x1, z1, t, a, b, y0, y1, out0, out1, material,
+                 faces=(0, 1)):
+        """A box on the faces of a wall: `a..b` along it, `out0..out1` metres
+        out from the face, on the outside (0) and the inside (1)."""
+        d = self.detail
+        for face in faces:
+            if side == 'z0':
+                lo, hi = (z0 - out1, z0 - out0) if face == 0 else (z0 + t + out0, z0 + t + out1)
+                d.box(a, y0, lo, b, y1, hi, material)
+            elif side == 'z1':
+                lo, hi = (z1 + out0, z1 + out1) if face == 0 else (z1 - t - out1, z1 - t - out0)
+                d.box(a, y0, lo, b, y1, hi, material)
+            elif side == 'x0':
+                lo, hi = (x0 - out1, x0 - out0) if face == 0 else (x0 + t + out0, x0 + t + out1)
+                d.box(lo, y0, a, hi, y1, b, material)
+            else:
+                lo, hi = (x1 + out0, x1 + out1) if face == 0 else (x1 - t - out1, x1 - t - out0)
+                d.box(lo, y0, a, hi, y1, b, material)
+
+    def window(self, side, x0, z0, x1, z1, t, centre, sill, width, height, frame='frame'):
+        """A window, outside and in: glass, a frame round it, a sill."""
+        a, b = centre - width / 2.0, centre + width / 2.0
+        w = self._on_wall
+        w(side, x0, z0, x1, z1, t, a, b, sill, sill + height, 0.004, 0.018, 'glass')
+        for fa, fb in ((a - 0.07, a), (b, b + 0.07)):
+            w(side, x0, z0, x1, z1, t, fa, fb, sill - 0.07, sill + height + 0.07, 0.0, 0.05, frame)
+        w(side, x0, z0, x1, z1, t, a, b, sill + height, sill + height + 0.07, 0.0, 0.05, frame)
+        w(side, x0, z0, x1, z1, t, a - 0.1, b + 0.1, sill - 0.09, sill, 0.0, 0.13, 'concrete_light')
+        # A glazing bar across the middle.
+        w(side, x0, z0, x1, z1, t, (a + b) / 2 - 0.025, (a + b) / 2 + 0.025, sill, sill + height,
+          0.0, 0.03, frame)
+
+    def windows(self, x0, z0, x1, z1, t, doors, rows, spacing=3.2, width=1.2, height=1.3,
+                frame='frame', sides=('z0', 'z1', 'x0', 'x1')):
+        """Windows along every wall, clear of the doors and the corners."""
+        d = dict(doors)
+        for side in sides:
+            lo, hi = (x0, x1) if side in ('z0', 'z1') else (z0, z1)
+            length = hi - lo
+            count = int((length - 1.6) // spacing)
+            if count < 1:
+                continue
+            start = lo + (length - (count - 1) * spacing) / 2.0
+            for k in range(count):
+                c = start + k * spacing
+                if any(ga - 0.9 < c + width / 2 and c - width / 2 < gb + 0.9
+                       for ga, gb in d.get(side, ())):
+                    continue
+                for sill in rows:
+                    self.window(side, x0, z0, x1, z1, t, c, sill, width, height, frame)
+
+    def door_frames(self, x0, z0, x1, z1, t, doors, head=2.6, material='frame_dark'):
+        for side, gaps in dict(doors).items():
+            for a, b in gaps:
+                w = self._on_wall
+                for fa, fb in ((a - 0.12, a), (b, b + 0.12)):
+                    w(side, x0, z0, x1, z1, t, fa, fb, 0.0, head + 0.12, 0.0, 0.06, material)
+                w(side, x0, z0, x1, z1, t, a - 0.12, b + 0.12, head, head + 0.12, 0.0, 0.06, material)
+
+    def pitched_roof(self, x0, z0, x1, z1, eave, pitch, material, gable, overhang=0.45,
+                     solid=True, chimney=False):
+        """A gable roof over a rectangle, ridge along its long side.
+
+        In the collision (`solid`) wherever it can be: a roof stops a bullet.
+        It stands on the flat deck the block already has, so nothing under it
+        changes, and its eaves are out of anybody's reach.
+        """
+        k = self.kit if solid else self.detail
+        along_x = (x1 - x0) >= (z1 - z0)
+        if along_x:
+            half = (z1 - z0) / 2.0
+            mid = (z0 + z1) / 2.0
+            ridge = eave + (half + overhang) * math.tan(math.radians(pitch))
+            ex0, ex1 = x0 - overhang, x1 + overhang
+            k.poly([(ex0, eave, z0 - overhang), (ex1, eave, z0 - overhang), (ex1, ridge, mid), (ex0, ridge, mid)], material)
+            k.poly([(ex0, eave, z1 + overhang), (ex0, ridge, mid), (ex1, ridge, mid), (ex1, eave, z1 + overhang)], material)
+            gable_top = eave + half * math.tan(math.radians(pitch))
+            for x in (x0, x1):
+                k.poly([(x, eave, z0), (x, gable_top + (ridge - gable_top) * 0.0, mid), (x, eave, z1)], gable)
+            self.detail.box(ex0, ridge - 0.05, mid - 0.14, ex1, ridge + 0.1, mid + 0.14, 'frame_dark')
+            if chimney:
+                cx = x0 + (x1 - x0) * 0.28
+                k.box(cx - 0.35, eave, mid + 0.6, cx + 0.35, ridge + 0.9, mid + 1.3, 'brick')
+        else:
+            half = (x1 - x0) / 2.0
+            mid = (x0 + x1) / 2.0
+            ridge = eave + (half + overhang) * math.tan(math.radians(pitch))
+            ez0, ez1 = z0 - overhang, z1 + overhang
+            k.poly([(x0 - overhang, eave, ez0), (mid, ridge, ez0), (mid, ridge, ez1), (x0 - overhang, eave, ez1)], material)
+            k.poly([(x1 + overhang, eave, ez0), (x1 + overhang, eave, ez1), (mid, ridge, ez1), (mid, ridge, ez0)], material)
+            gable_top = eave + half * math.tan(math.radians(pitch))
+            for z in (z0, z1):
+                k.poly([(x0, eave, z), (mid, gable_top, z), (x1, eave, z)], gable)
+            self.detail.box(mid - 0.14, ridge - 0.05, ez0, mid + 0.14, ridge + 0.1, ez1, 'frame_dark')
+            if chimney:
+                cz = z0 + (z1 - z0) * 0.28
+                k.box(mid + 0.6, eave, cz - 0.35, mid + 1.3, ridge + 0.9, cz + 0.35, 'brick')
+
     def house(self, x0, z0, x1, z1, roof, walls, doors, stair=None):
         """A building: walls, doorways, a roof, a floor, and a way up."""
         self.kit.block(x0, z0, x1, z1, roof, doors=doors, material=walls)
         self.kit.quad(x0, z0, x1, z1, 0.06, 'concrete_dark')
         self.keep_clear(x0 - 2.0, z0 - 2.0, x1 + 2.0, z1 + 2.0)
+        t = 0.4
+        rows = (1.0,) if roof < 5.0 else (1.0, roof - 2.6)
+        self.windows(x0, z0, x1, z1, t, doors, rows)
+        self.door_frames(x0, z0, x1, z1, t, doors)
+        # A darker plinth round the foot of the walls, as every building has.
+        for side, (a, b) in (('z0', (x0, x1)), ('z1', (x0, x1)), ('x0', (z0, z1)), ('x1', (z0, z1))):
+            gaps = sorted(dict(doors).get(side, ()))
+            edges = [a] + [v for g in gaps for v in g] + [b]
+            for i in range(0, len(edges) - 1, 2):
+                if edges[i + 1] - edges[i] > 0.05:
+                    self._on_wall(side, x0, z0, x1, z1, t, edges[i], edges[i + 1], 0.0, 0.45,
+                                  0.0, 0.03, 'concrete_dark')
+        if not stair:
+            timber = walls.startswith('wood')
+            industrial = walls.startswith('concrete')
+            self.pitched_roof(x0, z0, x1, z1, roof - 0.02, 18.0 if industrial else 32.0,
+                              'roof_metal' if industrial or timber else 'roof_tiles', walls,
+                              chimney=not industrial and not timber and (x1 - x0) * (z1 - z0) > 90)
+        else:
+            # A flat roof people walk on: a coping round its edge, drawn.
+            for bx0, bz0, bx1, bz1 in ((x0 - 0.06, z0 - 0.06, x1 + 0.06, z0 + 0.25),
+                                       (x0 - 0.06, z1 - 0.25, x1 + 0.06, z1 + 0.06),
+                                       (x0 - 0.06, z0, x0 + 0.25, z1),
+                                       (x1 - 0.25, z0, x1 + 0.06, z1)):
+                self.detail.box(bx0, roof - 0.3, bz0, bx1, roof + 0.02, bz1, 'concrete_light')
         if stair:
             self.kit.roof_stair(stair, x0, z0, x1, z1, roof)
             run = roof * 1.2 + 1.0
@@ -776,6 +977,7 @@ class Layout:
         self.roof(x0, z0, x1, z1, height, holes)
         k.quad(x0 + t, z0 + t, x1 - t, z1 - t, 0.06, 'concrete_dark')
         self.keep_clear(x0 - 1.5, z0 - 1.5, x1 + 1.5, z1 + 1.5)
+        self.shed_detail(x0, z0, x1, z1, height, t, d, walls, open_roof=bool(holes))
         if racks:
             # Rows of shelving across the short side, with aisles between
             # and a clear lane down the middle: corridors a few metres wide,
@@ -806,6 +1008,53 @@ class Layout:
                 k.flight('x', x0 + 3.0, x0 + 3.0 + top * 2.0, z1 - t - width - 2.2,
                          z1 - t - width, 0.0, top - SKIN)
 
+    def shed_detail(self, x0, z0, x1, z1, height, t, doors, walls, open_roof=False):
+        """What makes a big box a warehouse.
+
+        Corrugated cladding over a concrete base, a strip of high windows
+        down the long sides, a housing over every door for the shutter it
+        rolls up into, a shallow pitched roof with vents on it, downpipes at
+        the corners. All drawn only: flush with the walls or out of reach.
+        """
+        head = height - DECK * 0.5
+        base = 1.6
+        cladding = {'concrete': 'cladding_cream', 'concrete_dark': 'cladding_blue',
+                    'plaster_olive': 'cladding', 'plaster_sand': 'cladding_cream'}.get(walls, 'cladding')
+        for side, (a, b) in (('z0', (x0, x1)), ('z1', (x0, x1)), ('x0', (z0, z1)), ('x1', (z0, z1))):
+            gaps = sorted(doors.get(side, ()))
+            edges = [a] + [v for g in gaps for v in g] + [b]
+            for i in range(0, len(edges) - 1, 2):
+                if edges[i + 1] - edges[i] > 0.05:
+                    self._on_wall(side, x0, z0, x1, z1, t, edges[i], edges[i + 1], base, head,
+                                  0.0, 0.035, cladding,
+                                  faces=(0,))
+                    self._on_wall(side, x0, z0, x1, z1, t, edges[i], edges[i + 1], base - 0.08,
+                                  base, 0.0, 0.07, 'frame_dark', faces=(0,))
+            for ga, gb in gaps:
+                # The shutter housing over the door, and its guides.
+                self._on_wall(side, x0, z0, x1, z1, t, ga - 0.15, gb + 0.15, 5.0, 5.7, 0.0, 0.45,
+                              'frame_dark', faces=(0,))
+                for fa, fb in ((ga - 0.15, ga), (gb, gb + 0.15)):
+                    self._on_wall(side, x0, z0, x1, z1, t, fa, fb, 0.0, 5.0, 0.0, 0.12,
+                                  'frame_dark', faces=(0,))
+        long_sides = ('z0', 'z1') if (x1 - x0) >= (z1 - z0) else ('x0', 'x1')
+        self.windows(x0, z0, x1, z1, t, doors, (head - 2.0,), spacing=4.5, width=2.6,
+                     height=1.1, frame='frame_dark', sides=long_sides)
+        for cx, cz in ((x0, z0), (x1, z0), (x0, z1), (x1, z1)):
+            sx = 0.05 if cx == x0 else -0.2
+            sz = -0.2 if cz == z0 else 0.05
+            self.detail.box(cx + sx - (0.15 if cx == x0 else -0.15), 0.0, cz + sz - (0.15 if cz == z0 else -0.15),
+                            cx + sx + 0.15 - (0.15 if cx == x0 else -0.15), head, cz + sz + 0.15 - (0.15 if cz == z0 else -0.15),
+                            'frame_dark')
+        if not open_roof:
+            self.pitched_roof(x0, z0, x1, z1, height, 9.0, 'roof_metal', cladding,
+                              overhang=0.35, solid=False)
+        rng = random.Random(int(x0 * 7 + z0 * 13))
+        for _ in range(3):
+            vx = rng.uniform(x0 + 3.0, x1 - 3.0)
+            vz = rng.uniform(z0 + 3.0, z1 - 3.0)
+            self.detail.cylinder(vx, vz, 0.45, height, height + 1.9 + (0 if open_roof else 1.2), 'steel', segments=10)
+
     def forest(self, x0, z0, x1, z1, spacing, y=0.0, pad=1.5):
         """Trees across a rectangle, jittered off a grid, clear of roads."""
         count = 0
@@ -815,10 +1064,11 @@ class Layout:
                 z = gz + self.random.uniform(-0.35, 0.35) * spacing
                 if not (x0 + 2.5 <= x <= x1 - 2.5 and z0 + 2.5 <= z <= z1 - 2.5):
                     continue
-                if not self.is_clear(x, z, pad=pad + 2.0):
+                if not self.is_clear(x, z, pad=pad):
                     continue
-                self.kit.tree(x, z, y, height=self.random.uniform(6.5, 9.5),
-                              kind=self.random.randrange(2))
+                self.kit.tree(x, z, y, height=self.random.uniform(7.0, 13.0),
+                              kind=tree_kind(x, z, self.broadleaf))
+                self.keep_clear(x - 0.8, z - 0.8, x + 0.8, z + 0.8)
                 count += 1
         return count
 
@@ -909,6 +1159,7 @@ def base(layout):
 
 def north_ridge(layout):
     """The wooded ridge in the north-west, with the outpost on top."""
+    layout.broadleaf = 0.08
     k = layout.kit
     # Three tiers, each a step of 2.5 m, as boxes that meet rather than
     # overlap, so no grassed top is buried inside another tier.
@@ -970,6 +1221,7 @@ def mountain_and_tunnel(layout):
     cross the compound: sixty metres of close quarters with a portal at each
     end. The rock over it is not reachable - it is a mountain, not a lookout.
     """
+    layout.broadleaf = 0.15
     k = layout.kit
     x0, x1 = -20.0, 44.0
     top = 11.0
@@ -996,6 +1248,7 @@ def mountain_and_tunnel(layout):
 
 def village(layout):
     """North-west: houses, a barn, yards and a water tower."""
+    layout.broadleaf = 0.8
     k = layout.kit
     p = layout.props
     layout.road(-150.0, -80.0, -56.0, -72.0, 'dirt')
@@ -1173,6 +1426,18 @@ def compound(layout):
     layout.house(38.0, 28.0, 50.0, 40.0, 3.6, 'plaster_sand',
                  {'x0': ((31.0, 35.0),), 'z1': ((42.0, 45.0),)}, None)
 
+    # The chimney: forty metres of it, banded at the top, in the lane behind
+    # the factory. The one thing on the map you can see from everywhere,
+    # and the smoke off it says which way the wind is blowing.
+    cx, cz = -14.0, 46.0
+    k.cylinder(cx, cz, 2.2, 0.0, 26.0, 'concrete', segments=20, top=False)
+    k.cylinder(cx, cz, 1.8, 26.0, 40.0, 'concrete', segments=20, top_material='concrete_dark')
+    for y0, colour in ((31.0, 'stripe_red'), (33.5, 'tank_white'), (36.0, 'stripe_red')):
+        k.cylinder(cx, cz, 1.86, y0, y0 + 2.5, colour, segments=20, top=False)
+    layout.detail.cylinder(cx, cz, 2.0, 38.6, 39.0, 'frame_dark', segments=20)
+    layout.keep_clear(cx - 3.5, cz - 3.5, cx + 3.5, cz + 3.5)
+    layout.smoke.append([cx, 40.5, cz])
+
     # The middle: a yard of containers and trucks, cover and nothing taller,
     # so the last circle has somewhere to fight.
     for x, z, yaw, key in ((-8.0, -1.0, 0.0, 'container'), (8.0, 8.0, 1.57, 'container_blue'),
@@ -1188,6 +1453,7 @@ def compound(layout):
 
 def north_east(layout):
     """Hangars and a loading yard, north-east of the works."""
+    layout.broadleaf = 0.2
     k = layout.kit
     p = layout.props
     layout.road(70.0, -121.0, 78.0, -16.0)
@@ -1224,6 +1490,7 @@ def north_east(layout):
 
 def west(layout):
     """West of the works: an arched hangar, a helipad, barracks, fuel."""
+    layout.broadleaf = 0.45
     k = layout.kit
     p = layout.props
     # The hangar: long, with a door at each end. The arch is a stepped roof
@@ -1348,6 +1615,7 @@ def fields(layout):
     for the middle is decided by whoever reaches the edge of a field first.
     Outcrops, copses and the odd shed give every crossing somewhere to stop.
     """
+    layout.broadleaf = 0.6
     k = layout.kit
     rng = layout.random
     outcrops = [
@@ -1441,6 +1709,7 @@ def river(layout):
 
 def south_bank(layout):
     """Across the river: a checkpoint, cabins, a watchtower, woods."""
+    layout.broadleaf = 0.4
     k = layout.kit
     p = layout.props
     south = RIVER[1] + 0.6
@@ -1473,6 +1742,233 @@ def south_bank(layout):
     layout.scatter(['crate', 'barrel', 'pallet', 'sawhorse'], -140.0, 131.0, 140.0, 154.0, 14)
 
 
+def ground_map(kit, props):
+    """Where grass grows, and at what height, a metre at a time.
+
+    The client plants tufts of grass round the player from this. A cell is
+    grass when the highest thing drawn over it is a grass face - the fields,
+    or the top of a tier on the ridge - and nothing stands on it: a road, a
+    pad, a wall, a crate. Encoded as one byte a cell, 0 for none and
+    otherwise one more than the height in quarter metres, then run-length
+    coded, because most of the map is long runs of the same thing.
+    """
+    code = grass_code(grass_heights(kit, props))
+    flat = code.reshape(-1)
+    out = bytearray()
+    start = 0
+    while start < len(flat):
+        value = flat[start]
+        end = start
+        while end < len(flat) and flat[end] == value and end - start < 255:
+            end += 1
+        out += bytes((int(value), end - start))
+        start = end
+    import base64
+    n = code.shape[0]
+    print(f'  grass on {int((code > 0).sum()):,} of {n * n:,} m2; '
+          f'{len(out) / 1024:.1f} KB run-length coded')
+    return {'origin': [-HALF, -HALF], 'cell': 1.0, 'size': [n, n],
+            'rle': base64.b64encode(bytes(out)).decode('ascii')}
+
+
+def grass_code(height):
+    return np.where(height < 0, 0, np.clip(np.round(height / 0.25) + 1, 1, 255)).astype(np.uint8)
+
+
+def grass_heights(kit, props):
+    """The height of the grass in each square metre, or -1 for none."""
+    n = int(2 * HALF)
+    height = np.full((n, n), -1.0)
+
+    def span(x0, z0, x1, z1):
+        i0 = int(max(math.floor(x0 + HALF), 0))
+        i1 = int(min(math.ceil(x1 + HALF), n))
+        j0 = int(max(math.floor(z0 + HALF), 0))
+        j1 = int(min(math.ceil(z1 + HALF), n))
+        return slice(j0, j1), slice(i0, i1)
+
+    def inner(x0, z0, x1, z1):
+        # A cell is grass only if the grass face covers all of it.
+        i0 = int(max(math.ceil(x0 + HALF), 0))
+        i1 = int(min(math.floor(x1 + HALF), n))
+        j0 = int(max(math.ceil(z0 + HALF), 0))
+        j1 = int(min(math.floor(z1 + HALF), n))
+        return slice(j0, j1), slice(i0, i1)
+
+    for material, x0, z0, x1, z1, y in kit.flats:
+        if material in ('grass', 'grass_dry'):
+            rows, cols = inner(x0, z0, x1, z1)
+            height[rows, cols] = np.maximum(height[rows, cols], y)
+    for material, x0, z0, x1, z1, y in kit.flats:
+        if material not in ('grass', 'grass_dry'):
+            rows, cols = span(x0, z0, x1, z1)
+            cut = height[rows, cols] <= y + 0.05
+            height[rows, cols][cut] = -1.0
+    for x0, z0, x1, z1, bottom, top in kit.footprints + props.footprints:
+        rows, cols = span(x0, z0, x1, z1)
+        here = height[rows, cols]
+        cut = (bottom <= here + 0.3) & (top > here + 0.02)
+        here[cut] = -1.0
+    return height
+
+
+def woodland(layout):
+    """Trees wherever the country would grow them.
+
+    The named forests are where the layout wants woods. This is the rest:
+    stands and single trees across every field, thick where a slow noise
+    says woodland and thin where it says pasture, so open ground is broken
+    up the way real country is rather than being lawn with a copse on it.
+    Only on grass, only where nothing else wants the ground.
+    """
+    rng = random.Random(11)
+    height = grass_heights(layout.kit, layout.props)
+
+    def noise(x, z):
+        v = (math.sin(x * 0.045 + 1.3) * math.cos(z * 0.052 - 0.7)
+             + 0.6 * math.sin(x * 0.11 + z * 0.083 + 2.1)
+             + 0.35 * math.cos(x * 0.21 - z * 0.17))
+        return v / 1.95 * 0.5 + 0.5
+
+    placed = 0
+    step = 4.2
+    for gx in np.arange(-HALF + 6.0, HALF - 6.0, step):
+        for gz in np.arange(-HALF + 6.0, HALF - 6.0, step):
+            x = gx + rng.uniform(-0.45, 0.45) * step
+            z = gz + rng.uniform(-0.45, 0.45) * step
+            dense = noise(x, z)
+            chance = 0.85 if dense > 0.66 else (0.12 if dense > 0.45 else 0.02)
+            if rng.random() > chance:
+                continue
+            i, j = int(x + HALF), int(z + HALF)
+            y = height[j - 1:j + 2, i - 1:i + 2]
+            if y.size < 9 or y.min() < 0 or y.max() - y.min() > 0.01:
+                continue
+            if not layout.is_clear(x, z, pad=1.6):
+                continue
+            layout.kit.tree(x, z, float(y[1, 1]), height=rng.uniform(7.0, 13.5),
+                            kind=tree_kind(x, z, 0.35 + 0.4 * (1.0 - dense)))
+            layout.keep_clear(x - 0.8, z - 0.8, x + 0.8, z + 0.8)
+            placed += 1
+    print(f'  woodland: {placed} trees across the fields')
+
+
+def country_height(x, z):
+    """The height of the country outside the map, at a point outside it.
+
+    It meets the map's own edge at the top of whatever stands there - the
+    rock along the north and west, the low face along the south - so the
+    boundary reads as the foot of a hillside rather than as a wall with sky
+    behind it. East is the sea the river runs into, and west is the valley
+    it comes down.
+    """
+    cx = min(max(x, -HALF), HALF)
+    cz = min(max(z, -HALF), HALF)
+    d = math.hypot(x - cx, z - cz)
+    north, south = RIVER
+    # The height at the nearest point of the map's edge.
+    if cz <= -HALF + 1e-6 and cx < HALF - 20.0:
+        edge = 13.6
+    elif cx <= -HALF + 1e-6 and cz < north:
+        edge = 11.6
+    else:
+        edge = 6.6
+    # Hills: rising away from the edge, rolling along it.
+    roll = (math.sin(x * 0.021 + 0.4) * math.cos(z * 0.017 - 1.1) * 14.0
+            + math.sin(x * 0.047 - z * 0.039) * 6.0
+            + math.sin(x * 0.11 + z * 0.093) * 2.2)
+    rise = 46.0 * (1.0 - math.exp(-d / 85.0))
+    h = edge + rise + roll * min(d / 40.0, 1.0)
+    # Cliffs where the ground rises steepest, just past the edge.
+    h += 6.0 * math.exp(-((d - 14.0) / 10.0) ** 2) * (0.5 + 0.5 * math.sin(x * 0.07 + z * 0.05))
+    # The valley the river comes down, west of the map.
+    middle = (north + south) / 2.0
+    if x < -HALF + 12.0:
+        width = 16.0 + max(-HALF - x, 0.0) * 0.22
+        valley = math.exp(-((z - middle - math.sin(x * 0.02) * 12.0 * min(d / 60.0, 1.0)) / width) ** 2)
+        h = h + (-3.2 - h) * valley
+    # The sea: everything east, and the shore curling round the corners.
+    sea = min(max((cx - (HALF - 45.0)) / 40.0, 0.0), 1.0)
+    shore = -0.4 - 9.0 * (1.0 - math.exp(-d / 25.0))
+    return h + (shore - h) * sea
+
+
+def country(glb, kit):
+    """The hills, cliffs, sea and forest outside the map. Drawn, never walked.
+
+    A heightfield from the map's edge out to `COUNTRY`, coloured by slope and
+    height a triangle at a time, as scenery: the generator skips it, so it
+    neither collides nor changes the map's size. The perimeter brushes stop
+    a player at the edge long before any of it.
+    """
+    step = 5.0
+    count = int(round(2 * COUNTRY / step)) + 1
+    xs = np.linspace(-COUNTRY, COUNTRY, count)
+    height = np.zeros((count, count))
+    for j, z in enumerate(xs):
+        for i, x in enumerate(xs):
+            if abs(x) < HALF - 1e-6 and abs(z) < HALF - 1e-6:
+                continue
+            height[j, i] = country_height(x, z)
+    pieces = {}
+    triangles = {}
+    for j in range(count - 1):
+        for i in range(count - 1):
+            x0, x1, z0, z1 = xs[i], xs[i + 1], xs[j], xs[j + 1]
+            if max(abs(x0), abs(x1)) <= HALF + 1e-6 and max(abs(z0), abs(z1)) <= HALF + 1e-6:
+                continue
+            corners = [(x0, height[j, i], z0), (x1, height[j, i + 1], z0),
+                       (x1, height[j + 1, i + 1], z1), (x0, height[j + 1, i], z1)]
+            for tri in ((0, 2, 1), (0, 3, 2)):
+                a, b, c = (np.array(corners[t]) for t in tri)
+                normal = np.cross(b - a, c - a)
+                normal /= np.linalg.norm(normal)
+                top = max(a[1], b[1], c[1])
+                if top < 0.6:
+                    surface = 'shore'
+                elif abs(normal[1]) < 0.62:
+                    surface = 'rock'
+                elif top > 44.0:
+                    surface = 'grass_dry'
+                else:
+                    surface = 'meadow'
+                verts, faces = pieces.setdefault(surface, ([], {}))
+                ids = []
+                for v in (a, b, c):
+                    key = (round(float(v[0]), 3), round(float(v[1]), 3), round(float(v[2]), 3))
+                    if key not in faces:
+                        faces[key] = len(verts)
+                        verts.append(key)
+                    ids.append(faces[key])
+                triangles.setdefault(surface, []).append(tuple(ids))
+    mesh = glb.mesh('facility_country', [(m, v, triangles[m]) for m, (v, _ids) in sorted(pieces.items())])
+    glb.node('facility_country', mesh, extras={'scenery': True})
+
+    # Forest on the hills, thick in the folds and thin on the tops.
+    rng = random.Random(23)
+    planted = 0
+    for gz in np.arange(-COUNTRY + 4.0, COUNTRY - 4.0, 8.0):
+        for gx in np.arange(-COUNTRY + 4.0, COUNTRY - 4.0, 8.0):
+            x = gx + rng.uniform(-3.5, 3.5)
+            z = gz + rng.uniform(-3.5, 3.5)
+            if abs(x) < HALF + 3.0 and abs(z) < HALF + 3.0:
+                continue
+            h = country_height(x, z)
+            if h < 1.5:
+                continue
+            slope = max(abs(country_height(x + 2.0, z) - h), abs(country_height(x, z + 2.0) - h)) / 2.0
+            if slope > 0.9:
+                continue
+            woods = (math.sin(x * 0.019 + 2.0) * math.cos(z * 0.023) + 0.5 * math.sin(x * 0.05 - z * 0.04))
+            if rng.random() > (0.9 if woods > 0.1 else 0.18):
+                continue
+            kind = 3 + tree_kind(x, z, 0.3 if h < 25.0 else 0.08)
+            kit.trees.append((round(x, 2), round(h - 0.4, 2), round(z, 2),
+                              round(rng.uniform(9.0, 16.0), 2), kind))
+            planted += 1
+    print(f'  country: {sum(len(f) for f in triangles.values()):,} triangles, {planted} trees')
+
+
 def check_river(layout):
     """No climbable roof close enough to the river to jump into it from."""
     north, south = RIVER
@@ -1487,6 +1983,7 @@ def check_river(layout):
 def build():
     glb = Glb()
     kit = Kit()
+    kit.hidden = Kit()
     props = YardProps(glb)
     define_props(props)
     layout = Layout(kit, props)
@@ -1503,15 +2000,26 @@ def build():
     south(layout)
     south_bank(layout)
     fields(layout)
+    woodland(layout)
     check_river(layout)
 
+    country(glb, kit)
     pieces = [(m, v, f) for m, (v, f) in sorted(kit.groups.items())]
     structure = glb.mesh('facility_structure', pieces)
     glb.node('facility_structure', structure)
+    detail = [(m, v, f) for m, (v, f) in sorted(layout.detail.groups.items())]
+    glb.node('facility_detail', glb.mesh('facility_detail', detail), extras={'scenery': True})
+    # Collided with and never drawn: the trunks of the trees the client
+    # grows. The generator reads it like any other structure.
+    hidden = [(m, v, f) for m, (v, f) in sorted(kit.hidden.groups.items())]
+    glb.node('facility_collision', glb.mesh('facility_collision', hidden),
+             extras={'collision_only': True})
     # Put the structure first in the scene so it is the first thing a reader
     # of the file meets; the props follow it.
     roots = glb.js['scenes'][0]['nodes']
-    roots.insert(0, roots.pop())
+    first = next(i for i in roots if glb.js['nodes'][i]['name'] == 'facility_structure')
+    roots.remove(first)
+    roots.insert(0, first)
 
     glb.js['scenes'][0]['extras'] = {
         # Where the client draws the sea and the river. The map carries it
@@ -1521,6 +2029,12 @@ def build():
         'water_colour': '#3a4f58',
         # Rectangles, in metres, the spawn picker leaves alone.
         'spawn_exclude': [list(COMPOUND)],
+        # What the client grows: trees as x, y, z, height, kind in turn,
+        # and where grass is.
+        'smoke': layout.smoke,
+        'tree_kinds': list(TREE_KINDS),
+        'trees': [round(float(v), 2) for t in kit.trees for v in t],
+        'ground': ground_map(kit, props),
     }
     glb.js['asset']['extras'] = {
         'title': 'Solatel facility',
@@ -1533,7 +2047,7 @@ def build():
     size = glb.write(MODEL)
     triangles = kit.triangles()
     print(f'facility: {triangles:,} structure triangles in {len(kit.groups)} surfaces, '
-          f'{props.placed} props from the yard, '
+          f'{len(kit.trees)} trees, {props.placed} props from the yard, '
           f'{os.path.relpath(MODEL, ROOT)} is {size / 1024 / 1024:.2f} MB')
     return kit
 
