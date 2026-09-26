@@ -15,7 +15,10 @@
 
 use super::*;
 use solatel_protocol::glam::Vec3;
-use solatel_protocol::sim::{Buttons, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH, look_direction};
+use solatel_protocol::sim::{
+    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAGAZINE, MAX_HEALTH, REGEN_DELAY,
+    REGEN_SECONDS, RELOAD_SECONDS, look_direction,
+};
 
 /// Puts a player into the lobby and hands back what it decided.
 ///
@@ -2292,4 +2295,193 @@ fn a_hit_after_tracking_the_target_is_not_a_flick() {
     let stats = duel.stats(duel.shooter);
     assert_eq!(stats.shots_hit, 1);
     assert_eq!(stats.snap_hits, 0, "aim held on the target is tracking, not a flick");
+}
+
+// ---- the zone, health coming back, the magazine and grenades ---------------
+
+impl Duel {
+    /// One tick in which the shooter holds `buttons`, looking at `target`.
+    fn press(&mut self, buttons: u8, target: Vec3) {
+        let from = self.body(self.shooter).state.eye_position();
+        let (yaw, pitch) = aim(from, target);
+        self.seq += 1;
+        self.lobby.handle(GameCommand::Inputs {
+            player_id: self.shooter,
+            session_id: self.shooter_session,
+            commands: vec![InputCommand {
+                seq: self.seq,
+                forward: 0.0,
+                right: 0.0,
+                yaw,
+                pitch,
+                buttons: Buttons(buttons),
+            }],
+        });
+        self.lobby.step();
+    }
+
+    fn steps(&mut self, ticks: usize) {
+        for _ in 0..ticks {
+            self.lobby.step();
+        }
+    }
+
+    fn body_mut(&mut self, id: PlayerId) -> &mut Body {
+        self.lobby
+            .matches
+            .get_mut(&self.match_id)
+            .unwrap()
+            .bodies
+            .get_mut(&id)
+            .unwrap()
+    }
+
+    /// Put the match this far into its clock, where the circle is small.
+    fn late_in_the_match(&mut self) {
+        let late = (solatel_protocol::sim::ZONE_STEP * 4.5 / TICK_DT) as u32;
+        let game = self.lobby.matches.get_mut(&self.match_id).unwrap();
+        let start = game.started_tick.unwrap();
+        // Wrapping, as `elapsed` counts: early in a test the tick is small.
+        game.started_tick = Some(start.wrapping_sub(late));
+        // And the victim out on the east side of the arena, on open ground
+        // well beyond where the circle has closed to.
+        let victim = self.victim;
+        let body = self.body_mut(victim);
+        body.state.position.x = 40.0;
+        body.state.position.z = 0.0;
+        body.state.position.y += 0.5;
+        body.history.clear();
+    }
+}
+
+fn seconds(s: f32) -> usize {
+    (s / TICK_DT).ceil() as usize
+}
+
+#[test]
+fn the_zone_burns_whoever_is_outside_it_and_moves_nobody() {
+    let mut duel = Duel::new();
+    duel.late_in_the_match();
+    let before = duel.position(duel.victim);
+    // The duel is set up around a spawn well away from the middle, so late
+    // in a match the victim is outside the circle.
+    let zone = duel.lobby.matches[&duel.match_id].zone(duel.lobby.tick);
+    assert!(zone.excludes(before), "test setup: the victim should be outside ({zone:?}, at {before:?}, tick {}, started {:?})", duel.lobby.tick, duel.lobby.matches[&duel.match_id].started_tick);
+    duel.steps(seconds(1.0));
+    assert!(duel.health(duel.victim) < MAX_HEALTH, "the zone did no damage");
+    let after = duel.position(duel.victim);
+    let moved = Vec3::new(after.x - before.x, 0.0, after.z - before.z).length();
+    assert!(moved < 0.1, "the zone moved somebody {moved:.2} m");
+}
+
+#[test]
+fn a_zone_death_after_a_shot_is_the_shooters_kill() {
+    let mut duel = Duel::new();
+    let mut ledger = charge(&mut duel);
+    let centre = duel.position(duel.victim);
+    duel.fire_at(centre);
+    duel.late_in_the_match();
+    duel.body_mut(duel.victim).state.health = 5;
+    duel.steps(seconds(2.0));
+    assert!(!duel.alive(duel.victim), "the zone should have finished them");
+    assert!(
+        asked_of(&mut ledger).contains(&LedgerRequest::SettleKill {
+            entry: EntryId {
+                match_id: duel.match_id,
+                player_id: duel.victim,
+            },
+            killer: duel.shooter,
+        }),
+        "running into the zone must not be a way out of a fight"
+    );
+}
+
+#[test]
+fn a_zone_death_nobody_caused_settles_as_a_walk_away() {
+    let mut duel = Duel::new();
+    let mut ledger = charge(&mut duel);
+    duel.late_in_the_match();
+    duel.body_mut(duel.victim).state.health = 3;
+    duel.steps(seconds(2.0));
+    assert!(!duel.alive(duel.victim));
+    assert!(asked_of(&mut ledger).contains(&LedgerRequest::AbandonEntry {
+        entry: EntryId {
+            match_id: duel.match_id,
+            player_id: duel.victim,
+        },
+    }));
+}
+
+#[test]
+fn health_comes_back_after_a_pause_and_is_full_in_about_eleven_seconds() {
+    let mut duel = Duel::new();
+    let centre = duel.position(duel.victim);
+    duel.fire_at(centre);
+    duel.body_mut(duel.victim).state.health = 10;
+    duel.steps(seconds(REGEN_DELAY - 0.5));
+    assert_eq!(duel.health(duel.victim), 10, "nothing came back during the pause");
+    duel.steps(seconds(0.5 + REGEN_SECONDS * 0.5));
+    let halfway = duel.health(duel.victim);
+    assert!(halfway > 40 && halfway < MAX_HEALTH, "half way through at {halfway}");
+    duel.steps(seconds(REGEN_SECONDS * 0.5 + 0.5));
+    assert_eq!(duel.health(duel.victim), MAX_HEALTH);
+}
+
+#[test]
+fn a_magazine_runs_out_and_a_reload_refills_it() {
+    let mut duel = Duel::new();
+    // Aim at nothing, so the victim survives the whole magazine.
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    for _ in 0..(MAGAZINE as usize + 5) {
+        duel.press(Buttons::FIRE, sky);
+        duel.reload();
+    }
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_fired, MAGAZINE, "fired past the end of the magazine");
+    assert!(duel.body(duel.shooter).reload_until.is_some() || duel.body(duel.shooter).ammo == MAGAZINE);
+    duel.steps(seconds(RELOAD_SECONDS + 0.1));
+    assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE, "the reload did not finish");
+}
+
+#[test]
+fn reloading_by_hand_blocks_the_trigger_until_it_is_done() {
+    let mut duel = Duel::new();
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    duel.press(Buttons::FIRE, sky);
+    duel.reload();
+    duel.press(Buttons::RELOAD, sky);
+    let fired = duel.stats(duel.shooter).shots_fired;
+    for _ in 0..10 {
+        duel.press(Buttons::FIRE, sky);
+    }
+    assert_eq!(duel.stats(duel.shooter).shots_fired, fired, "fired mid-reload");
+    duel.steps(seconds(RELOAD_SECONDS));
+    assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE);
+}
+
+#[test]
+fn a_grenade_kill_pays_the_thrower() {
+    let mut duel = Duel::new();
+    let mut ledger = charge(&mut duel);
+    let victim_at = duel.position(duel.victim);
+    // Lob it at the victim's feet, three metres away.
+    duel.press(Buttons::THROW, victim_at - Vec3::new(0.0, 0.6, 0.0));
+    assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
+    // Holding the button is still one throw.
+    duel.press(Buttons::THROW, victim_at);
+    assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
+    duel.body_mut(duel.victim).state.health = 20;
+    // The shooter steps well back so only the victim is caught.
+    let away = (victim_at - duel.position(duel.shooter)).normalize() * 12.0;
+    let shooter = duel.shooter;
+    duel.body_mut(shooter).state.position -= away;
+    duel.steps(seconds(GRENADE_FUSE + 0.2));
+    assert!(!duel.alive(duel.victim), "the blast should have finished them");
+    assert!(asked_of(&mut ledger).contains(&LedgerRequest::SettleKill {
+        entry: EntryId {
+            match_id: duel.match_id,
+            player_id: duel.victim,
+        },
+        killer: duel.shooter,
+    }));
 }

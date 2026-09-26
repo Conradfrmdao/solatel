@@ -61,12 +61,15 @@ use solatel_protocol::{
     Stakes,
     ids::{MatchId, PlayerId, ResumeToken, SessionId, WithdrawalId},
     net::{
-        INTERPOLATION_DELAY_MS, MAX_INPUTS_PER_MESSAGE, MAX_LAG_COMPENSATION_MS, PlayerSnapshot,
-        SNAPSHOT_HZ, ScoreEntry, ServerMsg, TICK_DT, TICK_HZ, TableStatus, Tier,
+        DeathCause, GrenadeSnapshot, INTERPOLATION_DELAY_MS, MAX_INPUTS_PER_MESSAGE,
+        MAX_LAG_COMPENSATION_MS, PlayerSnapshot, SNAPSHOT_HZ, ScoreEntry, ServerMsg, TICK_DT,
+        TICK_HZ, TableStatus, Tier,
     },
     sim::{
-        HitRegion, InputCommand, MATCH_DURATION, PlayerState, WEAPON_FIRE_INTERVAL, WEAPON_RANGE,
-        Zone, hitscan, map, zone_at,
+        Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HitRegion, InputCommand, KILL_CREDIT_SECONDS,
+        MAGAZINE, MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS,
+        RELOAD_SECONDS, WEAPON_FIRE_INTERVAL, WEAPON_RANGE, Zone, grenade, hitscan, map, zone_at,
+        zone_damage_per_second,
     },
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -369,6 +372,23 @@ struct Body {
     history: VecDeque<(u32, PlayerState)>,
     /// False once their stake has left escrow, however it left.
     staked: bool,
+    /// Rounds in the magazine, and when the reload under way finishes.
+    ammo: u32,
+    reload_until: Option<f32>,
+    /// Grenades left this life.
+    grenades: u32,
+    /// Buttons of the last command consumed, so a throw happens on the
+    /// press and not on every tick it is held.
+    previous_buttons: Buttons,
+    /// Game time of the last damage from anything, for regeneration.
+    last_hurt_at: f32,
+    /// Who last hurt them and when, for crediting a death that was not
+    /// anybody's shot. See [`KILL_CREDIT_SECONDS`].
+    last_attacker: Option<(PlayerId, f32)>,
+    /// Fractions of a point of health, carried between ticks: the zone and
+    /// regeneration both work in health per second and health is whole.
+    zone_carry: f32,
+    regen_carry: f32,
 }
 
 impl Body {
@@ -384,6 +404,14 @@ impl Body {
             starved_ticks: 0,
             history: VecDeque::with_capacity(HISTORY_TICKS),
             staked: true,
+            ammo: MAGAZINE,
+            reload_until: None,
+            grenades: GRENADES_PER_LIFE,
+            previous_buttons: Buttons::empty(),
+            last_hurt_at: f32::NEG_INFINITY,
+            last_attacker: None,
+            zone_carry: 0.0,
+            regen_carry: 0.0,
         }
     }
 
@@ -426,6 +454,17 @@ struct Match {
     /// one map do not line everybody up identically.
     spawns: Vec<map::Spawn>,
     next_spawn: usize,
+    /// Grenades thrown and not yet gone off.
+    grenades: Vec<LiveGrenade>,
+    next_grenade: u32,
+}
+
+/// A grenade in the air or on the ground, with its fuse burning.
+struct LiveGrenade {
+    id: u32,
+    thrower: PlayerId,
+    flight: grenade::Flight,
+    goes_off_at: f32,
 }
 
 impl Match {
@@ -755,6 +794,8 @@ impl Lobby {
                 bodies: HashMap::new(),
                 spawns,
                 next_spawn: 0,
+                grenades: Vec::new(),
+                next_grenade: 0,
             },
         );
         tracing::info!(
@@ -1510,10 +1551,12 @@ impl Lobby {
         // held to the same circle. Recomputing it per player would put the
         // wall in a slightly different place for whoever was stepped last.
         let zone = game.zone(self.tick);
+        let burn = zone_damage_per_second(game.elapsed(self.tick));
         let ground = game.map;
         let ids: Vec<PlayerId> = game.bodies.keys().copied().collect();
         let mut shots: Vec<(PlayerId, InputCommand)> = Vec::new();
-        let mut fell: Vec<PlayerId> = Vec::new();
+        let mut fell: Vec<(PlayerId, DeathCause)> = Vec::new();
+        let mut throws: Vec<PlayerId> = Vec::new();
         let tick = self.tick;
 
         {
@@ -1537,10 +1580,24 @@ impl Lobby {
                         body.starved_ticks = 0;
                         body.last_applied_seq = command.seq;
                         body.last_input = command;
-                        solatel_protocol::sim::step_tick(&mut body.state, &command, ground, zone);
+                        solatel_protocol::sim::step_tick(&mut body.state, &command, ground);
                         if command.buttons.fire() {
                             shots.push((*id, command));
                         }
+                        // A throw is the press, not the holding of it.
+                        if command.buttons.throw()
+                            && !body.previous_buttons.throw()
+                            && body.grenades > 0
+                        {
+                            throws.push(*id);
+                        }
+                        if command.buttons.reload()
+                            && body.reload_until.is_none()
+                            && body.ammo < MAGAZINE
+                        {
+                            body.reload_until = Some(now + RELOAD_SECONDS);
+                        }
+                        body.previous_buttons = command.buttons;
                     }
                     None => {
                         body.starved_ticks = body.starved_ticks.saturating_add(1);
@@ -1551,21 +1608,57 @@ impl Lobby {
                         // silence stops looking like packet loss and starts
                         // looking like a client that has gone away.
                         let mut carried = body.last_input;
-                        carried.buttons = solatel_protocol::sim::Buttons::empty();
+                        // A crouch is a posture, not an action: it is held,
+                        // and dropping a packet should not stand anybody up.
+                        let crouched = carried.buttons.crouch();
+                        carried.buttons = Buttons::empty();
+                        carried.buttons.set(Buttons::CROUCH, crouched);
                         if body.starved_ticks > MAX_CARRY_FORWARD_TICKS {
                             carried.forward = 0.0;
                             carried.right = 0.0;
                         }
-                        solatel_protocol::sim::step_tick(&mut body.state, &carried, ground, zone);
+                        solatel_protocol::sim::step_tick(&mut body.state, &carried, ground);
+                        body.previous_buttons = carried.buttons;
+                    }
+                }
+
+                if let Some(done) = body.reload_until
+                    && now >= done
+                {
+                    body.ammo = MAGAZINE;
+                    body.reload_until = None;
+                }
+
+                // The zone burns; out of it, health comes back on its own.
+                if zone.excludes(body.state.position) {
+                    body.regen_carry = 0.0;
+                    body.zone_carry += burn * TICK_DT;
+                    let whole = body.zone_carry.floor();
+                    if whole >= 1.0 {
+                        body.zone_carry -= whole;
+                        body.state.health = body.state.health.saturating_sub(whole as i16);
+                        body.last_hurt_at = now;
+                        if !body.state.is_alive() {
+                            body.state.health = 0;
+                            body.stats.deaths = body.stats.deaths.saturating_add(1);
+                            fell.push((*id, DeathCause::Zone));
+                        }
+                    }
+                } else if body.state.health < MAX_HEALTH && now - body.last_hurt_at >= REGEN_DELAY {
+                    body.regen_carry += f32::from(MAX_HEALTH) / REGEN_SECONDS * TICK_DT;
+                    let whole = body.regen_carry.floor();
+                    if whole >= 1.0 {
+                        body.regen_carry -= whole;
+                        body.state.health = (body.state.health + whole as i16).min(MAX_HEALTH);
                     }
                 }
 
                 // Falling out of the world is fatal. There is no killer to
                 // credit.
-                if body.state.position.y < -50.0 {
+                if body.state.is_alive() && body.state.position.y < -50.0 {
                     body.state.health = 0;
                     body.stats.deaths = body.stats.deaths.saturating_add(1);
-                    fell.push(*id);
+                    fell.push((*id, DeathCause::Fall));
                 }
 
                 body.history.push_back((tick, body.state));
@@ -1575,28 +1668,13 @@ impl Lobby {
             }
         }
 
-        for victim in fell {
-            let victim_name = self.name_of(victim);
-            // Nobody killed them, so nobody won the stake: it comes back
-            // less the rake, the same as walking away. Taking all of it
-            // would punish a player for a hole in our own map. Their
-            // winnings are untouched and already in their wallet.
-            self.settle_stake(match_id, victim, |entry| {
-                crate::ledger::LedgerRequest::AbandonEntry { entry }
-            });
-            self.to_match(
-                match_id,
-                &ServerMsg::Killed {
-                    victim,
-                    victim_name,
-                    killer: None,
-                    killer_name: None,
-                    headshot: false,
-                },
-            );
-            self.eliminate(match_id, victim);
-            self.broadcast_scoreboard(match_id);
+        for (victim, cause) in fell {
+            self.die_unshot(match_id, victim, cause, now);
         }
+        for thrower in throws {
+            self.throw(match_id, thrower, now);
+        }
+        self.step_grenades(match_id, now);
 
         // Shots are resolved after everyone has moved, so all players are at
         // the same point in time.
@@ -1621,6 +1699,191 @@ impl Lobby {
         }
     }
 
+    /// A death that was nobody's shot: the zone, a fall, their own grenade.
+    ///
+    /// Credited to whoever last hurt them if they did so within
+    /// [`KILL_CREDIT_SECONDS`] - they get the kill and the stake, exactly as
+    /// if the last shot had done it, so running into the zone or off a roof
+    /// is no way out of a fight already lost. Otherwise nobody won the stake
+    /// and it settles as a walk-away: the reward back, the rake to us.
+    fn die_unshot(&mut self, match_id: MatchId, victim: PlayerId, cause: DeathCause, now: f32) {
+        let credit = self
+            .matches
+            .get(&match_id)
+            .and_then(|m| m.bodies.get(&victim))
+            .and_then(|b| b.last_attacker)
+            .filter(|(attacker, at)| *attacker != victim && now - at <= KILL_CREDIT_SECONDS)
+            .map(|(attacker, _)| attacker);
+        match credit {
+            Some(killer) => self.credit_kill(match_id, killer, victim, cause),
+            None => {
+                let victim_name = self.name_of(victim);
+                self.settle_stake(match_id, victim, |entry| {
+                    crate::ledger::LedgerRequest::AbandonEntry { entry }
+                });
+                self.to_match(
+                    match_id,
+                    &ServerMsg::Killed {
+                        victim,
+                        victim_name,
+                        killer: None,
+                        killer_name: None,
+                        headshot: false,
+                        cause,
+                    },
+                );
+                self.eliminate(match_id, victim);
+                self.broadcast_scoreboard(match_id);
+            }
+        }
+    }
+
+    /// `killer` gets the kill: the count, the reward, and the victim's stake.
+    /// The victim's health is already at zero.
+    fn credit_kill(&mut self, match_id: MatchId, killer: PlayerId, victim: PlayerId, cause: DeathCause) {
+        let reward = self
+            .matches
+            .get(&match_id)
+            .map(|m| m.stakes.reward().micros())
+            .unwrap_or(0);
+        if let Some(body) = self
+            .matches
+            .get_mut(&match_id)
+            .and_then(|m| m.bodies.get_mut(&killer))
+        {
+            body.stats.kills = body.stats.kills.saturating_add(1);
+            body.winnings_micro_usd = body.winnings_micro_usd.saturating_add(reward);
+        }
+        tracing::info!(%killer, %victim, ?cause, "kill");
+        self.settle_stake(match_id, victim, |entry| {
+            crate::ledger::LedgerRequest::SettleKill { entry, killer }
+        });
+        let victim_name = self.name_of(victim);
+        let killer_name = self.name_of(killer);
+        self.to_match(
+            match_id,
+            &ServerMsg::Killed {
+                victim,
+                victim_name,
+                killer: Some(killer),
+                killer_name: Some(killer_name),
+                headshot: false,
+                cause,
+            },
+        );
+        self.broadcast_scoreboard(match_id);
+        self.eliminate(match_id, victim);
+    }
+
+    /// A grenade out of a player's hand.
+    fn throw(&mut self, match_id: MatchId, thrower: PlayerId, now: f32) {
+        let Some(game) = self.matches.get_mut(&match_id) else {
+            return;
+        };
+        let Some(body) = game.bodies.get_mut(&thrower) else {
+            return;
+        };
+        if !body.state.is_alive() || body.grenades == 0 {
+            return;
+        }
+        body.grenades -= 1;
+        let flight = grenade::Flight::thrown_by(&body.state);
+        game.next_grenade = game.next_grenade.wrapping_add(1);
+        let id = game.next_grenade;
+        game.grenades.push(LiveGrenade {
+            id,
+            thrower,
+            flight,
+            goes_off_at: now + GRENADE_FUSE,
+        });
+    }
+
+    /// Every grenade in a match, one tick on; any whose fuse has run, off.
+    fn step_grenades(&mut self, match_id: MatchId, now: f32) {
+        let Some(game) = self.matches.get_mut(&match_id) else {
+            return;
+        };
+        let ground = game.map;
+        let mut blasts = Vec::new();
+        game.grenades.retain_mut(|live| {
+            live.flight.step(ground, TICK_DT);
+            if now >= live.goes_off_at {
+                blasts.push((live.thrower, live.flight.position));
+                false
+            } else {
+                true
+            }
+        });
+        for (thrower, at) in blasts {
+            self.explode(match_id, thrower, at, now);
+        }
+    }
+
+    /// A blast: everybody in reach and in sight of it is hurt, and anybody
+    /// it finishes is the thrower's kill - or, if it was their own grenade,
+    /// a death credited to whoever last hurt them.
+    fn explode(&mut self, match_id: MatchId, thrower: PlayerId, at: solatel_protocol::glam::Vec3, now: f32) {
+        self.to_match(match_id, &ServerMsg::Exploded { at, thrower });
+        let Some(game) = self.matches.get_mut(&match_id) else {
+            return;
+        };
+        let ground = game.map;
+        let mut hurt = Vec::new();
+        for (id, body) in game.bodies.iter_mut() {
+            let damage = grenade::blast_damage(at, &body.state, ground);
+            if damage <= 0 {
+                continue;
+            }
+            body.state.health = body.state.health.saturating_sub(damage).max(0);
+            body.last_hurt_at = now;
+            body.regen_carry = 0.0;
+            if *id != thrower {
+                body.last_attacker = Some((thrower, now));
+            }
+            let killed = !body.state.is_alive();
+            if killed {
+                body.stats.deaths = body.stats.deaths.saturating_add(1);
+            }
+            hurt.push((*id, damage, body.state.health, killed));
+        }
+        let mut dealt = 0u32;
+        for (victim, damage, remaining, killed) in hurt {
+            if victim != thrower {
+                dealt = dealt.saturating_add(damage as u32);
+                if let Some(connection) = self.connections.get(&victim) {
+                    connection.send(ServerMsg::Damaged {
+                        attacker: thrower,
+                        amount: damage,
+                        health_remaining: remaining,
+                        region: HitRegion::Body,
+                    });
+                }
+                if let Some(connection) = self.connections.get(&thrower) {
+                    connection.send(ServerMsg::HitConfirmed {
+                        victim,
+                        amount: damage,
+                        region: HitRegion::Body,
+                        killed,
+                    });
+                }
+            }
+            if killed {
+                if victim == thrower {
+                    self.die_unshot(match_id, victim, DeathCause::Grenade, now);
+                } else {
+                    self.credit_kill(match_id, thrower, victim, DeathCause::Grenade);
+                }
+            }
+        }
+        if let Some(body) = self
+            .matches
+            .get_mut(&match_id)
+            .and_then(|m| m.bodies.get_mut(&thrower))
+        {
+            body.stats.damage_dealt = body.stats.damage_dealt.saturating_add(dealt);
+        }
+    }
+
     fn resolve_shot(
         &mut self,
         match_id: MatchId,
@@ -1641,6 +1904,21 @@ impl Lobby {
         // Rate limit. The client is free to send `fire` every tick; this is
         // what makes doing so no better than firing at the intended rate.
         if now - shooter.last_fire_at < WEAPON_FIRE_INTERVAL {
+            return;
+        }
+        // Nothing to fire while a magazine is going in, and pulling the
+        // trigger on an empty one starts putting one in.
+        if shooter.reload_until.is_some() {
+            return;
+        }
+        if shooter.ammo == 0 {
+            if let Some(body) = self
+                .matches
+                .get_mut(&match_id)
+                .and_then(|m| m.bodies.get_mut(&shooter_id))
+            {
+                body.reload_until = Some(now + RELOAD_SECONDS);
+            }
             return;
         }
 
@@ -1699,6 +1977,10 @@ impl Lobby {
             .and_then(|m| m.bodies.get_mut(&shooter_id))
         {
             shooter.last_fire_at = now;
+            shooter.ammo = shooter.ammo.saturating_sub(1);
+            if shooter.ammo == 0 {
+                shooter.reload_until = Some(now + RELOAD_SECONDS);
+            }
             // Counted here, past the rate limit, so a client holding the
             // trigger down is not charged for the shots the weapon refused
             // to take. Accuracy should measure aim, not send rate.
@@ -1738,6 +2020,9 @@ impl Lobby {
             }
             landed = true;
             victim.state.health = victim.state.health.saturating_sub(damage);
+            victim.last_hurt_at = now;
+            victim.regen_carry = 0.0;
+            victim.last_attacker = Some((shooter_id, now));
             killed = !victim.state.is_alive();
             if killed {
                 victim.stats.deaths = victim.stats.deaths.saturating_add(1);
@@ -1821,6 +2106,7 @@ impl Lobby {
                     killer: Some(shooter_id),
                     killer_name: Some(killer_name),
                     headshot: region == HitRegion::Head,
+                    cause: DeathCause::Rifle,
                 },
             );
             self.broadcast_scoreboard(match_id);
@@ -2032,6 +2318,15 @@ impl Lobby {
 
         let server_time_ms = f64::from(self.tick) * f64::from(TICK_DT) * 1000.0;
         let pool = game.pot_micro_usd();
+        let now = self.game_time();
+        let live_grenades: Vec<GrenadeSnapshot> = game
+            .grenades
+            .iter()
+            .map(|g| GrenadeSnapshot {
+                id: g.id,
+                position: g.flight.position,
+            })
+            .collect();
 
         for (id, body) in &game.bodies {
             let Some(connection) = self.connections.get(id) else {
@@ -2051,6 +2346,13 @@ impl Lobby {
                 zone_radius: zone.radius,
                 match_remaining_ms: remaining_ms,
                 players: players.clone(),
+                ammo: body.ammo,
+                reload_ms: body
+                    .reload_until
+                    .map(|done| ((done - now).max(0.0) * 1000.0) as u32)
+                    .unwrap_or(0),
+                grenades: body.grenades,
+                live_grenades: live_grenades.clone(),
             });
         }
     }

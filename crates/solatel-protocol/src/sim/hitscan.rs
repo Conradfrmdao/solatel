@@ -76,10 +76,12 @@ pub fn trace_world(origin: Vec3, direction: Vec3, max_distance: f32, map: &Map) 
 }
 
 /// The box a player can be shot in.
+///
+/// A crouched player's box stops [`CROUCH_DROP`](super::CROUCH_DROP) lower.
 pub fn player_hitbox(state: &PlayerState) -> (Vec3, Vec3) {
     (
         state.position - PLAYER_HALF_EXTENTS,
-        state.position + PLAYER_HALF_EXTENTS,
+        state.position + PLAYER_HALF_EXTENTS - Vec3::new(0.0, state.crouch_drop(), 0.0),
     )
 }
 
@@ -87,8 +89,8 @@ pub fn player_hitbox(state: &PlayerState) -> (Vec3, Vec3) {
 pub fn player_headbox(state: &PlayerState) -> (Vec3, Vec3) {
     let half = Vec3::new(HEAD_HALF_WIDTH, 0.0, HEAD_HALF_WIDTH);
     (
-        state.position + Vec3::new(-half.x, HEAD_BOTTOM, -half.z),
-        state.position + Vec3::new(half.x, PLAYER_HALF_EXTENTS.y, half.z),
+        state.position + Vec3::new(-half.x, HEAD_BOTTOM - state.crouch_drop(), -half.z),
+        state.position + Vec3::new(half.x, PLAYER_HALF_EXTENTS.y - state.crouch_drop(), half.z),
     )
 }
 

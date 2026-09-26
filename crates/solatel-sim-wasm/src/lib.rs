@@ -32,8 +32,9 @@
 use solatel_protocol::{
     net::{INTERPOLATION_DELAY_MS, PROTOCOL_VERSION, SNAPSHOT_HZ, TICK_DT, TICK_HZ},
     sim::{
-        Buttons, EYE_OFFSET, InputCommand, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
-        WEAPON_FIRE_INTERVAL, Zone,
+        Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
+        InputCommand, MAGAZINE, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
+        REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, WEAPON_FIRE_INTERVAL,
         map::{self, MAP_VERSION},
         step_tick,
     },
@@ -77,6 +78,7 @@ impl Predictor {
         pitch: f32,
         on_ground: bool,
         health: i16,
+        crouched: bool,
     ) {
         self.state.position = glam_vec(x, y, z);
         self.state.velocity = glam_vec(vx, vy, vz);
@@ -84,6 +86,7 @@ impl Predictor {
         self.state.pitch = pitch;
         self.state.on_ground = on_ground;
         self.state.health = health;
+        self.state.crouched = crouched;
     }
 
     /// Advances one tick over one command.
@@ -92,11 +95,8 @@ impl Predictor {
     /// The command is sanitised exactly as the server sanitises it, so a bug in
     /// the JavaScript that produced it diverges here rather than silently
     /// predicting something the server will never agree to.
-    /// `zone_radius` is the match circle the server last reported, in metres,
-    /// or a non-finite value for no limit. Passed in rather than worked out
-    /// here: the circle closes on the server's clock, and a client computing
-    /// its own schedule would predict against a wall in a slightly different
-    /// place from the one it is being held behind.
+    /// The match circle is not an argument: it no longer moves anybody. It
+    /// burns whoever is outside it, and that is the server's to decide.
     pub fn step(
         &mut self,
         forward: f32,
@@ -104,7 +104,6 @@ impl Predictor {
         yaw: f32,
         pitch: f32,
         buttons: u8,
-        zone_radius: f32,
     ) {
         let command = InputCommand {
             seq: 0,
@@ -119,9 +118,6 @@ impl Predictor {
             &mut self.state,
             &command,
             map::active(),
-            Zone {
-                radius: zone_radius,
-            },
         );
     }
 
@@ -153,6 +149,17 @@ impl Predictor {
     pub fn on_ground(&self) -> bool {
         self.state.on_ground
     }
+    #[wasm_bindgen(getter)]
+    pub fn crouched(&self) -> bool {
+        self.state.crouched
+    }
+
+    /// Eye height above the body's centre, lower when crouched.
+    #[wasm_bindgen(getter)]
+    pub fn eye_offset(&self) -> f32 {
+        self.state.eye_offset()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn health(&self) -> i16 {
         self.state.health
@@ -256,6 +263,14 @@ pub fn constants() -> Vec<f32> {
         MAX_PITCH,
         MAX_HEALTH as f32,
         WEAPON_FIRE_INTERVAL,
+        CROUCH_DROP,
+        MAGAZINE as f32,
+        RELOAD_SECONDS,
+        GRENADES_PER_LIFE as f32,
+        GRENADE_FUSE,
+        GRENADE_RADIUS,
+        REGEN_DELAY,
+        REGEN_SECONDS,
         map::active().scale,
         map::active().half_x,
         map::active().half_z,
@@ -280,6 +295,14 @@ pub fn constant_names() -> Vec<String> {
         "maxPitch",
         "maxHealth",
         "weaponFireInterval",
+        "crouchDrop",
+        "magazine",
+        "reloadSeconds",
+        "grenadesPerLife",
+        "grenadeFuse",
+        "grenadeRadius",
+        "regenDelay",
+        "regenSeconds",
         "arenaScale",
         "arenaHalfX",
         "arenaHalfZ",
