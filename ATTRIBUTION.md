@@ -148,6 +148,26 @@ This must be resolved before launch: either confirm the terms on the model's
 Sketchfab page and record them here, or replace the model. Until then it is fine
 for development and must not ship.
 
+## Photographs, sky and foliage — `assets/photo/`, `assets/sky/`
+
+**CC0 1.0 (public domain), from Poly Haven** (https://polyhaven.com/license).
+No attribution is required and redistribution is allowed; they are listed here
+so the originals can be found. `scripts/fetch-photo-assets.mjs` downloads every
+one at 1k and re-encodes it as WebP; nothing else is done to them.
+
+- Surfaces, each a colour and an OpenGL normal map: `concrete_wall_008`,
+  `concrete_floor_worn_001`, `asphalt_02`, `leafy_grass`, `aerial_grass_rock`,
+  `dry_ground_01`, `dirt`, `gravel_floor`, `coast_sand_rocks_02`,
+  `cliff_side`, `corrugated_iron_02`, `container_side`, `rusty_metal_02`,
+  `rusty_painted_metal`, `metal_plate_02`, `plastered_wall_02`,
+  `brick_wall_02`, `brown_planks_03`, `clay_roof_tiles_02`, `pine_bark`.
+- Foliage, colour, alpha mask and normal: the leaves of `tree_small_02`, the
+  twigs of `fir_tree_01`, the blades of `grass_medium_01`. Only these
+  textures are used; the models themselves are millions of polygons and are
+  not in the game.
+- Sky: `kloofendal_48d_partly_cloudy_puresky`, the 1k HDR for lighting and
+  the tonemapped panorama, at 4096 px, for the background.
+
 ## Credit in the product
 
 CC-BY-4.0 requires the credit to reach players, not just this repository. A

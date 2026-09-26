@@ -18,10 +18,7 @@
 // turning while moving fight itself.
 
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { buildPost } from './post.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
@@ -48,6 +45,8 @@ const CLIENT_BUILD = 'solatel-client-three/0.1.0';
 const DEFAULT_HORIZONTAL_FOV = 90;
 const FOV_KEY = 'solatel.fov';
 const AO_KEY = 'solatel.ao';
+
+
 const NAME_KEY = 'solatel.name';
 
 /** The name to ask for, or empty to let the server choose one.
@@ -120,7 +119,7 @@ async function boot() {
   // shapes" and "a lit place". Without it, bright surfaces clip to their raw
   // material colour and the whole scene reads as a diagram.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 0.9;
 
   const scene = new THREE.Scene();
   let horizontalFov = storedFov();
@@ -143,7 +142,7 @@ async function boot() {
   // buffer closely - is off by default.
   const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 220);
 
-  const world = new World(scene);
+  const world = new World(scene, renderer);
   const remotes = new Remotes(scene);
   const viewmodel = new Viewmodel();
 
@@ -295,6 +294,9 @@ async function boot() {
       setComposer(on) {
         composer = on ? builtComposer : null;
       },
+      setAo(on) {
+        if (aoPass) aoPass.enabled = on;
+      },
       stats() {
         const info = renderer.info;
         return {
@@ -321,44 +323,19 @@ async function boot() {
    * beats a prettier 23 every time, and the player who wants it can say so.
    * `perf.mjs` is what produced those numbers and will produce them again.
    */
-  let builtComposer = null;
-  let composer = null;
-  try {
-    composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    const ao = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    ao.output = window.location.search.includes('aoonly')
-      ? GTAOPass.OUTPUT.Denoise
-      : GTAOPass.OUTPUT.Default;
-    // The radius is in world metres, and the arena is built at 4x: crates are
-    // two metres on a side and doorways three. A radius tuned for a one-metre
-    // scene finds nothing here, which is exactly what the first attempt did.
-    ao.updateGtaoMaterial({
-      radius: 2.0,
-      distanceExponent: 1.0,
-      thickness: 1.0,
-      scale: 1.0,
-      samples: 16,
-    });
-    ao.blendIntensity = 1.0;
-    composer.addPass(ao);
-    // Tonemapping and colour space are applied once, at the end, rather than
-    // by the renderer - a composer bypasses the renderer's own output stage.
-    composer.addPass(new OutputPass());
-    builtComposer = composer;
-  } catch (err) {
-    console.warn('ambient occlusion unavailable:', err);
-    builtComposer = null;
-  }
-  // Off unless the player turns it on, or the URL asks for it.
-  // Off unless the player turns it on, or the URL asks for it.
+  const post = buildPost(renderer, scene, camera);
+  const builtComposer = post?.composer ?? null;
+  const aoPass = post?.aoPass ?? null;
+  let composer = builtComposer;
+  // Ambient occlusion is the expensive pass (see above) and stays a choice;
+  // the rest of the chain is cheap and always on.
   let wantAo = options.has('ao');
   try {
     if (window.localStorage.getItem(AO_KEY) === '1') wantAo = true;
   } catch {
     /* private browsing */
   }
-  composer = wantAo ? builtComposer : null;
+  if (aoPass) aoPass.enabled = wantAo;
 
   const resize = () => {
     const width = window.innerWidth;
@@ -376,8 +353,8 @@ async function boot() {
   window.addEventListener('resize', resize);
   resize();
 
-  hud.bindQuality(Boolean(composer), (on) => {
-    composer = on ? builtComposer : null;
+  hud.bindQuality(Boolean(aoPass?.enabled), (on) => {
+    if (aoPass) aoPass.enabled = on;
     try {
       window.localStorage.setItem(AO_KEY, on ? '1' : '0');
     } catch {

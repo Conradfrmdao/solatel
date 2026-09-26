@@ -346,6 +346,17 @@ def node_matrix(node):
     return matrix
 
 
+def is_scenery(node):
+    """Whether a node is drawn and never collided with.
+
+    A map marks such a node `"extras": {"scenery": true}`: the hills past its
+    edge, leaves, trim thinner than a cell. Everything the generator reads
+    about a model goes through here, so a scenery node is not in the brushes,
+    not in the map's size, and not in any audit.
+    """
+    return bool(node.get('extras', {}).get('scenery'))
+
+
 def triangles(path):
     """Every triangle in the file, in world space, scaled to play size."""
     js, blob = read_glb(path)
@@ -362,7 +373,7 @@ def triangles(path):
 
     verts, faces, base = [], [], 0
     for index, node in enumerate(nodes):
-        if 'mesh' not in node:
+        if 'mesh' not in node or is_scenery(node):
             continue
         for prim in js['meshes'][node['mesh']]['primitives']:
             points = accessor(js, blob, prim['attributes']['POSITION'])
@@ -497,7 +508,7 @@ def mesh_nodes(path):
 
     out = []
     for index, node in enumerate(nodes):
-        if 'mesh' not in node:
+        if 'mesh' not in node or is_scenery(node):
             continue
         verts, faces, base = [], [], 0
         for prim in js['meshes'][node['mesh']]['primitives']:

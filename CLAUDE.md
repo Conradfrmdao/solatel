@@ -497,9 +497,9 @@ Do not be tempted to port `step_tick` into JS to save a build step: two
 descriptions of movement drifting apart is the failure this whole design exists
 to prevent, and in a game that pays per kill it pays the wrong player.
 
-The wasm is 1.5 MB, 429 KB of it over the wire once the server has gzipped
-it, and almost all of that is the three maps' brush tables - 59,000 brushes at
-six floats each is 1.4 MB on its own, against a simulation of about 50 KB.
+The wasm is 1.5 MB, about 440 KB of it over the wire once the server has
+gzipped it, and almost all of that is the three maps' brush tables - 61,000
+brushes at six floats each is 1.4 MB on its own, against a simulation of about 50 KB.
 That is the price of the client colliding against the server's own table
 rather than a copy, and it is still the right trade, but it is the number to
 watch: it moves with the brush count and nothing else. If it needs to come
@@ -523,6 +523,64 @@ WebGL came up and the socket connected.
 
 The viewmodel is rendered in its own scene over a cleared depth buffer, which is
 what stops a wall the player is standing against cutting through the weapon.
+
+### Photographs, sky and light
+
+The maps are drawn with scanned CC0 materials (`photo.js`, `assets/photo`),
+not flat colours. **The maps have no texture coordinates**, so each surface
+is textured by triplanar projection in world metres, normal map included
+(whiteout blend). `PHOTO` maps a surface name - the same names `SURFACES`
+keys its weathering on - to a photo set, metres per repeat, how far it is
+tinted towards the palette colour, and bump strength. The tint is what keeps
+the maroon barn maroon: the photograph brings the grain, the map keeps its
+colours. A surface with a photograph drops its drawn seams, ribs, planks and
+chips - the photograph has its own - and keeps the streaks, grime and rust.
+A surface not in `PHOTO` (the whole yard) draws exactly as before.
+
+**The sky is a photographed HDR panorama** (`assets/sky`). Blurred by PMREM
+into `scene.environment` it lights everything the sun does not reach, and it
+is most of the difference between a scene that looks lit and one that looks
+drawn. The sun is put where the panorama's own sun is (its brightest texel),
+so shadows agree with the sky, and the fog takes the colour of the
+panorama's horizon. With it loaded, the hemisphere, bounce and ambient lights
+drop to a trace. The water is a standard material with travelling-sine wave
+normals in the shader, reflecting that same environment: no mirror pass.
+
+`post.js` is the chain every frame goes through: a multisampled half-float
+target, GTAO (still a setting, still off by default - it is the expensive
+one), a restrained bloom that only finds real highlights, tonemapping, and a
+light colour grade with a vignette. `scripts/fetch-photo-assets.mjs`
+downloads and transcodes every photograph; `ATTRIBUTION.md` lists them.
+
+### Trees, grass, smoke and birds
+
+`nature.js` grows what a map's scene extras describe. **Trees are data, not
+geometry**: `trees` is x, y, z, height, kind in fives, `tree_kinds` names the
+kinds, and the client builds tapered trunks, boughs and crowns of cards
+carrying the scanned leaf and needle atlases, instanced per kind and swaying
+in the wind. What collides is the trunk alone, a box in the map's
+`collision_only` node (hidden by the client, read by the generator). Leaves
+stop sight and not bullets. `_far` kinds are the hillside trees outside the
+map: fewer, bigger cards and no shadows.
+
+Two things about foliage that were found by looking:
+
+- **A card's back is lit with the card's own normal.** Three's double-sided
+  materials flip it, and the back of every leaf then faced away from the sun
+  and drew black. `windy` replaces the normal setup for foliage.
+- **Alpha is scaled up by the mip level being read.** A mip averages a leaf
+  with the gaps round it, so at a distance the coverage fell under the
+  cut-off and every tree thinned to a stick.
+
+Colour and alpha are separate files because a canvas stores colour
+premultiplied: encoding them together lost the colour under every
+transparent pixel and filtering dragged each leaf's edge to black.
+
+Grass is tufts of the scanned grass cards, planted within `GRASS_RADIUS` of
+the eye from the map's `ground` extra (a run-length coded metre grid of
+where grass grows and how high), from a hash of each spot so nothing pops
+when the patch is replanted. `smoke` lists chimneys; birds circle whatever
+map has trees. All of it is marked `scenery`, so the fog is sized without it.
 
 ### The weapon in your hands
 
@@ -644,8 +702,9 @@ other player hold a toy.
 Runtime models live in `assets/` and are copied into `web/dist/assets` by
 `./x client`. They are downloaded by every player, so size is a gameplay
 number. A player fetches only the map being played, so the budget is per map,
-not for the folder: arena is 3.3 MB, yard 11 MB and facility 2.3 MB, against 2.5 MB of soldier
-and 0.1 MB of rifle either way. The arena's second half cost 40 KB of that —
+not for the folder: arena is 3.3 MB, yard 11 MB and facility 3.7 MB, against 2.5 MB of soldier
+and 0.1 MB of rifle either way, plus the photographs a map's surfaces use
+(7.4 MB for all of them) and 1.6 MB of sky. The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.
 
@@ -963,6 +1022,16 @@ respect what it assumes. Every one of these was found by a test failing:
 - **Spawns stay out of the compound** via `spawn_exclude` in the scene
   extras, which `derive-brushes.py` reads; lives start outside the walls and
   converge on the middle.
+
+**Nodes can say they do not collide, or are not drawn.** `extras.scenery`
+is drawn and never collided with - the generator skips it (`is_scenery`) and
+the client leaves it out of the map's bounds: the country outside the map
+(a heightfield to `COUNTRY` metres, so the edge is the foot of a hillside
+rather than a wall against the sky), window glass and frames, cladding, the
+warehouses' pitched roofs, vents. `extras.collision_only` is collided with
+and never drawn: tree trunks. Anything a player could stand on, or that is
+more than a few centimetres proud of a wall, stays in the structure: the
+houses' pitched roofs and chimneys are, because a roof stops a bullet.
 
 `FACILITY_CLIMBS` in `map.rs` walks every staircase, ramp and ladder of high
 ground with the real resolver; add to it when adding something to stand on.

@@ -21,6 +21,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { SIM } from './sim.js';
+import { blow, growNature } from './nature.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { PHOTO_DECLARATIONS, PHOTO_NORMAL, loadPhotos, photoUniforms } from './photo.js';
 
 /** How long a tracer stays on screen. */
 const TRACER_SECONDS = 0.06;
@@ -186,6 +189,15 @@ const SURFACES = {
   // The facility's country, and what it adds to the works.
   grass: { kind: WEATHERED, blotch: 0.32 },
   grass_dry: { kind: WEATHERED, blotch: 0.32 },
+  meadow: { kind: WEATHERED, blotch: 0.4 },
+  roof_tiles: { kind: WEATHERED, blotch: 0.15, streak: 0.3 },
+  glass: { kind: WEATHERED, blotch: 0.05 },
+  frame: { ...PAINTED, streak: 0.2 },
+  frame_dark: { ...PAINTED, rust: 0.15 },
+  cladding: { ...PAINTED, rust: 0.2, ribs: 0.2 },
+  cladding_cream: { ...PAINTED, rust: 0.15, ribs: 0.2 },
+  cladding_blue: { ...PAINTED, rust: 0.15, ribs: 0.2 },
+  shore: { kind: WEATHERED, blotch: 0.3 },
   dirt: { kind: WEATHERED, blotch: 0.35 },
   gravel: { kind: WEATHERED, blotch: 0.25 },
   rock: { kind: WEATHERED, blotch: 0.3, streak: 0.35, foot: 0.15 },
@@ -236,8 +248,9 @@ const BARE_METAL = new THREE.Color(0x77776f);
  * their own width on screen, which is what keeps a wall of joints forty
  * metres away from turning into moire.
  */
-function addSurfaceDetail(material) {
+function addSurfaceDetail(material, photo = null) {
   const surface = SURFACES[material.name];
+  if (!surface) photo = null;
   const markings = surface?.kind === GROUND ? material.userData?.markings ?? [] : [];
 
   material.onBeforeCompile = (shader) => {
@@ -247,12 +260,18 @@ function addSurfaceDetail(material) {
       shader.uniforms.surfaceBlotch = { value: surface.blotch ?? 0 };
       shader.uniforms.surfaceStreak = { value: surface.streak ?? 0 };
       shader.uniforms.surfaceFoot = { value: surface.foot ?? 0 };
-      shader.uniforms.surfaceSeams = { value: new THREE.Vector2(...(surface.seams ?? [0, 0])) };
+      shader.uniforms.surfaceSeams = { value: new THREE.Vector2(...(photo ? [0, 0] : surface.seams ?? [0, 0])) };
       shader.uniforms.surfacePlinth = { value: new THREE.Vector2(...(surface.plinth ?? [0, 0])) };
       shader.uniforms.surfaceRust = { value: surface.rust ?? 0 };
-      shader.uniforms.surfaceChips = { value: surface.chips ?? 0 };
-      shader.uniforms.surfaceRibs = { value: surface.ribs ?? 0 };
-      shader.uniforms.surfacePlanks = { value: surface.planks ?? 0 };
+      // A photograph already has its joints, ribs, boards and knocks; the
+      // drawn ones would be a second set on top.
+      shader.uniforms.surfaceChips = { value: photo ? 0 : surface.chips ?? 0 };
+      shader.uniforms.surfaceRibs = { value: photo ? 0 : surface.ribs ?? 0 };
+      shader.uniforms.surfacePlanks = { value: photo ? 0 : surface.planks ?? 0 };
+      if (photo) {
+        shader.uniforms.surfaceBlotch.value *= 0.45;
+        Object.assign(shader.uniforms, photoUniforms(photo, material.color));
+      }
       shader.uniforms.rustColour = { value: RUST };
       shader.uniforms.bareColour = { value: BARE_METAL };
     }
@@ -285,7 +304,9 @@ function addSurfaceDetail(material) {
         `#include <common>
         ${surface ? `#define SURFACE_KIND ${surface.kind}` : ''}
         ${markings.length ? `#define MARKINGS ${markings.length}` : ''}
+        ${photo ? '#define PHOTO' : ''}
         varying vec3 vGrainPosition;
+        ${photo ? PHOTO_DECLARATIONS : ''}
         uniform float grainRange;
         uniform float grainDepth;
 
@@ -378,6 +399,9 @@ function addSurfaceDetail(material) {
           #ifdef SURFACE_KIND
           vec3 P = vGrainPosition;
           vec3 colour = diffuseColor.rgb;
+          #ifdef PHOTO
+          colour = photoColour(P, photoFaceNormal(P));
+          #endif
           // Which way this face points, from how position changes across the
           // pixel. Only its axis is wanted, so the sign does not matter.
           vec3 facing = abs(normalize(cross(dFdx(P), dFdy(P))));
@@ -475,6 +499,7 @@ function addSurfaceDetail(material) {
           #endif
         }`,
       )
+      .replace('#include <normal_fragment_maps>', photo ? PHOTO_NORMAL : '#include <normal_fragment_maps>')
       .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
       .replace('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
   };
@@ -486,7 +511,7 @@ function addSurfaceDetail(material) {
   // uniform can share a program; what changes the source is the kind and the
   // number of markings, so those are the key.
   material.customProgramCacheKey = () =>
-    `solatel-surface-${surface?.kind ?? 0}-${markings.length}`;
+    `solatel-surface-${surface?.kind ?? 0}-${markings.length}-${photo ? 1 : 0}`;
 }
 
 /** How far out the sun and the cloud deck sit. Inside the far plane, which is
@@ -544,9 +569,31 @@ function sunTexture() {
 }
 
 
+/**
+ * The box a map's play happens in: everything but its scenery.
+ *
+ * A node the map marks `scenery` - hills past the edge, leaves - is drawn and
+ * never collided with, and it can reach hundreds of metres past the ground
+ * anybody stands on. The fog is sized from this box, and sizing it from the
+ * hills would push the haze out past the whole map.
+ */
+function playBounds(map, box) {
+  box.makeEmpty();
+  map.updateWorldMatrix(true, true);
+  const visit = (node) => {
+    if (node.userData?.scenery) return;
+    if (node.isMesh) box.expandByObject(node);
+    else node.children.forEach(visit);
+  };
+  visit(map);
+  return box;
+}
+
 export class World {
-  constructor(scene) {
+  constructor(scene, renderer = null) {
     this.scene = scene;
+    this.renderer = renderer;
+    this.sunOffset = new THREE.Vector3(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
     this.arena = null;
     this.bounds = new THREE.Box3();
     this._tracers = [];
@@ -556,6 +603,80 @@ export class World {
     this._buildSky();
     this._buildTracerPool();
     this._buildZone();
+    this.skyReady = renderer ? this._loadSky().catch((err) => console.warn('sky unavailable:', err)) : null;
+  }
+
+  /**
+   * A photographed sky, and the light it gives.
+   *
+   * The sky is a scanned HDR panorama. Blurred into an environment map it
+   * lights everything the sun does not reach, the way the real sky does -
+   * blue from above, warm off the ground, bright towards the sun - and
+   * gives every surface something true to reflect. That is most of the
+   * difference between a scene that looks lit and one that looks drawn.
+   *
+   * The sun is put where the panorama's own sun is, found as its brightest
+   * texel, so the shadows fall the way the sky says they should. The fog is
+   * the colour of the panorama's horizon, so the land fades into the sky
+   * behind it rather than into a grey of its own.
+   */
+  async _loadSky() {
+    const hdr = await new HDRLoader().setDataType(THREE.FloatType).loadAsync('assets/sky/sky_1k.hdr');
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    const { data, width, height } = hdr.image;
+    let best = -1;
+    let at = 0;
+    for (let i = 0; i < width * height; i += 1) {
+      const lum = data[i * 4] * 0.3 + data[i * 4 + 1] * 0.59 + data[i * 4 + 2] * 0.11;
+      if (lum > best) {
+        best = lum;
+        at = i;
+      }
+    }
+    const u = ((at % width) + 0.5) / width;
+    const v = (Math.floor(at / width) + 0.5) / height;
+    let elevation = (0.5 - v) * Math.PI;
+    if (elevation < 0) elevation = -elevation;
+    const azimuth = (u - 0.5) * Math.PI * 2;
+    const toSun = new THREE.Vector3(
+      Math.cos(azimuth) * Math.cos(elevation),
+      Math.sin(elevation),
+      Math.sin(azimuth) * Math.cos(elevation),
+    );
+    this.sunOffset.copy(toSun).multiplyScalar(42);
+
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromEquirectangular(hdr).texture;
+    this.scene.environmentIntensity = 0.9;
+    pmrem.dispose();
+    hdr.dispose();
+
+    const background = await new THREE.TextureLoader().loadAsync('assets/sky/sky.webp');
+    background.mapping = THREE.EquirectangularReflectionMapping;
+    background.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = background;
+    this.scene.backgroundIntensity = 1.0;
+
+    // The horizon's colour, from the band of the panorama just above it.
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 32;
+    const g = canvas.getContext('2d');
+    g.drawImage(background.image, 0, 0, 64, 32);
+    const band = g.getImageData(0, 13, 64, 2).data;
+    const sum = [0, 0, 0];
+    for (let i = 0; i < band.length; i += 4) for (let c = 0; c < 3; c += 1) sum[c] += band[i + c];
+    const n = band.length / 4;
+    this.scene.fog.color.setRGB(sum[0] / n / 255, sum[1] / n / 255, sum[2] / n / 255, THREE.SRGBColorSpace);
+
+    // The sky now does the fill the hemisphere, bounce and ambient lights
+    // stood in for; keep a little of each so interiors are not black.
+    this._fill.hemisphere.intensity = 0.35;
+    this._fill.bounce.intensity = 0.3;
+    this._fill.ambient.intensity = 0.0;
+    this.sun.intensity = 3.4;
+    this.sun.color.set(0xfff0dc);
+    if (this.sunSprite) this.sunSprite.visible = false;
   }
 
   /**
@@ -612,14 +733,17 @@ export class World {
     const bounce = new THREE.DirectionalLight(0xccd6e6, 0.85);
     bounce.position.set(-22, 12, -16);
     this.scene.add(bounce);
+    this._fill = { bounce };
 
     // Paler than the sky it stands for. At full saturation every shadow on
     // the ground came out navy, which reads as a cartoon's night rather
     // than as shade on a sunny day - grey asphalt in shadow is grey.
     const sky = new THREE.HemisphereLight(0xbccbe0, 0x7a6449, 1.9);
     this.scene.add(sky);
+    this._fill.hemisphere = sky;
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.16));
+    this._fill.ambient = new THREE.AmbientLight(0xffffff, 0.16);
+    this.scene.add(this._fill.ambient);
 
     // The arena has no sky of its own, and the map's fourteen-metre walls do
     // not quite hide it. Left at a dark clear colour the gap above them reads
@@ -691,19 +815,65 @@ export class World {
     this.scene.add(sun);
     this.sunSprite = sun;
 
-    const water = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      // Lambert rather than standard. The water fills most of the screen
-      // whenever a player looks outwards, and a physically-based shader over
-      // that many pixels is real frames on integrated graphics for a surface
-      // that is one flat colour taking one light. It still takes the light,
-      // which is all that is wanted: the sun should sit on it.
-      new THREE.MeshLambertMaterial({
-        color: WATER_COLOUR,
-        transparent: true,
-        opacity: 0.94,
-      }),
-    );
+    // Water that reflects the sky it lies under. Standard rather than a
+    // mirror pass: the environment map is already the sky, so reflecting it
+    // costs nothing extra, and a mirror would draw the whole scene twice.
+    // The waves are in the shader - sums of travelling sines, differentiated
+    // into a normal - so the sun glints and the sky wobbles across it, and
+    // the surface itself stays one flat quad.
+    this._waterTime = { value: 0 };
+    const waterMaterial = new THREE.MeshStandardMaterial({
+      color: WATER_COLOUR,
+      roughness: 0.06,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.93,
+    });
+    waterMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.waterTime = this._waterTime;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWaterWorld;')
+        .replace(
+          '#include <worldpos_vertex>',
+          '#include <worldpos_vertex>\nvWaterWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWaterWorld;
+          uniform float waterTime;
+          vec2 waterSlope(vec2 p) {
+            vec2 g = vec2(0.0);
+            // direction, wavelength, amplitude, speed
+            vec4 waves[6];
+            waves[0] = vec4(normalize(vec2(1.0, 0.3)), 9.0, 0.10);
+            waves[1] = vec4(normalize(vec2(0.7, -1.0)), 5.3, 0.07);
+            waves[2] = vec4(normalize(vec2(-0.4, 1.0)), 3.1, 0.045);
+            waves[3] = vec4(normalize(vec2(1.0, 1.2)), 1.7, 0.03);
+            waves[4] = vec4(normalize(vec2(-1.0, 0.2)), 0.9, 0.018);
+            waves[5] = vec4(normalize(vec2(0.2, -1.0)), 0.47, 0.01);
+            for (int i = 0; i < 6; i++) {
+              float k = 6.2832 / waves[i].z;
+              float c = sqrt(9.8 / k);
+              float f = k * (dot(waves[i].xy, p) - c * waterTime * 0.6);
+              g += waves[i].xy * k * waves[i].w * cos(f);
+            }
+            return g;
+          }`,
+        )
+        .replace(
+          '#include <normal_fragment_maps>',
+          `#include <normal_fragment_maps>
+          {
+            float fade = 1.0 - smoothstep(60.0, 260.0, distance(vWaterWorld, cameraPosition));
+            vec2 slope = waterSlope(vWaterWorld.xz) * mix(0.25, 1.0, fade);
+            vec3 up = normalize(vec3(-slope.x, 1.0, -slope.y));
+            normal = normalize((viewMatrix * vec4(up, 0.0)).xyz);
+          }`,
+        );
+    };
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), waterMaterial);
     water.rotation.x = -Math.PI / 2;
     water.position.y = WATER_DEPTH;
     water.receiveShadow = false;
@@ -721,6 +891,7 @@ export class World {
    */
   positionSky(eye, range) {
     if (!this.sunSprite) return;
+    this.sunSprite.visible = !this.scene.environment;
 
     // Along the key light, so the sun is where the shadows say it is. Nothing
     // gives away a painted-on sky faster than shadows pointing elsewhere.
@@ -732,6 +903,7 @@ export class World {
     this.sunSprite.scale.setScalar(distance * 0.16);
 
     this.water.position.set(eye.x, this.waterLevel ?? WATER_DEPTH, eye.z);
+    this.arena?.userData.nature?.update(eye);
     this.water.scale.setScalar(range * 3);
 
     // Carry the shadow camera along with the player, keeping the sun's
@@ -745,7 +917,7 @@ export class World {
     const texel = (SHADOW_EXTENT * 2) / this.sun.shadow.mapSize.x;
     const atX = Math.round(eye.x / texel) * texel;
     const atZ = Math.round(eye.z / texel) * texel;
-    this.sun.position.set(atX + SUN_OFFSET.x, SUN_OFFSET.y, atZ + SUN_OFFSET.z);
+    this.sun.position.set(atX + this.sunOffset.x, this.sunOffset.y, atZ + this.sunOffset.z);
     this.sun.target.position.set(atX, 0, atZ);
     this.sun.target.updateMatrixWorld();
   }
@@ -843,7 +1015,7 @@ export class World {
       this.scene.add(arena);
       this.arena = arena;
       this._loadedUrl = url;
-      this.bounds.setFromObject(arena);
+      playBounds(arena, this.bounds);
       const cached = this.bounds.getSize(new THREE.Vector3());
       this._fogForSize(Math.hypot(cached.x, cached.z));
       this._takeWater(arena);
@@ -853,6 +1025,12 @@ export class World {
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(url);
     arena = gltf.scene;
+    const names = [];
+    arena.traverse((node) => {
+      if (!node.isMesh) return;
+      for (const material of [node.material].flat()) if (material?.name) names.push(material.name);
+    });
+    const photos = await loadPhotos(names);
     // The scale belongs to the map, and `SIM.arenaScale` is whichever map the
     // simulation is pointed at - so this reads it after `selectMap`, never
     // before. Drawing a map at another one's scale would put every wall
@@ -860,6 +1038,8 @@ export class World {
     arena.scale.setScalar(SIM.arenaScale);
 
     arena.traverse((node) => {
+      // Collided with, never drawn: the trunks of trees `nature.js` grows.
+      if (node.userData?.collision_only) node.visible = false;
       if (!node.isMesh) return;
       node.castShadow = true;
       node.receiveShadow = true;
@@ -883,10 +1063,14 @@ export class World {
         material.flatShading = true;
         // Vertex colours are present on some of the arena meshes and multiply
         // the base colour to near black if the material does not expect them.
-        addSurfaceDetail(material);
+        addSurfaceDetail(material, photos[material.name]);
         material.needsUpdate = true;
       }
     });
+
+    // Trees and grass, grown from what the map's extras say is there. After
+    // the loop above, which is for the model's own flat-coloured materials.
+    arena.userData.nature = await growNature(arena);
 
     this._maps = this._maps ?? new Map();
     this._maps.set(url, arena);
@@ -894,7 +1078,7 @@ export class World {
     this.arena = arena;
     this._loadedUrl = url;
     this._takeWater(arena);
-    this.bounds.setFromObject(arena);
+    playBounds(arena, this.bounds);
 
     const size = this.bounds.getSize(new THREE.Vector3());
     this._fogForSize(Math.hypot(size.x, size.z));
@@ -987,6 +1171,8 @@ export class World {
   }
 
   update(dt) {
+    blow(dt);
+    if (this._waterTime) this._waterTime.value += dt;
     if (this._grenades) {
       const k = 1 - Math.exp(-18 * dt);
       for (const entry of this._grenades.values()) {
