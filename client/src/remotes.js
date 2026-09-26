@@ -138,12 +138,15 @@ const LAND_RECOVERY = 9;
 /** The death clip is 3.8 s; the body stays down a little after it. */
 const DEATH_LINGER_SECONDS = 5;
 
-/** How far the hips come down in a crouch, in metres. A little more than
- *  the simulation lowers the eye, because the head also tips forward. */
-const CROUCH_HIPS = 0.5;
-/** How far back the trailing foot goes, so a crouch reads as a kneel
- *  rather than a squat. */
-const KNEEL_BACK = 0.32;
+/** How far the hips come down walking crouched, in metres. Kneeling they
+ *  come down as far as it takes to put a knee on the floor. */
+const CROUCH_WALK_DROP = 0.38;
+/** The knee's own thickness, between the bone and the floor. */
+const KNEE_PAD = 0.07;
+/** How far ahead of its hip the planted foot goes, kneeling. */
+const LEAD_FOOT_AHEAD = 0.42;
+/** How far the trailing foot is pitched onto its toes, in radians. */
+const TOE_TUCK = -1.0;
 /** How quickly the body goes down and comes up, per second. */
 const CROUCH_RATE = 12;
 
@@ -177,6 +180,10 @@ const _qTurn = new THREE.Quaternion();
 const _qFoot = new THREE.Quaternion();
 const _goalL = new THREE.Vector3();
 const _goalR = new THREE.Vector3();
+const _kneelL = new THREE.Vector3();
+const _kneelR = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _side = new THREE.Vector3();
 
 /** A copy of `clip` with only the tracks `keep` accepts. */
 function split(clip, name, keep) {
@@ -455,26 +462,64 @@ export class Remotes {
   }
 
   /**
-   * Crouches the body by `weight`, 0 to 1. The feet are fixed where the
-   * clip left them, the hips go down, and each leg is solved back onto its
-   * foot with the knee bent the way it was already bending - so a crouch
-   * walks with whatever stride the run clip is playing.
+   * Crouches the body by `weight`, 0 to 1.
+   *
+   * Standing still it is a kneel, placed rather than squatted into: the
+   * right knee on the ground under the hip with the shin laid back along
+   * the floor and the toes tucked, the left foot planted ahead with the
+   * shin upright - the pose a rifleman takes. Moving, a kneel cannot walk,
+   * so it gives way to the run clip's own stride with the hips lowered and
+   * each leg solved back onto the foot the clip placed.
    */
   _kneel(player, entry, weight) {
     const { bones } = player;
-    if (!bones.hips || !bones.upLegL || !bones.upLegR) return;
+    if (!bones.hips || !bones.upLegL || !bones.upLegR || !bones.footL || !bones.footR) return;
+    const ground = player.root.position.y;
+    // Where the legs face, which strafing turns away from the aim.
+    aimVector(entry.yaw + player.legYaw, 0, _fwd);
+    _side.crossVectors(_fwd, _up).normalize(); // the body's right
+
+    // How much of a kneel this is: none at a walk.
+    const still = 1 - Math.min(1, Math.max(0, (entry.speed - 0.4) / 1.2));
+    const kneel = weight * still;
+
+    // The clip's feet, and how high it holds an ankle off the floor.
     bones.footL.getWorldPosition(_goalL);
     bones.footR.getWorldPosition(_goalR);
-    // The trailing foot is the right, behind the body along where it faces.
-    aimVector(entry.yaw, 0, _dir);
-    _goalR.addScaledVector(_dir, -KNEEL_BACK * weight);
-    _goalR.y -= 0.04 * weight;
+    const ankle = Math.max(0.05, Math.min(_goalL.y, _goalR.y) - ground);
 
-    bones.hips.position.y -= (CROUCH_HIPS * weight) / player.hipsScale;
+    // Down far enough that the right knee reaches the floor.
+    bones.upLegR.getWorldPosition(_hip);
+    bones.legR.getWorldPosition(_knee);
+    bones.footR.getWorldPosition(_foot);
+    const thigh = _hip.distanceTo(_knee);
+    const shin = _knee.distanceTo(_foot);
+    const kneelDrop = Math.max(0, _hip.y - ground - (thigh + KNEE_PAD));
+    const drop = weight * (CROUCH_WALK_DROP + (kneelDrop - CROUCH_WALK_DROP) * still);
+    bones.hips.position.y -= drop / player.hipsScale;
     bones.hips.updateMatrixWorld(true);
 
-    solveLeg(bones.upLegL, bones.legL, bones.footL, _goalL, _dir);
-    solveLeg(bones.upLegR, bones.legR, bones.footR, _goalR, _dir);
+    if (kneel > 0.001) {
+      // Left foot ahead of its hip, flat; right foot behind, on its toes.
+      bones.upLegL.getWorldPosition(_hip);
+      _kneelL.copy(_hip).addScaledVector(_fwd, LEAD_FOOT_AHEAD).addScaledVector(_side, -0.04);
+      _kneelL.y = ground + ankle;
+      bones.upLegR.getWorldPosition(_hip);
+      _kneelR.copy(_hip).addScaledVector(_fwd, -shin * 0.92).addScaledVector(_side, 0.06);
+      _kneelR.y = ground + ankle + 0.04;
+      _goalL.lerp(_kneelL, kneel);
+      _goalR.lerp(_kneelR, kneel);
+    }
+
+    solveLeg(bones.upLegL, bones.legL, bones.footL, _goalL, _fwd);
+    solveLeg(bones.upLegR, bones.legR, bones.footR, _goalR, _fwd);
+
+    // Toes tucked under on the knee that is down: the foot pitched about
+    // the body's right so the sole faces backwards.
+    if (kneel > 0.001) {
+      _qTurn.setFromAxisAngle(_side, TOE_TUCK * kneel);
+      turnWorld(bones.footR, _qTurn);
+    }
   }
 
   /**
