@@ -98,49 +98,63 @@ function leafTexture() {
   });
 }
 
-/** A spray of needles along a stem, for firs and pines. */
+/**
+ * Painted conifer foliage, two things side by side: on the left half a
+ * spray of needles along a stem, which the branches wear; on the right half
+ * a whole spruce in outline, layered skirts narrowing to the tip, which the
+ * crossed cards through the crown wear so the tree has a silhouette from
+ * the side. Branch cards are nearly level, and seen from the side at a
+ * distance - which is how a player sees a tree - they are edge on and gone.
+ */
 function needleTexture() {
-  return canvasTexture(256, 128, (g, w, h) => {
+  return canvasTexture(512, 256, (g, w, h) => {
     const random = seeded(11);
-    const stem = (x0, y0, x1, y1, width) => {
-      g.strokeStyle = 'rgba(56, 44, 32, 1)';
-      g.lineWidth = width;
+    const half = w / 2;
+    const needle = (x, y, angle, reach, light) => {
+      g.strokeStyle = `hsl(${95 + random() * 30}, ${30 + random() * 16}%, ${light}%)`;
+      g.lineWidth = 2.2;
       g.beginPath();
-      g.moveTo(x0, y0);
-      g.lineTo(x1, y1);
+      g.moveTo(x, y);
+      g.lineTo(x + Math.cos(angle) * reach, y + Math.sin(angle) * reach);
       g.stroke();
     };
-    stem(0, h / 2, w * 0.97, h / 2, 3);
-    // Side shoots, then needles on everything.
-    const shoots = [[0, h / 2, w, h / 2]];
-    for (let i = 0; i < 11; i += 1) {
-      const t = 0.08 + i * 0.075;
-      const side = i % 2 ? 1 : -1;
-      const x0 = t * w;
-      const x1 = x0 + w * (0.18 + random() * 0.08) * (1 - t * 0.5);
-      const y1 = h / 2 + side * h * (0.28 + random() * 0.12) * (1 - t * 0.4);
-      stem(x0, h / 2, x1, y1, 2);
-      shoots.push([x0, h / 2, x1, y1]);
-    }
-    for (const [x0, y0, x1, y1] of shoots) {
-      const length = Math.hypot(x1 - x0, y1 - y0);
-      const count = Math.floor(length / 2.2);
-      for (let i = 0; i < count; i += 1) {
-        const t = i / count;
-        const x = x0 + (x1 - x0) * t;
-        const y = y0 + (y1 - y0) * t;
-        const reach = (1 - t * 0.5) * (h * 0.3) * (x0 === 0 ? 1 : 0.75);
-        for (const side of [-1, 1]) {
-          const angle = Math.atan2(y1 - y0, x1 - x0) + side * (0.9 + random() * 0.4);
-          g.strokeStyle = `hsl(${95 + random() * 30}, ${30 + random() * 16}%, ${17 + random() * 17}%)`;
-          g.lineWidth = 2.4;
-          g.beginPath();
-          g.moveTo(x, y);
-          g.lineTo(x + Math.cos(angle) * reach, y + Math.sin(angle) * reach);
-          g.stroke();
-        }
+    // The spray.
+    g.strokeStyle = 'rgba(56, 44, 32, 1)';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(0, h / 2);
+    g.lineTo(half * 0.97, h / 2);
+    g.stroke();
+    for (let x = 0; x < half * 0.97; x += 2.2) {
+      const t = x / half;
+      const reach = (1 - t * 0.5) * h * 0.3;
+      for (const side of [-1, 1]) {
+        needle(x, h / 2, side * (0.9 + random() * 0.4), reach, 17 + random() * 17);
       }
     }
+    // The outline: skirts from the foot to the tip, each a fan of needles
+    // drooping from the axis, darker towards the middle.
+    const cx = half + half / 2;
+    const skirts = 11;
+    for (let k = 0; k < skirts; k += 1) {
+      const t = k / (skirts - 1);
+      const y = h * (0.97 - t * 0.9);
+      const width = (1 - t) * half * 0.46 + half * 0.03;
+      for (let i = 0; i < 90; i += 1) {
+        const side = random() < 0.5 ? -1 : 1;
+        const along = random();
+        const x = cx + side * along * width;
+        const yy = y - h * 0.05 + along * along * h * 0.07 + (random() - 0.5) * h * 0.03;
+        const angle = side > 0 ? 0.4 + random() * 0.6 : Math.PI - 0.4 - random() * 0.6;
+        needle(x, yy, angle, h * (0.03 + random() * 0.04), 12 + along * 16 + random() * 8);
+      }
+    }
+    g.strokeStyle = 'rgba(56, 44, 32, 1)';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(cx, h * 0.99);
+    g.lineTo(cx, h * 0.05);
+    g.stroke();
   });
 }
 
@@ -190,7 +204,11 @@ class Builder {
     this.normals = [];
     this.uvs = [];
     this.sway = [];
+    this.shade = [];
     this.index = [];
+    /** How much light reaches what is built next: 1 on the outside of a
+     *  crown, less inside it. Set by the grower before each card. */
+    this.light = 1;
   }
 
   vertex(p, n, u, v, sway) {
@@ -198,6 +216,7 @@ class Builder {
     this.normals.push(n.x, n.y, n.z);
     this.uvs.push(u, v);
     this.sway.push(sway);
+    this.shade.push(this.light);
     return this.positions.length / 3 - 1;
   }
 
@@ -211,6 +230,7 @@ class Builder {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uvs, 2));
     g.setAttribute('sway', new THREE.Float32BufferAttribute(this.sway, 1));
+    g.setAttribute('shade', new THREE.Float32BufferAttribute(this.shade, 1));
     g.setIndex(this.index);
     g.computeBoundingSphere();
     return g;
@@ -306,7 +326,10 @@ function broadleaf(seed, detail = 1) {
       i -= 1;
       continue;
     }
-    d.normalize().multiplyScalar(0.55 + Math.sqrt(random()) * 0.45);
+    const depth = 0.55 + Math.sqrt(random()) * 0.45;
+    d.normalize().multiplyScalar(depth);
+    // Leaves deep in the crown, and underneath it, get little of the sky.
+    leaves.light = (0.35 + 0.65 * ((depth - 0.55) / 0.45)) * (0.7 + 0.3 * (d.y * 0.5 + 0.5));
     const centre = crown.clone().add(new THREE.Vector3(d.x * radius.x, d.y * radius.y, d.z * radius.z));
     card(leaves, centre, crown, (3.2 + random() * 1.4) * grow, random);
   }
@@ -337,15 +360,15 @@ function spruce(seed, detail = 1) {
         [1.0, droop, 0.95],
       ];
       const ids = [];
-      const [u0, v0, u1, v1] = NEEDLE_SPRIGS[(k + l) % NEEDLE_SPRIGS.length];
       rows.forEach(([f, down, width], r) => {
+        leaves.light = (0.35 + 0.65 * f) * (0.7 + 0.3 * t);
         const centre = dir.clone().multiplyScalar(reach * f + 0.15).setY(y - down);
         const w = (width * reach) / 2;
         const n = dir.clone().multiplyScalar(0.8).setY(0.6).normalize();
-        const v = v0 + (v1 - v0) * f;
+        // The painted spray runs along u from stem to tip, v across it.
         ids.push([
-          leaves.vertex(centre.clone().addScaledVector(across, -w), n, u0, v, 0.25 + f * 0.75),
-          leaves.vertex(centre.clone().addScaledVector(across, w), n, u1, v, 0.25 + f * 0.75),
+          leaves.vertex(centre.clone().addScaledVector(across, -w), n, f * 0.5, 0, 0.25 + f * 0.75),
+          leaves.vertex(centre.clone().addScaledVector(across, w), n, f * 0.5, 1, 0.25 + f * 0.75),
         ]);
         if (r === 0) return;
         leaves.quad(ids[r - 1][0], ids[r][0], ids[r][1], ids[r - 1][1]);
@@ -353,12 +376,27 @@ function spruce(seed, detail = 1) {
     }
   }
   // The leader: two crossed sprays standing up at the top.
+  leaves.light = 1;
   for (const a of [0, Math.PI / 2]) {
     const dir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
     const n = dir.clone();
     const p = (x, y, u, v) => leaves.vertex(new THREE.Vector3(dir.x * x, y, dir.z * x), n, u, v, 1);
-    const [u0, v0, u1, v1] = NEEDLE_SPRIGS[0];
-    const ids = [p(-0.6, BUILT_HEIGHT - 1.6, u0, v0), p(0.6, BUILT_HEIGHT - 1.6, u1, v0), p(0.6, BUILT_HEIGHT + 0.5, u1, v1), p(-0.6, BUILT_HEIGHT + 0.5, u0, v1)];
+    const ids = [p(-0.6, BUILT_HEIGHT - 1.6, 0, 0), p(0.6, BUILT_HEIGHT - 1.6, 0, 1), p(0.6, BUILT_HEIGHT + 0.5, 0.5, 1), p(-0.6, BUILT_HEIGHT + 0.5, 0.5, 0)];
+    leaves.quad(ids[0], ids[1], ids[2], ids[3]);
+  }
+  // Three crossed outlines through the crown, so it has a shape from the
+  // side. Each vertex's normal points out from the trunk, so the crown
+  // shades round rather than as three flat boards.
+  const R = 3.3;
+  for (let c = 0; c < 3; c += 1) {
+    const a = (c / 3) * Math.PI + random() * 0.3;
+    const dir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+    const corner = (x, y, u, v) => {
+      const n = dir.clone().multiplyScalar(Math.sign(x) || 1).setY(0.45).normalize();
+      leaves.light = 0.55 + 0.45 * (y / BUILT_HEIGHT);
+      return leaves.vertex(new THREE.Vector3(dir.x * x, y, dir.z * x), n, u, v, 0.3 + 0.7 * (y / BUILT_HEIGHT));
+    };
+    const ids = [corner(-R, 0.6, 0.5, 0), corner(R, 0.6, 1, 0), corner(R, BUILT_HEIGHT + 0.4, 1, 1), corner(-R, BUILT_HEIGHT + 0.4, 0.5, 1)];
     leaves.quad(ids[0], ids[1], ids[2], ids[3]);
   }
   return { wood: wood.geometry(), leaves: leaves.geometry() };
@@ -394,28 +432,19 @@ function pine(seed, detail = 1) {
   return { wood: wood.geometry(), leaves: leaves.geometry() };
 }
 
-/**
- * What each kind is grown by, and how finely. The `_far` kinds are the same
- * trees with a third of the leaves on bigger cards, for the hills outside
- * the map: thousands of them, never nearer than the map's edge, and mostly
- * in haze.
- */
+/** What each kind of tree is grown by. */
 const GROWERS = {
   broadleaf: (seed) => broadleaf(seed),
   spruce: (seed) => spruce(seed),
   pine: (seed) => pine(seed),
-  broadleaf_far: (seed) => broadleaf(seed, 0.3),
-  spruce_far: (seed) => spruce(seed, 0.3),
-  pine_far: (seed) => pine(seed, 0.5),
 };
 
 /** Foliage tints, per kind, that each tree's own tint varies around. */
 const TINTS = {
-  broadleaf: new THREE.Color(1.0, 1.0, 0.95),
-  spruce: new THREE.Color(0.85, 0.95, 0.9),
-  pine: new THREE.Color(0.95, 1.0, 0.9),
+  broadleaf: new THREE.Color(0.82, 0.86, 0.74),
+  spruce: new THREE.Color(0.62, 0.72, 0.66),
+  pine: new THREE.Color(0.75, 0.8, 0.7),
 };
-for (const kind of ['broadleaf', 'spruce', 'pine']) TINTS[`${kind}_far`] = TINTS[kind];
 
 // ---- the materials ----------------------------------------------------------
 
@@ -435,6 +464,15 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
       '#include <normal_fragment_begin>',
       `float faceDirection = 1.0;
       vec3 normal = normalize( vNormal );
+      {
+        // Never let the normal face away from the eye: seen from behind,
+        // a card would otherwise reflect the sky at a grazing angle and
+        // turn a whole hillside of trees white. Bent towards the eye it
+        // keeps the side facing the sun that it was built with.
+        vec3 toEye = normalize( vViewPosition );
+        float facing = dot( normal, toEye );
+        if ( facing < 0.25 ) normal = normalize( normal + toEye * ( 0.25 - facing ) );
+      }
       vec3 nonPerturbedNormal = normal;`,
     );
     // Keep foliage full at a distance. A mip of a leaf's alpha averages the
@@ -442,7 +480,10 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
     // than the last and, cut at a fixed threshold, a distant tree thins to
     // its trunk. Scaling alpha up by the mip level being read keeps the
     // coverage what it was at full size.
-    shader.fragmentShader = shader.fragmentShader.replace(
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vShade;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vShade;')
+      .replace(
       '#include <alphamap_fragment>',
       `#include <alphamap_fragment>
       #ifdef USE_ALPHAMAP
@@ -461,6 +502,8 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
         '#include <common>',
         `#include <common>
         attribute float sway;
+        attribute float shade;
+        varying float vShade;
         uniform float windTime;`,
       )
       .replace(
@@ -471,6 +514,7 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
         #else
           vec2 rooted = vec2(0.0);
         #endif
+        vShade = shade;
         float gust = sin(windTime * 0.37 + rooted.x * 0.013) * 0.5 + 0.5;
         float phase = windTime * 1.1 + rooted.x * 0.07 + rooted.y * 0.05;
         float bend = sway * sway;
@@ -490,8 +534,9 @@ function leafMaterial({ albedo, alpha }) {
       alphaMap: alpha,
       alphaTest: 0.45,
       side: THREE.DoubleSide,
-      roughness: 0.9,
+      roughness: 1,
       metalness: 0,
+      envMapIntensity: 0.55,
     }),
   );
   // Soft edges on a multisampled canvas rather than a hard cut-out, which
@@ -810,13 +855,22 @@ export async function growNature(map) {
   if (trees.length) {
     const leafMap = textures.leaves;
     const needleMap = textures.needles;
+    const paintedNeedles = { albedo: needleTexture(), alpha: null };
     const bark = windy(new THREE.MeshStandardMaterial({ map: textures.bark, roughness: 0.95 }), {
       flutter: 0,
       lean: 0.28,
     });
     const variants = {};
     for (const kind of Object.keys(GROWERS)) {
-      const map = kind.startsWith('broadleaf') ? leafMap : needleMap;
+      // Spruce wears a painted spray, not the scan: the scanned fir sprigs
+      // are thin twigs, and stretched over a whole branch they are mostly
+      // gap - up close that reads as needles, and from across the valley
+      // as a bare pole with a glitter of frost.
+      const map = kind.startsWith('broadleaf')
+        ? leafMap
+        : kind.startsWith('spruce')
+          ? paintedNeedles
+          : needleMap;
       variants[kind] = [11, 23, 37].map((seed) => {
         const grown = GROWERS[kind](seed);
         return { ...grown, leafMaterial: leafMaterial(map), shadow: leafShadow(map), list: [] };
@@ -852,10 +906,7 @@ export async function growNature(map) {
           crowns.setColorAt(i, colour);
         });
         for (const mesh of [trunks, crowns]) {
-          // The hills are outside the shadow's reach round the player, but an
-          // instanced mesh casts as a whole: left on, every tree on them
-          // would be drawn a second time each frame for nothing.
-          mesh.castShadow = !kind.endsWith('_far');
+          mesh.castShadow = true;
           mesh.receiveShadow = true;
           mesh.computeBoundingSphere();
           group.add(mesh);

@@ -158,11 +158,7 @@ NATURE = {
 PALETTE = dict(arena.PALETTE, **NATURE)
 
 # The trees `nature.js` knows how to grow, by the number the file carries.
-TREE_KINDS = ('pine', 'spruce', 'broadleaf', 'pine_far', 'spruce_far', 'broadleaf_far')
-
-# How far the country round the map runs, in metres from the middle. Past
-# about 470 m the fog has it all, so there is nothing to gain beyond.
-COUNTRY = 440.0
+TREE_KINDS = ('pine', 'spruce', 'broadleaf')
 
 
 def tree_kind(x, z, broadleaf):
@@ -1853,122 +1849,6 @@ def woodland(layout):
     print(f'  woodland: {placed} trees across the fields')
 
 
-def country_height(x, z):
-    """The height of the country outside the map, at a point outside it.
-
-    It meets the map's own edge at the top of whatever stands there - the
-    rock along the north and west, the low face along the south - so the
-    boundary reads as the foot of a hillside rather than as a wall with sky
-    behind it. East is the sea the river runs into, and west is the valley
-    it comes down.
-    """
-    cx = min(max(x, -HALF), HALF)
-    cz = min(max(z, -HALF), HALF)
-    d = math.hypot(x - cx, z - cz)
-    north, south = RIVER
-    # The height at the nearest point of the map's edge.
-    if cz <= -HALF + 1e-6 and cx < HALF - 20.0:
-        edge = 13.6
-    elif cx <= -HALF + 1e-6 and cz < north:
-        edge = 11.6
-    else:
-        edge = 6.6
-    # Hills: rising away from the edge, rolling along it.
-    roll = (math.sin(x * 0.021 + 0.4) * math.cos(z * 0.017 - 1.1) * 14.0
-            + math.sin(x * 0.047 - z * 0.039) * 6.0
-            + math.sin(x * 0.11 + z * 0.093) * 2.2)
-    rise = 46.0 * (1.0 - math.exp(-d / 85.0))
-    h = edge + rise + roll * min(d / 40.0, 1.0)
-    # Cliffs where the ground rises steepest, just past the edge.
-    h += 6.0 * math.exp(-((d - 14.0) / 10.0) ** 2) * (0.5 + 0.5 * math.sin(x * 0.07 + z * 0.05))
-    # The valley the river comes down, west of the map.
-    middle = (north + south) / 2.0
-    if x < -HALF + 12.0:
-        width = 16.0 + max(-HALF - x, 0.0) * 0.22
-        valley = math.exp(-((z - middle - math.sin(x * 0.02) * 12.0 * min(d / 60.0, 1.0)) / width) ** 2)
-        h = h + (-3.2 - h) * valley
-    # The sea: everything east, and the shore curling round the corners.
-    sea = min(max((cx - (HALF - 45.0)) / 40.0, 0.0), 1.0)
-    shore = -0.4 - 9.0 * (1.0 - math.exp(-d / 25.0))
-    return h + (shore - h) * sea
-
-
-def country(glb, kit):
-    """The hills, cliffs, sea and forest outside the map. Drawn, never walked.
-
-    A heightfield from the map's edge out to `COUNTRY`, coloured by slope and
-    height a triangle at a time, as scenery: the generator skips it, so it
-    neither collides nor changes the map's size. The perimeter brushes stop
-    a player at the edge long before any of it.
-    """
-    step = 5.0
-    count = int(round(2 * COUNTRY / step)) + 1
-    xs = np.linspace(-COUNTRY, COUNTRY, count)
-    height = np.zeros((count, count))
-    for j, z in enumerate(xs):
-        for i, x in enumerate(xs):
-            if abs(x) < HALF - 1e-6 and abs(z) < HALF - 1e-6:
-                continue
-            height[j, i] = country_height(x, z)
-    pieces = {}
-    triangles = {}
-    for j in range(count - 1):
-        for i in range(count - 1):
-            x0, x1, z0, z1 = xs[i], xs[i + 1], xs[j], xs[j + 1]
-            if max(abs(x0), abs(x1)) <= HALF + 1e-6 and max(abs(z0), abs(z1)) <= HALF + 1e-6:
-                continue
-            corners = [(x0, height[j, i], z0), (x1, height[j, i + 1], z0),
-                       (x1, height[j + 1, i + 1], z1), (x0, height[j + 1, i], z1)]
-            for tri in ((0, 2, 1), (0, 3, 2)):
-                a, b, c = (np.array(corners[t]) for t in tri)
-                normal = np.cross(b - a, c - a)
-                normal /= np.linalg.norm(normal)
-                top = max(a[1], b[1], c[1])
-                if top < 0.6:
-                    surface = 'shore'
-                elif abs(normal[1]) < 0.62:
-                    surface = 'rock'
-                elif top > 44.0:
-                    surface = 'grass_dry'
-                else:
-                    surface = 'meadow'
-                verts, faces = pieces.setdefault(surface, ([], {}))
-                ids = []
-                for v in (a, b, c):
-                    key = (round(float(v[0]), 3), round(float(v[1]), 3), round(float(v[2]), 3))
-                    if key not in faces:
-                        faces[key] = len(verts)
-                        verts.append(key)
-                    ids.append(faces[key])
-                triangles.setdefault(surface, []).append(tuple(ids))
-    mesh = glb.mesh('facility_country', [(m, v, triangles[m]) for m, (v, _ids) in sorted(pieces.items())])
-    glb.node('facility_country', mesh, extras={'scenery': True})
-
-    # Forest on the hills, thick in the folds and thin on the tops.
-    rng = random.Random(23)
-    planted = 0
-    for gz in np.arange(-COUNTRY + 4.0, COUNTRY - 4.0, 8.0):
-        for gx in np.arange(-COUNTRY + 4.0, COUNTRY - 4.0, 8.0):
-            x = gx + rng.uniform(-3.5, 3.5)
-            z = gz + rng.uniform(-3.5, 3.5)
-            if abs(x) < HALF + 3.0 and abs(z) < HALF + 3.0:
-                continue
-            h = country_height(x, z)
-            if h < 1.5:
-                continue
-            slope = max(abs(country_height(x + 2.0, z) - h), abs(country_height(x, z + 2.0) - h)) / 2.0
-            if slope > 0.9:
-                continue
-            woods = (math.sin(x * 0.019 + 2.0) * math.cos(z * 0.023) + 0.5 * math.sin(x * 0.05 - z * 0.04))
-            if rng.random() > (0.9 if woods > 0.1 else 0.18):
-                continue
-            kind = 3 + tree_kind(x, z, 0.3 if h < 25.0 else 0.08)
-            kit.trees.append((round(x, 2), round(h - 0.4, 2), round(z, 2),
-                              round(rng.uniform(9.0, 16.0), 2), kind))
-            planted += 1
-    print(f'  country: {sum(len(f) for f in triangles.values()):,} triangles, {planted} trees')
-
-
 def check_river(layout):
     """No climbable roof close enough to the river to jump into it from."""
     north, south = RIVER
@@ -2003,7 +1883,6 @@ def build():
     woodland(layout)
     check_river(layout)
 
-    country(glb, kit)
     pieces = [(m, v, f) for m, (v, f) in sorted(kit.groups.items())]
     structure = glb.mesh('facility_structure', pieces)
     glb.node('facility_structure', structure)

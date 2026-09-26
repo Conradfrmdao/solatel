@@ -560,8 +560,9 @@ kinds, and the client builds tapered trunks, boughs and crowns of cards
 carrying the scanned leaf and needle atlases, instanced per kind and swaying
 in the wind. What collides is the trunk alone, a box in the map's
 `collision_only` node (hidden by the client, read by the generator). Leaves
-stop sight and not bullets. `_far` kinds are the hillside trees outside the
-map: fewer, bigger cards and no shadows.
+stop sight and not bullets. Spruces wear a painted spray and three crossed
+outline cards through the crown, because their near-level branch cards are
+edge on from the side and a distant spruce otherwise reads as a bare pole.
 
 Two things about foliage that were found by looking:
 
@@ -570,7 +571,9 @@ Two things about foliage that were found by looking:
   and drew black. `windy` replaces the normal setup for foliage.
 - **Alpha is scaled up by the mip level being read.** A mip averages a leaf
   with the gaps round it, so at a distance the coverage fell under the
-  cut-off and every tree thinned to a stick.
+  cut-off and every tree thinned to a stick. The colour under the
+  transparent parts of each atlas is filled with the leaves' own average,
+  or the same mips drag it towards the scan's white background.
 
 Colour and alpha are separate files because a canvas stores colour
 premultiplied: encoding them together lost the colour under every
@@ -1025,10 +1028,10 @@ respect what it assumes. Every one of these was found by a test failing:
 
 **Nodes can say they do not collide, or are not drawn.** `extras.scenery`
 is drawn and never collided with - the generator skips it (`is_scenery`) and
-the client leaves it out of the map's bounds: the country outside the map
-(a heightfield to `COUNTRY` metres, so the edge is the foot of a hillside
-rather than a wall against the sky), window glass and frames, cladding, the
-warehouses' pitched roofs, vents. `extras.collision_only` is collided with
+the client leaves it out of the map's bounds: window glass and frames,
+cladding, the warehouses' pitched roofs, vents. There was a heightfield of
+wooded hills outside the map too; it was taken out on Conrad's call - nobody
+plays there, and three thousand trees nobody reaches were most of the frame. `extras.collision_only` is collided with
 and never drawn: tree trunks. Anything a player could stand on, or that is
 more than a few centimetres proud of a wall, stays in the structure: the
 houses' pitched roofs and chimneys are, because a roof stops a bullet.

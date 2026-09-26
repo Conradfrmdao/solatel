@@ -115,6 +115,10 @@ async function transcode(colour, { alpha = null, size = 1024, height = size, qua
       g.imageSmoothingQuality = 'high';
       g.drawImage(await load(colourUrl), 0, 0, width, height);
       if (alphaUrl) {
+        // Paint everything the mask leaves out in the average colour of
+        // what it keeps. The scan is near white under its transparent
+        // parts, and a distant mip averages the leaves with whatever is
+        // there: left white, every tree on a far hill turns to frost.
         const pixels = g.getImageData(0, 0, width, height);
         const maskCanvas = document.createElement('canvas');
         maskCanvas.width = width;
@@ -122,7 +126,17 @@ async function transcode(colour, { alpha = null, size = 1024, height = size, qua
         const m = maskCanvas.getContext('2d');
         m.drawImage(await load(alphaUrl), 0, 0, width, height);
         const mask = m.getImageData(0, 0, width, height).data;
-        for (let i = 0; i < mask.length; i += 4) pixels.data[i + 3] = mask[i];
+        const sum = [0, 0, 0];
+        let n = 0;
+        for (let i = 0; i < mask.length; i += 4) {
+          if (mask[i] < 128) continue;
+          for (let c = 0; c < 3; c += 1) sum[c] += pixels.data[i + c];
+          n += 1;
+        }
+        for (let i = 0; i < mask.length; i += 4) {
+          if (mask[i] >= 128) continue;
+          for (let c = 0; c < 3; c += 1) pixels.data[i + c] = sum[c] / Math.max(n, 1);
+        }
         g.putImageData(pixels, 0, 0);
       }
       return canvas.toDataURL('image/webp', quality);
@@ -168,10 +182,11 @@ for (const [name, [asset, diffuse, alpha, normal]] of Object.entries(FOLIAGE)) {
   // Colour and coverage as two files. A canvas stores colour premultiplied,
   // so encoding them together loses the colour under every transparent
   // pixel, and filtering then drags every leaf's edge towards black.
-  await write(albedoPath, await transcode(await bytes(url(files, diffuse))));
+  const mask = await bytes(url(files, alpha));
+  await write(albedoPath, await transcode(await bytes(url(files, diffuse)), { alpha: mask }));
   await write(
     resolve(root, 'assets', 'photo', `${name}_alpha.webp`),
-    await transcode(await bytes(url(files, alpha)), { quality: 0.8 }),
+    await transcode(mask, { quality: 0.8 }),
   );
   await write(
     resolve(root, 'assets', 'photo', `${name}_normal.webp`),
