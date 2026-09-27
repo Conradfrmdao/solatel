@@ -585,6 +585,29 @@ where grass grows and how high), from a hash of each spot so nothing pops
 when the patch is replanted. `smoke` lists chimneys; birds circle whatever
 map has trees. All of it is marked `scenery`, so the fog is sized without it.
 
+### Static batching
+
+After a map is prepared, `batchStatic` in `world.js` merges every plain,
+visible mesh into one mesh per material, in the map's own frame. The yard is
+a thousand small meshes and was 637 draw calls a frame; batched it is about
+a hundred. The cost is culling: a batch is drawn whole, so the triangle count
+goes up (the yard from 0.3 M to 0.8 M), which a GPU minds far less than draw
+calls. Instanced meshes, hidden stand-ins and collision-only nodes are left
+out. Nothing may look a map mesh up by name after this runs.
+
+### Vehicles, drums and crates
+
+`props.js` draws the maps' cars, trucks, oil drums and crates properly over
+their low-polygon stand-ins, which stay in the file and in the collision
+exactly as they were. Each model is built in code - a sedan with a raked
+glasshouse, a flat-nosed cargo truck with a canvas tilt, a ribbed 200-litre
+drum, a boarded crate with battens - and fitted into its stand-in's own box
+(`fit`: which axis is up, which is longest, and the lower end is the nose).
+Instanced per part, painted in the stand-in's colour. Stand-ins are found by
+node name, without the dot the loader strips (`truck001`, `CAR002`, `Wood003`,
+`crate017`); the yard's two trucks are `Cube.036` and `Cube.051`, matched in
+the yard only because the arena has an unrelated `Cube.036`.
+
 ### The weapon in your hands
 
 `viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
@@ -735,6 +758,15 @@ depth inside that building. It is idempotent: everything it adds goes on
 the end of each glTF array, the lengths from before are in `asset.extras`, and
 nothing is ever deleted — removed triangles are only pointed away from. Run it,
 then `./x maps`, then bump `MAP_VERSION`.
+
+**The yard's colours are `scripts/restyle-yard.py`'s.** The download paints
+everything from ten primary colours; the script gives each kind of object -
+by node name and original colour - a surface from the shared list, muted
+for combat (weathered concrete, faded containers, rusty drums, dark steel),
+picking per object where a kind comes in several. Materials only, so the
+collision is untouched. It records each primitive's original colour in its
+`extras.yard_colour`, which keeps it idempotent and which `build-facility.py`
+reads when it borrows the yard's props.
 
 It is also where the arena's **colours** live. `PALETTE` repaints every
 primitive of the original, by what the piece is, in weathered concrete,
@@ -1035,6 +1067,15 @@ plays there, and three thousand trees nobody reaches were most of the frame. `ex
 and never drawn: tree trunks. Anything a player could stand on, or that is
 more than a few centimetres proud of a wall, stays in the structure: the
 houses' pitched roofs and chimneys are, because a roof stops a bullet.
+
+**The facility is dressed**, all in `build-facility.py`: street lamps and
+timber power poles (the poles collide; heads, crossarms and sagging wires
+are drawn only), razor-wire coils along the works' walls, chain-link over the
+flood walls (`chainlink`, cut into a diamond lattice by `world.js`), and
+inside every shed pallet racking - a hidden solid box for the collision,
+the rack and its load drawn over it (`Layout.rack`) - with pallets, drums
+and crates in the corners clear of the doors, and lamps (`lamp`, emissive)
+hung under the roof.
 
 `FACILITY_CLIMBS` in `map.rs` walks every staircase, ramp and ladder of high
 ground with the real resolver; add to it when adding something to stand on.

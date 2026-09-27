@@ -22,6 +22,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { SIM } from './sim.js';
 import { blow, growNature } from './nature.js';
+import { dressProps } from './props.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { PHOTO_DECLARATIONS, PHOTO_NORMAL, loadPhotos, photoUniforms } from './photo.js';
 
@@ -196,6 +198,8 @@ const SURFACES = {
   frame_dark: { ...PAINTED, rust: 0.15 },
   cladding: { ...PAINTED, rust: 0.2, ribs: 0.2 },
   cladding_cream: { ...PAINTED, rust: 0.15, ribs: 0.2 },
+  rack_blue: { ...PAINTED, chips: 0.4 },
+  cardboard: { kind: WEATHERED, blotch: 0.25, streak: 0.1 },
   cladding_blue: { ...PAINTED, rust: 0.15, ribs: 0.2 },
   shore: { kind: WEATHERED, blotch: 0.3 },
   dirt: { kind: WEATHERED, blotch: 0.35 },
@@ -568,6 +572,104 @@ function sunTexture() {
   return texture;
 }
 
+
+/**
+ * Merge a map's fixed geometry into one mesh per material.
+ *
+ * A downloaded map is often a thousand small meshes - the yard is - and each
+ * is a draw call, twice over with the shadow pass. Nothing in a map moves,
+ * so everything drawn with the same material can be one mesh in the map's
+ * own frame. Instanced meshes (trees, vehicles) are already one draw each
+ * and are left alone, as are hidden stand-ins and anything not a plain mesh.
+ */
+function batchStatic(map) {
+  map.updateMatrixWorld(true);
+  const toMap = new THREE.Matrix4().copy(map.matrixWorld).invert();
+  const groups = new Map();
+  const merged = [];
+  map.traverse((node) => {
+    if (!node.isMesh || node.isInstancedMesh || node.isSkinnedMesh) return;
+    let visible = true;
+    for (let n = node; n && n !== map; n = n.parent) {
+      if (!n.visible || n.userData?.collision_only) visible = false;
+    }
+    if (!visible || Array.isArray(node.material)) return;
+    const key = node.material.uuid;
+    if (!groups.has(key)) groups.set(key, { material: node.material, parts: [] });
+    const g = node.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toMap, node.matrixWorld));
+    for (const name of Object.keys(g.attributes)) if (name !== 'position') g.deleteAttribute(name);
+    groups.get(key).parts.push(g.index ? g : g);
+    merged.push(node);
+  });
+  let batches = 0;
+  for (const { material, parts } of groups.values()) {
+    if (parts.length < 2) continue;
+    const indexed = parts.every((g) => g.index);
+    const geometry = mergeGeometries(indexed ? parts : parts.map((g) => (g.index ? g.toNonIndexed() : g)));
+    if (!geometry) continue;
+    geometry.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = `batch:${material.name}`;
+    // The map is scaled by the simulation's scale; the batch is in the map's
+    // own frame, so it goes in as a child and takes the same scale.
+    map.add(mesh);
+    batches += 1;
+    for (const part of parts) part.dispose();
+  }
+  // Only now hide what went into a batch, so a material that ended up
+  // alone keeps its original mesh.
+  for (const node of merged) {
+    const key = node.material.uuid;
+    const group = groups.get(key);
+    if (group && group.parts.length >= 2) node.visible = false;
+  }
+  return batches;
+}
+
+/**
+ * A wire-mesh fence: a diamond lattice cut out of a flat panel.
+ *
+ * Coverage goes to the multisampler rather than a hard cut, so where the
+ * wires are finer than a pixel the fence thins to a haze instead of
+ * shimmering, as the real thing does at a distance.
+ */
+function chainLink(material) {
+  material.alphaToCoverage = true;
+  material.side = THREE.DoubleSide;
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vLinkPosition;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvLinkPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vLinkPosition;')
+      .replace(
+        '#include <alphatest_fragment>',
+        `{
+          vec3 P = vLinkPosition;
+          vec3 facing = abs(normalize(cross(dFdx(P), dFdy(P))));
+          float across = facing.x > facing.z ? P.z : P.x;
+          vec2 q = vec2(across + P.y, across - P.y) / 0.065;
+          vec2 d = abs(fract(q) - 0.5);
+          float w = 0.09;
+          vec2 px = fwidth(q);
+          vec2 wire = 1.0 - smoothstep(vec2(w), vec2(w) + px, d);
+          float cover = max(wire.x, wire.y);
+          // Finer than a pixel: fade to the lattice's average coverage.
+          float fine = smoothstep(0.25, 0.6, max(px.x, px.y));
+          diffuseColor.a = mix(cover, 0.3, fine);
+          if (diffuseColor.a < 0.02) discard;
+        }`,
+      );
+  };
+  material.customProgramCacheKey = () => 'solatel-chainlink';
+  material.needsUpdate = true;
+}
 
 /**
  * The box a map's play happens in: everything but its scenery.
@@ -1061,6 +1163,20 @@ export class World {
         // flat colour - so shading it flat is both truer to the art and what
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
+        // Two surfaces are not paint. A lamp's lens gives light of its own,
+        // and chain-link is a wire mesh you see through: drawn as a diamond
+        // pattern cut out of its panel, in world metres, since the map has
+        // no texture coordinates.
+        if (material.name === 'lamp') {
+          material.emissive = new THREE.Color(0xffe1b0);
+          material.emissiveIntensity = 2.2;
+          material.needsUpdate = true;
+          continue;
+        }
+        if (material.name === 'chainlink') {
+          chainLink(material);
+          continue;
+        }
         // Vertex colours are present on some of the arena meshes and multiply
         // the base colour to near black if the material does not expect them.
         addSurfaceDetail(material, photos[material.name]);
@@ -1071,6 +1187,9 @@ export class World {
     // Trees and grass, grown from what the map's extras say is there. After
     // the loop above, which is for the model's own flat-coloured materials.
     arena.userData.nature = await growNature(arena);
+    // Vehicles, drums and crates, drawn properly over their stand-ins.
+    await dressProps(arena);
+    batchStatic(arena);
 
     this._maps = this._maps ?? new Map();
     this._maps.set(url, arena);

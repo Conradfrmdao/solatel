@@ -492,7 +492,7 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
         vec2 dx = dFdx(texel);
         vec2 dy = dFdy(texel);
         float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
-        diffuseColor.a *= 1.0 + mip * 0.28;
+        diffuseColor.a *= 1.0 + mip * 0.22;
       }
       #endif`,
     );
@@ -532,7 +532,7 @@ function leafMaterial({ albedo, alpha }) {
     new THREE.MeshStandardMaterial({
       map: albedo,
       alphaMap: alpha,
-      alphaTest: 0.45,
+      alphaTest: 0.5,
       side: THREE.DoubleSide,
       roughness: 1,
       metalness: 0,
@@ -673,7 +673,9 @@ class Grass {
         m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(size, size * (0.8 + patch * 0.35), size));
         this.mesh.setMatrixAt(n, m);
         const dry = 0.5 + 0.5 * Math.sin(x * 0.05 + z * 0.037);
-        this._colour.setRGB(0.9 + dry * 0.15, 0.95 + hash2(z, x) * 0.08, 0.85 - dry * 0.15);
+        // Darker than the photograph, which was shot in full sun: a field
+        // of it at full brightness reads as lime rather than as grass.
+        this._colour.setRGB(0.62 + dry * 0.12, 0.66 + hash2(z, x) * 0.08, 0.5 - dry * 0.1);
         this.mesh.setColorAt(n, this._colour);
         n += 1;
         if (n >= this.mesh.instanceMatrix.count) break;
