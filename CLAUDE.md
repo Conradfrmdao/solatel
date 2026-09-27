@@ -566,7 +566,10 @@ colours. A surface with a photograph drops its drawn seams, ribs, planks and
 chips - the photograph has its own - and keeps the streaks, grime and rust.
 A surface not in `PHOTO` (the whole yard) draws exactly as before.
 
-**The sky is a photographed HDR panorama** (`assets/sky`). Blurred by PMREM
+**The sky is a photographed HDR panorama** (`assets/sky`), **one per map**
+(`SKIES` in `world.js`): partly cloudy over the facility, a heavy overcast
+over the yard with a weak sun and soft shadows, a late clear sun over the
+arena. Each is read alongside its map and kept once read. Blurred by PMREM
 into `scene.environment` it lights everything the sun does not reach, and it
 is most of the difference between a scene that looks lit and one that looks
 drawn. The sun is put where the panorama's own sun is (its brightest texel),
@@ -575,11 +578,48 @@ panorama's horizon. With it loaded, the hemisphere, bounce and ambient lights
 drop to a trace. The water is a standard material with travelling-sine wave
 normals in the shader, reflecting that same environment: no mirror pass.
 
+**A sky's sun is spread before it is blurred** (`spreadSun`). PMREM renders
+into half-float targets, whose largest value is 65,504, and a clear sky's
+sun disc is 135,000: it became infinity there and the whole frame went
+white, or black through the composer. The partly cloudy sky peaks at 60,000
+and had been fine by luck. Anything over `SKY_TEXEL_LIMIT` is spread evenly
+over the few degrees round it, which keeps every bit of the sun's energy -
+the light a surface gets is unchanged - and loses only the sharpness of a
+disc the blur takes off anyway. Check a new sky's peak before adding it.
+
 `post.js` is the chain every frame goes through: a multisampled half-float
 target, GTAO (still a setting, still off by default - it is the expensive
 one), a restrained bloom that only finds real highlights, tonemapping, and a
 light colour grade with a vignette. `scripts/fetch-photo-assets.mjs`
 downloads and transcodes every photograph; `ATTRIBUTION.md` lists them.
+
+### Graphics quality
+
+`quality.js`. Four levels - low, medium, high, ultra - and **auto**, the
+default: it guesses from the graphics chip (software rendering and phones
+start low, integrated graphics medium, anything else high, nothing ultra),
+then steps down one level at a time while a match is being drawn if the
+median frame rate over five seconds is under 48. It only ever steps down -
+stepping back up on a good stretch would oscillate - and remembers where it
+settled, so a slow machine does not start every session too high. A
+`?quality=` in the address forces a level for a script.
+
+**A level changes what drawing costs, never what can be seen.** Fog, the far
+plane, the trees and the players are identical at every level: a setting that
+thinned foliage or pulled the fog in would pay to be turned down, in a game
+that pays per kill. What moves is the pixel ratio (low draws at three
+quarters), the composer (off on low, where the renderer tonemaps directly),
+bloom, ambient occlusion (ultra only - 60 fps against 23 on an Iris Xe), the
+shadow map's resolution over the *same* area (shadows get coarser, never
+shorter or absent, because a shadow round a corner is information), how far
+out grass is planted, and birds and chimney smoke. Grass may vary only
+because it is too short to hide anybody: the tallest tuft is about 0.7 m
+against 1.25 m for a crouched player. Anything added to a preset has to pass
+the same test.
+
+`node client/perf.mjs` queues into a match and measures each level in turn on
+a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
+since a software rasteriser's frame rate means nothing.
 
 ### Trees, grass, smoke and birds
 
@@ -746,6 +786,21 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
   and the left hand is on it.
 - Death plays the death clip once and leaves the body where it fell for five
   seconds; landing dips the hips; shots flash the muzzle.
+- **Reloads and throws are placed, not played** - there are no clips for
+  them. A reload cants and dips the rifle in the right hand while the left
+  arm is solved (two-bone IK) to the magazine, down to the pouch at the hip,
+  back up to seat it and onto the handguard; it is `PlayerSnapshot.
+  reloading`, and it is heard within `RELOAD_AUDIBLE` of the listener. A
+  throw lowers the rifle while the left arm winds up behind the head and
+  lobs. Nobody is told who threw a grenade: one appearing that was not in
+  the last snapshot is the nearest player's within `THROW_REACH`, because it
+  starts at the thrower's eye.
+- **Hand-posed bones are put back before the clips are sampled**
+  (`POSED`). three.js's mixer writes a bone only when its sampled value
+  changes, and the shouldered pose is one still frame, so an arm posed by
+  hand kept last frame's posing and built on it: the arm stayed at the
+  magazine after a reload, and the aim then turned the whole torso to put
+  the hands back on a rifle the arm had left.
 - Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth.
 
 The rifle is a clone of the viewmodel's, which carries that rig's offset and
@@ -759,7 +814,7 @@ Runtime models live in `assets/` and are copied into `web/dist/assets` by
 number. A player fetches only the map being played, so the budget is per map,
 not for the folder: arena is 3.3 MB, yard 11 MB and facility 3.7 MB, against 2.5 MB of soldier
 and 0.1 MB of rifle either way, plus the photographs a map's surfaces use
-(7.4 MB for all of them) and 1.6 MB of sky. The arena's second half cost 40 KB of that —
+(7.4 MB for all of them) and the map's own sky (1.1 to 1.6 MB). The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.
 
@@ -1097,6 +1152,14 @@ and never drawn: tree trunks. Anything a player could stand on, or that is
 more than a few centimetres proud of a wall, stays in the structure: the
 houses' pitched roofs and chimneys are, because a roof stops a bullet.
 
+**Outcrops are rocks drawn inside their collision** (`Kit.rocks`). Each
+collides as the box it always was, in the hidden node, and is drawn as a
+rounded, lumped rock fitted inside that box - never outside it, because rock
+drawn past its collision is rock a bullet passes through. Its lumps are
+seeded by where it stands, not drawn from the layout's generator, so nothing
+built after it moves. Moving the boxes into the hidden node left `map.rs`
+byte-identical, which is the check for a change like this.
+
 **The facility is dressed**, all in `build-facility.py`: street lamps and
 timber power poles (the poles collide; heads, crossarms and sagging wires
 are drawn only), razor-wire coils along the works' walls, chain-link over the
@@ -1296,7 +1359,16 @@ to the run clip's stride with the hips lowered 0.38 m.
 the trigger on an empty magazine). The trigger does nothing while reloading.
 The client runs its ammunition down between snapshots only so the kick stops
 on the round the server will refuse; the count it displays is the server's.
-What is in somebody else's magazine is not sent to anybody else.
+What is in somebody else's magazine is not sent to anybody else; whether
+they are reloading is (protocol 13), because a reload is done in plain view
+and heard, and it is what a player standing there would know.
+
+**Where a shot lands is drawn** (`impacts.js`), from the server's own `to`
+in `ShotFired` - never the prediction: a burst, dust thrown back towards the
+shooter and chips off the surface, or a mist off a player. A shot that
+reached `weaponRange` struck nothing and raises nothing. There are no bullet
+holes on purpose: the ray stops on the collision, up to a cell off the drawn
+wall, so a flat mark would float or sink; dust is a volume and forgives it.
 
 **Two grenades a life** (G). A throw is the rising edge of the button, so
 holding it throws one; the server steps the flight (`sim/grenade.rs`,

@@ -302,6 +302,46 @@ class Glb:
 FACE_ASPECT = 3.0
 
 
+_SPHERE = None
+
+
+def _sphere(level=2):
+    """A unit sphere as vertices and outward, anticlockwise triangles: an
+    icosahedron split `level` times. Built once."""
+    global _SPHERE
+    if _SPHERE is not None:
+        return _SPHERE
+    t = (1.0 + 5.0 ** 0.5) / 2.0
+    verts = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t),
+             (0, -1, -t), (0, 1, -t), (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    verts = [np.array(v, dtype=float) / np.linalg.norm(v) for v in verts]
+    faces = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4),
+             (11, 10, 2), (10, 7, 6), (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8),
+             (3, 8, 9), (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1)]
+    for _ in range(level):
+        middle = {}
+
+        def mid(a, b):
+            key = (min(a, b), max(a, b))
+            if key not in middle:
+                point = verts[a] + verts[b]
+                verts.append(point / np.linalg.norm(point))
+                middle[key] = len(verts) - 1
+            return middle[key]
+
+        split = []
+        for a, b, c in faces:
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            split += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        faces = split
+    unit = np.array(verts)
+    # Every face turned to face out, whatever the table above says.
+    faces = [(a, b, c) if np.dot(np.cross(unit[b] - unit[a], unit[c] - unit[a]), unit[a]) > 0
+             else (a, c, b) for a, b, c in faces]
+    _SPHERE = (unit, faces)
+    return _SPHERE
+
+
 class Kit(arena.Parts):
     """The arena's `Parts`, with what open country and a works need."""
 
@@ -575,21 +615,65 @@ class Kit(arena.Parts):
                 self._sliced(axis, lo, hi, c0, c1, 0.0, top, wall)
         return self
 
-    def rocks(self, x, z, size, rng):
-        """An outcrop: a few boxes of rock of different heights, overlapping.
+    def rocks(self, x, z, size, rng, detail):
+        """An outcrop: a few rocks of different heights, overlapping.
 
         Natural cover for open ground, and none of it climbable: the lowest
-        block is over a standing jump, so an outcrop is something to get
-        behind rather than something to stand on.
+        is over a standing jump, so an outcrop is something to get behind
+        rather than something to stand on.
+
+        Each rock collides as the box it stands in, in the hidden node, so
+        the collision is exactly the three boxes it always was; what is
+        drawn is a rock fitted inside that box (`rock`), in `detail`. Its
+        lumps come from a generator seeded by where it stands rather than
+        from `rng`, so the draws everything after it makes are unchanged.
         """
-        for _ in range(3):
+        for i in range(3):
             w = rng.uniform(0.5, 1.0) * size
             d = rng.uniform(0.5, 1.0) * size
             h = rng.uniform(1.4, 2.6) * (0.6 + size / 8.0)
             ox = rng.uniform(-0.4, 0.4) * size
             oz = rng.uniform(-0.4, 0.4) * size
-            self.box(x + ox - w / 2, 0.0, z + oz - d / 2, x + ox + w / 2, h, z + oz + d / 2,
-                     rng.choice(('rock', 'rock_dark')))
+            material = rng.choice(('rock', 'rock_dark'))
+            x0, z0, x1, z1 = x + ox - w / 2, z + oz - d / 2, x + ox + w / 2, z + oz + d / 2
+            self.hidden.box(x0, 0.0, z0, x1, h, z1, material)
+            self.footprints.append((x0, z0, x1, z1, 0.0, h))
+            detail.rock(x0, 0.0, z0, x1, h, z1, material, f'{x:.2f},{z:.2f},{i}')
+        return self
+
+    def rock(self, x0, y0, z0, x1, y1, z1, material, seed):
+        """A rock filling the box (x0..x1, y0..y1, z0..z1) and never outside
+        it: a sphere pushed out towards a rounded box, its surface lumped
+        only inwards, its underside sunk a little into the ground.
+
+        Never outside, because the box is what collides: a rock drawn past
+        its collision is rock a bullet passes through. Inside, the gap is
+        centimetres at the faces and a little more at the rounded corners,
+        which nobody can tell from a hit on the rock.
+        """
+        rng = random.Random(seed)
+        unit, faces = _sphere()
+        half = np.array([x1 - x0, y1 - y0, z1 - z0]) / 2.0
+        centre = np.array([x0, y0, z0]) + half
+        # Towards the box's corners: a sphere alone fills half of it.
+        shape = np.sign(unit) * np.abs(unit) ** 0.42
+        # Lumps: a few crossed waves at random phases, scaled into (0.84, 1].
+        phase = [rng.uniform(0.0, 2.0 * math.pi) for _ in range(6)]
+        lumps = (np.sin(unit[:, 0] * 3.1 + phase[0]) * np.sin(unit[:, 1] * 2.3 + phase[1])
+                 + 0.7 * np.sin(unit[:, 2] * 4.7 + phase[2]) * np.sin(unit[:, 0] * 3.9 + phase[3])
+                 + 0.5 * np.sin(unit[:, 1] * 6.1 + phase[4] + unit[:, 2] * 2.0))
+        lumps = (lumps - lumps.min()) / max(np.ptp(lumps), 1e-6)
+        jitter = np.array([rng.uniform(0.0, 1.0) for _ in range(len(unit))])
+        inward = 0.84 + 0.16 * (0.75 * lumps + 0.25 * jitter)
+        points = centre + shape * half * inward[:, None]
+        # The underside flat and just below the ground, so no light shows
+        # under a rock that should be sitting on it.
+        low = unit[:, 1] < -0.35
+        points[low, 1] = y0 - 0.05
+        verts, out = self.groups.setdefault(material, ([], []))
+        base = len(verts)
+        verts.extend(tuple(float(v) for v in point) for point in points)
+        out.extend((base + a, base + b, base + c) for a, b, c in faces)
         return self
 
 
@@ -1755,7 +1839,7 @@ def fields(layout):
     for x, z, size in outcrops:
         if not layout.is_clear(x, z, pad=size * 0.6):
             continue
-        k.rocks(x, z, size, rng)
+        k.rocks(x, z, size, rng, layout.detail)
         layout.keep_clear(x - size, z - size, x + size, z + size)
     # A depot on the road from the village to the works.
     layout.house(-46.0, -100.0, -34.0, -90.0, 3.6, 'concrete',

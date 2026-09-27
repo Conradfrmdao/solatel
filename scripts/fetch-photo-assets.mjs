@@ -62,7 +62,16 @@ const FOLIAGE = {
   grass_blades: ['grass_medium_01', 'Diffuse', 'Alpha', 'nor_gl'],
 };
 
-const SKY = 'kloofendal_48d_partly_cloudy_puresky';
+/**
+ * Skies, by the name `world.js` knows them by: each map has its own (see
+ * `SKIES` there). A 1k HDR for the light and a tonemapped panorama for what
+ * is seen; a map downloads only its own.
+ */
+const SKIES = {
+  partly: 'kloofendal_48d_partly_cloudy_puresky',
+  overcast: 'overcast_soil_puresky',
+  afternoon: 'syferfontein_18d_clear_puresky',
+};
 
 async function json(url) {
   const response = await fetch(url);
@@ -194,16 +203,18 @@ for (const [name, [asset, diffuse, alpha, normal]] of Object.entries(FOLIAGE)) {
   );
 }
 
-console.log('sky');
-const skyFiles = await json(API + SKY);
-const hdrPath = resolve(root, 'assets', 'sky', 'sky_1k.hdr');
-if (!(await exists(hdrPath))) await write(hdrPath, await bytes(skyFiles.hdri['1k'].hdr.url));
-const backgroundPath = resolve(root, 'assets', 'sky', 'sky.webp');
-if (!(await exists(backgroundPath))) {
-  await write(
-    backgroundPath,
-    await transcode(await bytes(skyFiles.tonemapped.url), { size: 4096, height: 2048, quality: 0.84 }),
-  );
+for (const [name, id] of Object.entries(SKIES)) {
+  console.log(`sky ${name}`);
+  const skyFiles = await json(API + id);
+  const hdrPath = resolve(root, 'assets', 'sky', `${name}_1k.hdr`);
+  if (!(await exists(hdrPath))) await write(hdrPath, await bytes(skyFiles.hdri['1k'].hdr.url));
+  const backgroundPath = resolve(root, 'assets', 'sky', `${name}.webp`);
+  if (!(await exists(backgroundPath))) {
+    await write(
+      backgroundPath,
+      await transcode(await bytes(skyFiles.tonemapped.url), { size: 4096, height: 2048, quality: 0.84 }),
+    );
+  }
 }
 
 await browser.close();

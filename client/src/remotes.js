@@ -102,8 +102,25 @@ const BONE = {
   upLegR: 'mixamorigRightUpLeg',
   legR: 'mixamorigRightLeg',
   footR: 'mixamorigRightFoot',
+  armL: 'mixamorigLeftArm',
+  foreArmL: 'mixamorigLeftForeArm',
   ...HAND,
 };
+
+/**
+ * Bones posed by hand after the clips have posed them: aimed, knelt, dipped
+ * or reached with. Their clip values are put back before the clips are
+ * sampled again, because three.js's mixer only writes a bone whose sampled
+ * value has changed - and the shouldered pose is a single still frame, so a
+ * hand-posed arm on it would keep last frame's posing and build on it. That
+ * left an arm at the magazine after a reload, and the aim then turned the
+ * whole torso to put the hands back on a rifle the arm was no longer on.
+ */
+const POSED = [
+  'hips', 'spine', 'spine1', 'spine2',
+  'upLegL', 'legL', 'footL', 'upLegR', 'legR', 'footR',
+  'armL', 'foreArmL', 'handL',
+];
 
 /** Tracks from the spine up belong to the upper body; the rest - hips and
  *  legs - to the lower. */
@@ -116,6 +133,21 @@ const RIFLE = {
   scale: 0.19,
   muzzle: new THREE.Vector3(0, 0.065, -2.306),
 };
+
+/** Where the magazine sits, in the rifle model's units: under the receiver
+ *  just ahead of the grip. A reload takes the left hand there. */
+const MAGAZINE = new THREE.Vector3(0, -0.62, 0.1);
+
+/** A reload as the body shows it: the rifle canted over and dipped, so the
+ *  magazine well faces the hand that is changing it. Radians. */
+const RELOAD_CANT = 0.65;
+const RELOAD_DIP = 0.4;
+
+/** A throw as the body shows it, and how long it takes. Nobody is told who
+ *  threw a grenade; one appearing at a player's hand says it. */
+const THROW_SECONDS = 0.7;
+const THROW_DIP = 0.95;
+const THROW_REACH = 3;
 
 /** How far the legs turn toward the way a player is moving, and how fast. */
 const LEG_TURN_LIMIT = 1.22;
@@ -184,6 +216,20 @@ const _kneelL = new THREE.Vector3();
 const _kneelR = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
 const _side = new THREE.Vector3();
+const _down = new THREE.Vector3(0, -1, 0);
+const _aimR = new THREE.Vector3();
+const _upR = new THREE.Vector3();
+const _hand = new THREE.Vector3();
+const _mag = new THREE.Vector3();
+const _pouch = new THREE.Vector3();
+const _shoulder = new THREE.Vector3();
+const _reach = new THREE.Vector3();
+
+/** Smoothstep on [0, 1]. */
+const ease = (t) => {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+};
 
 /** A copy of `clip` with only the tracks `keep` accepts. */
 function split(clip, name, keep) {
@@ -198,6 +244,13 @@ export class Remotes {
     this.weapon = null;
     this.players = new Map();
     this.history = [];
+    /** Grenades in the last snapshot, to tell a new one from one in flight. */
+    this._grenades = null;
+    /** Who has just thrown one, by id, waiting to be posed. */
+    this.throws = new Map();
+    /** Where reloads started this frame, for the sound. */
+    this.reloads = [];
+    this.selfId = null;
     this.flashMaterial = new THREE.SpriteMaterial({
       map: flashTexture(),
       color: 0xfff0c0,
@@ -256,6 +309,17 @@ export class Remotes {
   /** Records a snapshot for later interpolation. */
   record(snapshot, nowMs) {
     this.history.push({ at: nowMs, players: snapshot.players });
+    // A grenade that was not there last time has just left somebody's hand,
+    // and the nearest pair of eyes is whose.
+    const live = snapshot.live_grenades ?? [];
+    if (this._grenades) {
+      for (const grenade of live) {
+        if (this._grenades.has(grenade.id)) continue;
+        const thrower = nearestThrower(snapshot.players, grenade.position, this.selfId);
+        if (thrower) this.throws.set(thrower, nowMs);
+      }
+    }
+    this._grenades = new Set(live.map((g) => g.id));
     while (
       this.history.length > 0 &&
       nowMs - this.history[0].at > HISTORY_MS
@@ -281,6 +345,7 @@ export class Remotes {
    * camera is, for deciding how much detail each player is worth.
    */
   update(nowMs, dt, selfId, eye) {
+    this.selfId = selfId;
     if (!this.template) return;
 
     const renderAt = nowMs - SIM.interpolationDelayMs;
@@ -370,8 +435,13 @@ export class Remotes {
     flashSprite.visible = false;
     muzzle.add(flashSprite);
 
+    // What the clips last said for each bone in `POSED`.
+    const clean = POSED.map((key) => bones[key])
+      .filter(Boolean)
+      .map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
+
     return {
-      id, root, body, mixer, actions, bones, rifle, flashSprite, hipsScale,
+      id, root, body, mixer, actions, bones, rifle, flashSprite, hipsScale, clean,
       gait: 'idle',
       legYaw: 0,
       reverse: false,
@@ -419,6 +489,17 @@ export class Remotes {
     }
     root.visible = true;
 
+    // A reload starting is seen, and heard by anybody close enough.
+    if (entry.reloading && !player.reloading) {
+      player.reloadAt = player.age;
+      this.reloads.push([entry.x, entry.y, entry.z]);
+    }
+    player.reloading = entry.reloading;
+    if (this.throws.has(player.id)) {
+      this.throws.delete(player.id);
+      player.throwAt = player.age;
+    }
+
     const distance = eye ? root.position.distanceTo(eye) : 0;
 
     // Fewer mixer updates the further away they are: every frame near,
@@ -433,7 +514,17 @@ export class Remotes {
 
     this._driveLegs(player, entry, step);
     this._driveArms(player, entry);
+    // Undo last frame's hand posing, sample the clips, and remember what
+    // they said (see `POSED`).
+    for (const c of player.clean) {
+      c.bone.quaternion.copy(c.q);
+      c.bone.position.copy(c.p);
+    }
     player.mixer.update(step);
+    for (const c of player.clean) {
+      c.q.copy(c.bone.quaternion);
+      c.p.copy(c.bone.position);
+    }
 
     const bones = player.bones;
     body.updateMatrixWorld(true);
@@ -456,7 +547,7 @@ export class Remotes {
       bones.hips.updateMatrixWorld(true);
     }
 
-    this._placeRifle(player, _aim);
+    this._act(player, entry, _aim);
     player.flash = Math.max(0, player.flash - step);
     player.flashSprite.visible = player.flash > 0 && distance < FAR;
   }
@@ -547,13 +638,106 @@ export class Remotes {
     rotateWorld(bones.spine2, _axis, angle * TWIST.spine2);
   }
 
-  /** The rifle in the right palm, laid along the aim. */
-  _placeRifle(player, aim) {
+  /**
+   * The rifle into the hands, and whatever the hands are doing with it: a
+   * reload or a throw, when one is under way. Neither is a clip - the
+   * soldier has none for them - so both are placed: the rifle turned in the
+   * right hand, and the left arm solved onto where it has to be.
+   */
+  _act(player, entry, aim) {
+    const reload = player.reloading ? (player.age - player.reloadAt) / SIM.reloadSeconds : null;
+    const thrown = player.throwAt === undefined ? null : (player.age - player.throwAt) / THROW_SECONDS;
+    if (thrown !== null && thrown > 1) player.throwAt = undefined;
+
+    if (thrown !== null && thrown <= 1) {
+      // The rifle hangs from the right hand while the left throws.
+      const lowered = ease(thrown / 0.15) * (1 - ease((thrown - 0.7) / 0.3));
+      this._placeRifle(player, aim, THROW_DIP * lowered, 0.3 * lowered);
+      const { bones } = player;
+      if (!bones.armL) return;
+      bones.armL.getWorldPosition(_shoulder);
+      _side.crossVectors(aim, _up).normalize();
+      _fwd.set(aim.x, 0, aim.z).normalize();
+      // Back behind the head, then out ahead and up: a lob.
+      const windup = _reach.copy(_shoulder).addScaledVector(_fwd, -0.22).addScaledVector(_up, 0.32).addScaledVector(_side, -0.06);
+      const release = _goal.copy(_shoulder).addScaledVector(_fwd, 0.55).addScaledVector(_up, 0.22);
+      let weight;
+      let target;
+      if (thrown < 0.4) {
+        weight = ease(thrown / 0.2);
+        target = windup;
+      } else if (thrown < 0.58) {
+        weight = 1;
+        target = windup.lerp(release, ease((thrown - 0.4) / 0.18));
+      } else {
+        weight = 1 - ease((thrown - 0.58) / 0.42);
+        target = release;
+      }
+      this._reachLeft(player, target, weight);
+      return;
+    }
+
+    if (reload !== null && reload <= 1) {
+      const canted = ease(reload / 0.12) * (1 - ease((reload - 0.82) / 0.18));
+      this._placeRifle(player, aim, RELOAD_DIP * canted, RELOAD_CANT * canted);
+      // The hand to the magazine, down to the pouch at the hip for the next
+      // one, back up to seat it, and back onto the handguard.
+      _mag.copy(MAGAZINE).applyMatrix4(_m);
+      const { bones } = player;
+      if (!bones.hips) return;
+      _side.crossVectors(aim, _up).normalize();
+      _fwd.set(aim.x, 0, aim.z).normalize();
+      bones.hips.getWorldPosition(_pouch);
+      _pouch.addScaledVector(_side, -0.2).addScaledVector(_fwd, 0.1).addScaledVector(_up, 0.02);
+      let weight = 1;
+      const target = _reach;
+      if (reload < 0.14) {
+        weight = ease(reload / 0.14);
+        target.copy(_mag);
+      } else if (reload < 0.34) {
+        target.lerpVectors(_mag, _pouch, ease((reload - 0.14) / 0.2));
+      } else if (reload < 0.52) {
+        target.lerpVectors(_pouch, _mag, ease((reload - 0.34) / 0.18));
+      } else if (reload < 0.8) {
+        // Seated with a shove up.
+        const shove = Math.sin(Math.min(1, Math.max(0, (reload - 0.56) / 0.08)) * Math.PI) * 0.04;
+        target.copy(_mag).addScaledVector(_up, shove);
+      } else {
+        weight = 1 - ease((reload - 0.8) / 0.2);
+        target.copy(_mag);
+      }
+      this._reachLeft(player, target, weight);
+      return;
+    }
+
+    this._placeRifle(player, aim);
+  }
+
+  /** The left hand towards `goal` by `weight`, the arm solved to reach it
+   *  with the elbow hanging. */
+  _reachLeft(player, goal, weight) {
+    const { bones } = player;
+    if (!bones.armL || !bones.foreArmL || !bones.handL || weight <= 0.001) return;
+    bones.handL.getWorldPosition(_hand);
+    _hand.lerp(goal, weight);
+    solveLeg(bones.armL, bones.foreArmL, bones.handL, _hand, _down);
+  }
+
+  /**
+   * The rifle in the right palm, laid along the aim - dipped by `dip` and
+   * canted about its own length by `cant`, both in radians, when the hands
+   * are doing something other than aiming it.
+   */
+  _placeRifle(player, aim, dip = 0, cant = 0) {
     const { bones, rifle, root } = player;
     if (!bones.handR || !bones.handL) return;
     palms(bones, _a, _b);
+    _aimR.copy(aim);
+    if (dip) _aimR.applyAxisAngle(_side.crossVectors(aim, _up).normalize(), -dip);
+    _upR.copy(_up);
+    if (cant) _upR.applyAxisAngle(_aimR, cant);
     // Along the aim, upright against the world's up, grip in the palm.
-    holdMatrix(_a, aim, _up, RIFLE.scale, _m);
+    holdMatrix(_a, _aimR, _upR, RIFLE.scale, _m);
 
     root.updateMatrixWorld(true);
     _inverse.copy(root.matrixWorld).invert();
@@ -614,6 +798,15 @@ export class Remotes {
   }
 
   /** Finds the two snapshots bracketing `atMs` and blends between them. */
+  /** Where somebody else's reload started since the last call, for the
+   *  sound - as [x, y, z], the way positions cross the wire. */
+  takeReloads() {
+    if (this.reloads.length === 0) return EMPTY;
+    const started = this.reloads;
+    this.reloads = [];
+    return started;
+  }
+
   _sample(atMs) {
     if (this.history.length === 0) return null;
 
@@ -636,6 +829,30 @@ export class Remotes {
     const alpha = Math.min(1, Math.max(0, (atMs - before.at) / span));
     return snapshotToEntries(before.players, after.players, alpha);
   }
+}
+
+const EMPTY = [];
+
+/**
+ * Whose hand a grenade that has just appeared left: the living player, not
+ * this one, whose eyes are nearest it and within `THROW_REACH`. The server
+ * does not say, and does not need to - the grenade starts at the thrower's
+ * eye, and at twenty snapshots a second it is still beside them.
+ */
+function nearestThrower(players, at, selfId) {
+  let best = null;
+  let bestDistance = THROW_REACH;
+  for (const player of players ?? []) {
+    if (player.id === selfId || player.state.health <= 0) continue;
+    const p = player.state.position;
+    const eye = p[1] + (player.state.crouched ? SIM.eyeOffset - SIM.crouchDrop : SIM.eyeOffset);
+    const distance = Math.hypot(at[0] - p[0], at[1] - eye, at[2] - p[2]);
+    if (distance < bestDistance) {
+      best = player.id;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /** The unit vector a player with this yaw and pitch is looking along - the
@@ -762,6 +979,7 @@ function snapshotToEntries(older, newer, alpha) {
       onGround: b.on_ground,
       health: b.health,
       crouched: Boolean(b.crouched),
+      reloading: Boolean(fresh.reloading),
     });
     byId.delete(old.id);
   }
@@ -783,6 +1001,7 @@ function snapshotToEntries(older, newer, alpha) {
       onGround: s.on_ground,
       health: s.health,
       crouched: Boolean(s.crouched),
+      reloading: Boolean(fresh.reloading),
     });
   }
 

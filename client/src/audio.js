@@ -39,6 +39,9 @@ const SPEED_OF_SOUND = 343;
  *  graph of nodes a frame for nothing. */
 const MAX_AUDIBLE = 220;
 
+/** How far away somebody else's reload can be heard, in metres. */
+const RELOAD_AUDIBLE = 22;
+
 /** Where the player's own weapon sits: close, centred, and not distance-faded.
  *  Passing zero distance through the same path would work, but a rifle at the
  *  shoulder is a different sound from the same rifle heard at one metre. */
@@ -383,13 +386,34 @@ export class Audio {
   /** The magazine out, and a moment later the new one in and the bolt. */
   reload(seconds) {
     if (!this.ready) return;
-    const now = this.context.currentTime;
+    this._reloadClicks(this.master, this.context.currentTime, seconds, 1);
+  }
+
+  /**
+   * Somebody else changing magazines: the same clicks, from where they
+   * stand, and only close enough to matter. A reload is heard across a room,
+   * not across a map, and hearing one round a corner is exactly the
+   * information a player standing there would have.
+   */
+  reloadAt(at, listener, forward, seconds) {
+    if (!this.ready) return;
+    const distance = Math.hypot(at[0] - listener.x, at[1] - listener.y, at[2] - listener.z);
+    if (!(distance < RELOAD_AUDIBLE)) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    const loudness = place.gain * (1 - distance / RELOAD_AUDIBLE);
+    this._reloadClicks(place.input, this.context.currentTime + place.delay, seconds, loudness);
+  }
+
+  _reloadClicks(output, start, seconds, loudness) {
     const click = (at, frequency, gain) =>
-      this.burst(this.master, at, { gain, attack: 0.001, decay: 0.03, type: 'bandpass', frequency, q: 3 });
-    click(now + 0.12, 1900, 0.35);
-    click(now + seconds * 0.62, 1500, 0.45);
-    click(now + seconds * 0.85, 2400, 0.4);
-    click(now + seconds * 0.88, 1200, 0.35);
+      this.burst(output, at, {
+        gain: gain * loudness, attack: 0.001, decay: 0.03, type: 'bandpass', frequency, q: 3,
+      });
+    click(start + 0.12, 1900, 0.35);
+    click(start + seconds * 0.62, 1500, 0.45);
+    click(start + seconds * 0.85, 2400, 0.4);
+    click(start + seconds * 0.88, 1200, 0.35);
   }
 
   /** An empty magazine. */

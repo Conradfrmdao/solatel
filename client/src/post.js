@@ -47,9 +47,9 @@ export const GRADE = {
 };
 
 /**
- * The composer, and its ambient occlusion pass so a setting can turn it on
- * and off. Null if the device cannot run it, in which case the caller
- * renders directly.
+ * The composer, and its ambient occlusion and bloom passes so the quality
+ * setting can turn them on and off. Null if the device cannot run it, in
+ * which case the caller renders directly.
  */
 export function buildPost(renderer, scene, camera) {
   try {
@@ -78,12 +78,13 @@ export function buildPost(renderer, scene, camera) {
     composer.addPass(ao);
     // Only what is genuinely bright blooms: glints, the flash, the sky round
     // the sun. A soft haze over everything is what makes a game look cheap.
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(width, height), 0.22, 0.55, 0.92));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.22, 0.55, 0.92);
+    composer.addPass(bloom);
     // Tonemapping and colour space are applied once, here: a composer
     // bypasses the renderer's own output stage.
     composer.addPass(new OutputPass());
     composer.addPass(new ShaderPass(GRADE));
-    return { composer, aoPass: ao };
+    return { composer, aoPass: ao, bloomPass: bloom };
   } catch (err) {
     console.warn('post-processing unavailable:', err);
     return null;

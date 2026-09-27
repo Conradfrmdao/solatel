@@ -2379,6 +2379,7 @@ impl Lobby {
             .map(|(id, body)| PlayerSnapshot {
                 id: *id,
                 state: body.state,
+                reloading: body.reload_until.is_some(),
             })
             .collect();
 

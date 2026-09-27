@@ -165,8 +165,12 @@ one at 1k and re-encodes it as WebP; nothing else is done to them.
   twigs of `fir_tree_01`, the blades of `grass_medium_01`. Only these
   textures are used; the models themselves are millions of polygons and are
   not in the game.
-- Sky: `kloofendal_48d_partly_cloudy_puresky`, the 1k HDR for lighting and
-  the tonemapped panorama, at 4096 px, for the background.
+- Skies, one per map, each as the 1k HDR for lighting and the tonemapped
+  panorama at 4096 px for the background: `kloofendal_48d_partly_cloudy_puresky`
+  (the facility), `overcast_soil_puresky` (the yard) and
+  `syferfontein_18d_clear_puresky` (the arena). The client spreads the sun
+  disc over a few degrees before blurring the HDR, which changes no total
+  light and is noted here only because it is a change to the data.
 
 ## Credit in the product
 

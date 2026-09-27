@@ -34,7 +34,7 @@ use solatel_protocol::{
     sim::{
         Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
         InputCommand, MAGAZINE, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
-        REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, WEAPON_FIRE_INTERVAL,
+        REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, WEAPON_FIRE_INTERVAL, WEAPON_RANGE,
         map::{self, MAP_VERSION},
         step_tick,
     },
@@ -263,6 +263,7 @@ pub fn constants() -> Vec<f32> {
         map::active().scale,
         map::active().half_x,
         map::active().half_z,
+        WEAPON_RANGE,
     ]
 }
 
@@ -295,6 +296,7 @@ pub fn constant_names() -> Vec<String> {
         "arenaScale",
         "arenaHalfX",
         "arenaHalfZ",
+        "weaponRange",
     ]
     .iter()
     .map(|s| (*s).to_string())
