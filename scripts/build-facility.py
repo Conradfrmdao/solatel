@@ -152,6 +152,10 @@ NATURE = {
     'cladding':       ('#6f766b', 0.6),
     'cladding_cream': ('#a8a391', 0.6),
     'cladding_blue':  ('#5d6b76', 0.55),
+    'lamp':           ('#fff1d6', 0.3),
+    'rack_blue':      ('#2f4a66', 0.6),
+    'cardboard':      ('#9a7d56', 0.95),
+    'chainlink':      ('#8d918f', 0.55),
     'steel_stair':    ('#7d7b74', 0.8),
     'shore':          ('#6d6250', 0.97),
 }
@@ -416,6 +420,26 @@ class Kit(arena.Parts):
             faces.append((base, base + i, base + i + 1))
         return self
 
+    def wire(self, a, b, sag, material='frame_dark', thickness=0.03, segments=8):
+        """A cable hung from `a` to `b`, sagging `sag` metres in the middle,
+        as two crossed ribbons so it reads from any side."""
+        a = np.asarray(a, dtype=float)
+        b = np.asarray(b, dtype=float)
+        points = []
+        for i in range(segments + 1):
+            t = i / segments
+            p = a + (b - a) * t
+            p[1] -= sag * 4.0 * t * (1.0 - t)
+            points.append(p)
+        run = b - a
+        side = np.array([-run[2], 0.0, run[0]])
+        side = side / (np.linalg.norm(side) or 1.0) * thickness / 2.0
+        up = np.array([0.0, thickness / 2.0, 0.0])
+        for p, q in zip(points, points[1:]):
+            for off in (side, up):
+                self.poly([p - off, q - off, q + off, p + off], material)
+        return self
+
     def ground(self, x0, z0, x1, z1, y, material, tile=16.0):
         """A large flat face, cut into tiles.
 
@@ -618,7 +642,9 @@ class YardProps:
             homogeneous = np.hstack([points, np.ones((len(points), 1))])
             verts = (self.world[index] @ homogeneous.T).T[:, :3]
             faces = derive.accessor(self.js, self.blob, prim['indices']).astype(np.int64)
-            material = prim.get('material', 0)
+            # The yard's own colour index, even after `restyle-yard.py` has
+            # repainted it: that script records the original on the primitive.
+            material = prim.get('extras', {}).get('yard_colour', prim.get('material', 0))
             if material not in paint:
                 raise SystemExit(f'{node_name}: no surface for yard material {material}')
             pieces.append([paint[material], verts, faces.reshape(-1, 3)])
@@ -752,7 +778,7 @@ class Layout:
                 return False
         return True
 
-    def solid(self, x0, y0, z0, x1, y1, z1, material):
+    def solid(self, x0, y0, z0, x1, y1, z1, material, hidden=False):
         """A box that is its own node, so the generator gives it its own box.
 
         For anything that stands on the floor *under a roof* and reaches
@@ -777,7 +803,52 @@ class Layout:
         self.props.footprints.append((x0, z0, x1, z1, y0, y1))
         self.props.glb.node(f'{material}.{self.props.placed:03d}', self.unit[material],
                             translation=(x0, y0, z0),
-                            scale=(x1 - x0, y1 - y0, z1 - z0))
+                            scale=(x1 - x0, y1 - y0, z1 - z0),
+                            extras={'collision_only': True} if hidden else None)
+
+    def rack(self, x0, z0, x1, z1, height=3.6):
+        """Pallet racking: a solid box to collide with, drawn as a rack.
+
+        The collision is the whole volume - a loaded rack stops a bullet and
+        a player - and hidden. What is drawn over it is uprights, beams,
+        decks and a different load on every shelf.
+        """
+        self.solid(x0, 0.0, z0, x1, height, z1, 'steel', hidden=True)
+        d = self.detail
+        rng = random.Random(int(x0 * 13 + z0 * 7))
+        along_x = (x1 - x0) >= (z1 - z0)
+        lo, hi = (x0, x1) if along_x else (z0, z1)
+        c0, c1 = (z0, z1) if along_x else (x0, x1)
+        bays = max(1, int(round((hi - lo) / 2.7)))
+        edges = np.linspace(lo, hi, bays + 1)
+
+        def b(a0, y0, k0, a1, y1, k1, material):
+            if along_x:
+                d.box(a0, y0, k0, a1, y1, k1, material)
+            else:
+                d.box(k0, y0, a0, k1, y1, a1, material)
+
+        for e in edges:
+            a0 = min(max(e - 0.05, lo), hi - 0.1)
+            for k0 in (c0, c1 - 0.08):
+                b(a0, 0.0, k0, a0 + 0.1, height, k0 + 0.08, 'rack_blue')
+        levels = (0.12, 1.3, 2.45)
+        for y in levels + (height - 0.1,):
+            for k0 in (c0, c1 - 0.08):
+                b(lo, y, k0, hi, y + 0.1, k0 + 0.08, 'warning')
+        loads = ('wood', 'crate_olive', 'cardboard', 'cardboard', 'wood_pallet')
+        for y in levels:
+            b(lo + 0.02, y + 0.1, c0 + 0.05, hi - 0.02, y + 0.13, c1 - 0.05, 'wood_pallet')
+            for a, e in zip(edges, edges[1:]):
+                if rng.random() < 0.18:
+                    continue
+                span = e - a - 0.3
+                n = rng.choice((1, 2, 2, 3))
+                w = span / n
+                for i in range(n):
+                    top = y + 0.13 + rng.uniform(0.5, 0.95)
+                    b(a + 0.15 + i * w + 0.04, y + 0.13, c0 + 0.12, a + 0.15 + (i + 1) * w - 0.04, top,
+                      c1 - 0.12, rng.choice(loads))
 
     def roof(self, x0, z0, x1, z1, top, holes=(), material='roof_metal'):
         """A roof deck, with openings left where stairs rise beneath it.
@@ -805,6 +876,8 @@ class Layout:
         y = 0.03 + 0.01 * (self.roads % 16)
         self.kit.quad(min(x0, x1), min(z0, z1), max(x0, x1), max(z0, z1), y, material)
         self.keep_clear(x0, z0, x1, z1)
+        self.road_rects = getattr(self, 'road_rects', [])
+        self.road_rects.append((min(x0, x1), min(z0, z1), max(x0, x1), max(z0, z1), material))
 
     def pad(self, x0, z0, x1, z1, material='concrete_dark', y=0.05):
         self.kit.quad(x0, z0, x1, z1, y, material)
@@ -984,13 +1057,14 @@ class Layout:
                 for x in np.arange(x0 + 5.0, x1 - 5.0, 5.0):
                     for a, b in ((z0 + 2.5, mid - 2.0), (mid + 2.0, z1 - 2.5)):
                         if b - a > 2.0 and not (mezzanine and x < x0 + 13.0):
-                            self.solid(x, 0.0, a, x + 1.2, 3.6, b, 'steel')
+                            self.rack(x, a, x + 1.2, b)
             else:
                 mid = (x0 + x1) / 2.0
                 for z in np.arange(z0 + 5.0, z1 - 5.0, 5.0):
                     for a, b in ((x0 + 2.5, mid - 2.0), (mid + 2.0, x1 - 2.5)):
                         if b - a > 2.0:
-                            self.solid(a, 0.0, z, b, 3.6, z + 1.2, 'steel')
+                            self.rack(a, z, b, z + 1.2)
+        self.interior(x0, z0, x1, z1, height, t, d, racks, mezzanine)
         if mezzanine:
             # A gallery along one wall at 4 m, with a flight up to it.
             side, width = mezzanine
@@ -1050,6 +1124,63 @@ class Layout:
             vx = rng.uniform(x0 + 3.0, x1 - 3.0)
             vz = rng.uniform(z0 + 3.0, z1 - 3.0)
             self.detail.cylinder(vx, vz, 0.45, height, height + 1.9 + (0 if open_roof else 1.2), 'steel', segments=10)
+
+    def interior(self, x0, z0, x1, z1, height, t, doors, racks, mezzanine):
+        """What is left lying about inside a shed, and the lights over it.
+
+        Pallets, drums and crates in the corners, clear of every door and of
+        the aisles between the racks - cover for a fight in the building,
+        with the collision of the props they are. Lamps hang in a grid under
+        the roof, drawn only, well above anybody's head.
+        """
+        p = self.props
+        rng = random.Random(int(x0 * 3 + z0 * 11))
+        inner = 0.9
+        corners = [(x0 + t + inner, z0 + t + inner, 1, 1), (x1 - t - inner, z0 + t + inner, -1, 1),
+                   (x0 + t + inner, z1 - t - inner, 1, -1), (x1 - t - inner, z1 - t - inner, -1, -1)]
+        near = 4.5
+
+        def door_near(cx, cz):
+            for side, gaps in doors.items():
+                for a, b in gaps:
+                    if side in ('z0', 'z1'):
+                        wall_z = z0 if side == 'z0' else z1
+                        if abs(cz - wall_z) < near + 1.0 and a - near < cx < b + near:
+                            return True
+                    else:
+                        wall_x = x0 if side == 'x0' else x1
+                        if abs(cx - wall_x) < near + 1.0 and a - near < cz < b + near:
+                            return True
+            return False
+
+        for n, (cx, cz, sx, sz) in enumerate(corners):
+            if door_near(cx, cz):
+                continue
+            if mezzanine and ((mezzanine[0] == 'z0' and sz > 0) or (mezzanine[0] == 'z1' and sz < 0)) \
+                    and cx < x0 + 14.0:
+                continue
+            kind = (n + int(x0)) % 3
+            if kind == 0:
+                # A stack of pallets, and one leaning off it.
+                for level in range(3):
+                    p.place('pallet', cx + sx * 0.9, cz + sz * 0.7, rng.uniform(-0.05, 0.05),
+                            y=level * 0.15)
+                p.place('crate', cx + sx * 0.6, cz + sz * 2.4, rng.uniform(0, 0.3))
+            elif kind == 1:
+                for i, (ox, oz) in enumerate(((0.3, 0.3), (0.95, 0.3), (0.3, 0.95), (1.2, 1.1))):
+                    p.place(('barrel', 'barrel_blue')[i % 2], cx + sx * ox, cz + sz * oz, rng.uniform(0, 3))
+            else:
+                p.place('crate_dark', cx + sx * 0.7, cz + sz * 0.7, rng.uniform(-0.1, 0.1))
+                p.place('crate', cx + sx * 0.7, cz + sz * 0.7, rng.uniform(-0.1, 0.1),
+                        y=p.size('crate_dark')[1])
+                p.place('crate', cx + sx * 2.0, cz + sz * 0.7, rng.uniform(0.2, 0.6))
+        # Lamps: a shade and a lit disc, in a grid under the roof.
+        drop = height - 1.4
+        for lx in np.arange(x0 + 5.0, x1 - 3.0, 9.0):
+            for lz in np.arange(z0 + 5.0, z1 - 3.0, 9.0):
+                self.detail.box(lx - 0.02, drop + 0.3, lz - 0.02, lx + 0.02, height - 0.3, lz + 0.02, 'frame_dark')
+                self.detail.cylinder(lx, lz, 0.38, drop, drop + 0.3, 'frame_dark', segments=10)
+                self.detail.quad(lx - 0.25, lz - 0.25, lx + 0.25, lz + 0.25, drop - 0.005, 'lamp')
 
     def forest(self, x0, z0, x1, z1, spacing, y=0.0, pad=1.5):
         """Trees across a rectangle, jittered off a grid, clear of roads."""
@@ -1849,6 +1980,111 @@ def woodland(layout):
     print(f'  woodland: {placed} trees across the fields')
 
 
+def street_furniture(layout):
+    """Lamps along the roads, power lines along the lanes, razor wire on the
+    works' walls, and fencing over the flood walls.
+
+    The poles collide - a pole is cover, and running into one should stop
+    you. Wires, heads, coils and mesh are drawn only: they are out of reach,
+    or thinner than anything a bullet would be stopped by.
+    """
+    k, d = layout.kit, layout.detail
+    lamps = 0
+    for x0, z0, x1, z1, material in layout.road_rects:
+        if material != 'asphalt':
+            continue
+        along_x = (x1 - x0) >= (z1 - z0)
+        length = (x1 - x0) if along_x else (z1 - z0)
+        if length < 24.0:
+            continue
+        count = int(length // 32.0)
+        for i in range(count):
+            t = (i + 0.5) / count
+            if along_x:
+                px, pz, ax, az = x0 + t * (x1 - x0), z0 - 1.2, 0.0, 1.0
+            else:
+                px, pz, ax, az = x1 + 1.2, z0 + t * (z1 - z0), -1.0, 0.0
+            if abs(px) > HALF - 10.0 or abs(pz) > HALF - 10.0:
+                continue
+            if not layout.is_clear(px, pz, pad=0.7):
+                continue
+            k.box(px - 0.2, 0.0, pz - 0.2, px + 0.2, 0.35, pz + 0.2, 'concrete')
+            k.box(px - 0.09, 0.35, pz - 0.09, px + 0.09, 7.0, pz + 0.09, 'steel')
+            hx, hz = px + ax * 1.7, pz + az * 1.7
+            d.box(min(px, hx) - 0.04, 6.86, min(pz, hz) - 0.04, max(px, hx) + 0.04, 6.94, max(pz, hz) + 0.04, 'steel')
+            d.box(hx - 0.35, 6.78, hz - 0.18, hx + 0.35, 6.98, hz + 0.18, 'frame_dark')
+            d.quad(hx - 0.3, hz - 0.14, hx + 0.3, hz + 0.14, 6.775, 'lamp')
+            layout.keep_clear(px - 0.8, pz - 0.8, px + 0.8, pz + 0.8)
+            lamps += 1
+
+    # Power lines: timber poles down the lanes, three conductors between.
+    lines = [((-148.0, -84.0), (-60.0, -84.0)), ((-66.0, -113.0), (-4.0, -113.0)),
+             ((81.0, -118.0), (81.0, -20.0)), ((-30.0, 76.5), (140.0, 76.5))]
+    poles = 0
+    for (ax, az), (bx, bz) in lines:
+        length = math.hypot(bx - ax, bz - az)
+        count = int(length // 34.0) + 1
+        tops = []
+        for i in range(count + 1):
+            t = i / count
+            x, z = ax + (bx - ax) * t, az + (bz - az) * t
+            if not layout.is_clear(x, z, pad=0.6):
+                tops.append(None)
+                continue
+            k.cylinder(x, z, 0.15, 0.0, 9.2, 'wood_dark', segments=8, top=True)
+            dx, dz = (bz - az) / length, -(bx - ax) / length
+            d.box(x - abs(dx) * 1.2 - 0.05, 8.7, z - abs(dz) * 1.2 - 0.05,
+                  x + abs(dx) * 1.2 + 0.05, 8.85, z + abs(dz) * 1.2 + 0.05, 'wood_dark')
+            arms = []
+            for off in (-1.0, 0.0, 1.0):
+                cx, cz = x + dx * off, z + dz * off
+                d.cylinder(cx, cz, 0.05, 8.85, 9.1, 'frame', segments=6)
+                arms.append((cx, 9.1, cz))
+            tops.append(arms)
+            layout.keep_clear(x - 0.8, z - 0.8, x + 0.8, z + 0.8)
+            poles += 1
+        for here, there in zip(tops, tops[1:]):
+            if here and there:
+                for a, b in zip(here, there):
+                    d.wire(a, b, 0.9)
+
+    # Razor wire along the top of the works' walls: coils, drawn only.
+    x0, z0, x1, z1 = COMPOUND
+    top = 3.6
+    coils = 0
+    for (ax, az), (bx, bz) in (((x0, z0 + 0.3), (x1, z0 + 0.3)), ((x0, z1 - 0.3), (x1, z1 - 0.3)),
+                               ((x0 + 0.3, z0), (x0 + 0.3, z1)), ((x1 - 0.3, z0), (x1 - 0.3, z1))):
+        length = math.hypot(bx - ax, bz - az)
+        ux, uz = (bx - ax) / length, (bz - az) / length
+        steps = int(length / 0.3)
+        for i in range(steps):
+            cx, cz = ax + ux * (i + 0.5) * 0.3, az + uz * (i + 0.5) * 0.3
+            ring = []
+            for j in range(9):
+                a = 2 * math.pi * j / 8
+                # Across the wall and up, leaning along it: one turn of a coil.
+                ring.append((cx - uz * math.cos(a) * 0.24 + ux * 0.14 * math.sin(a),
+                             top + 0.25 + math.sin(a) * 0.24,
+                             cz + ux * math.cos(a) * 0.24 + uz * 0.14 * math.sin(a)))
+            for p, q in zip(ring, ring[1:]):
+                d.wire(p, q, 0.0, material='frame', thickness=0.018, segments=1)
+            coils += 1
+
+    # Chain-link over the flood walls, on posts, with a top rail.
+    north, south = RIVER
+    fence = 0.0
+    for z in (north - 0.3, south + 0.3):
+        for a, b in ((-HALF + 10.0, 8.0), (24.0, HALF - 14.0)):
+            d.poly([(a, FLOOD_WALL, z), (b, FLOOD_WALL, z), (b, FLOOD_WALL + 1.6, z), (a, FLOOD_WALL + 1.6, z)],
+                   'chainlink')
+            d.box(a, FLOOD_WALL + 1.58, z - 0.03, b, FLOOD_WALL + 1.64, z + 0.03, 'frame')
+            for x in np.arange(a, b + 0.01, 3.0):
+                d.box(x - 0.03, FLOOD_WALL, z - 0.03, x + 0.03, FLOOD_WALL + 1.7, z + 0.03, 'frame')
+            fence += b - a
+    print(f'  street furniture: {lamps} lamps, {poles} poles, {coils} coils of wire, '
+          f'{fence:.0f} m of fence')
+
+
 def check_river(layout):
     """No climbable roof close enough to the river to jump into it from."""
     north, south = RIVER
@@ -1880,6 +2116,7 @@ def build():
     south(layout)
     south_bank(layout)
     fields(layout)
+    street_furniture(layout)
     woodland(layout)
     check_river(layout)
 
