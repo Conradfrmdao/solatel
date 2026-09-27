@@ -136,7 +136,10 @@ capture the mouse once the match starts. The HUD shows
 link state, ping, and the current prediction error in metres — a number that climbs means client and
 server are drifting, which is the thing the shared simulation exists to prevent.
 `/health` reports database liveness, whether the ledger reconciles, what is in
-escrow, and the wallet's figures. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
+escrow, and the wallet's figures. `/proof` is the public payout record the
+menu's *fair play* pane shows: what kills have paid, what has been withdrawn
+(with each landed transaction's signature), stakes handed back and the house
+cut, summed from the ledger and naming nobody. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
 the operator's view: the ledger's accounts, any player's balance, lives and
 ledger history, any match, and the anti-cheat's review queue.
 

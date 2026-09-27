@@ -61455,7 +61455,15 @@ static FACILITY_SPAWNS: &[Spawn] = &[
 ];
 
 /// facility: 320 by 320 metres.
-pub static FACILITY: Map = Map::new("facility", 1.0, 160.00, 160.00, FACILITY_BRUSHES, FACILITY_SPAWNS, 30);
+pub static FACILITY: Map = Map::new(
+    "facility",
+    1.0,
+    160.00,
+    160.00,
+    FACILITY_BRUSHES,
+    FACILITY_SPAWNS,
+    30,
+);
 // --- end of generated tables ---
 /// Every map the build knows about.
 pub static MAPS: &[&Map] = &[&ARENA, &YARD, &FACILITY];

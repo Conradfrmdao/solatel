@@ -7,17 +7,21 @@
 // is whichever table they pick, and several are running at once on different
 // ground.
 //
-// Four panes, and nothing in any of them is a number this client worked out:
-// the balance, the stakes, the queues and what a kill pays all arrive from the
-// server. A client that computed its own wallet would be a client that could
-// be wrong about money.
+// Five panes, and nothing in any of them is a number this client worked out:
+// the balance, the stakes, the queues, what a kill pays and what the game has
+// paid out all arrive from the server. A client that computed its own wallet
+// would be a client that could be wrong about money.
 //
 // That includes SOL. The wallet pane states the server's rate and shows the
 // lamports the server says it is sending; it never converts a dollar amount
 // itself, because a preview that disagreed with the transfer would be a
 // preview that lied about money.
 
-const PANES = ['play', 'wallet', 'profile', 'settings'];
+const PANES = ['play', 'wallet', 'profile', 'fair', 'settings'];
+
+/** How long a read of the payout record is shown before it is read again.
+ *  The server caches it for a minute; asking more often gains nothing. */
+const PROOF_STALE_MS = 30_000;
 
 /** One line about each map's ground, for the card. Cosmetic: the server
  *  names the maps and seats them, and a map with no line here still shows. */
@@ -61,6 +65,21 @@ export function parseDollars(text) {
   const match = /^\s*\$?\s*(\d{1,9})(?:\.(\d{0,6}))?\s*$/.exec(text);
   if (!match) return null;
   return Number(match[1]) * 1_000_000 + Number((match[2] ?? '').padEnd(6, '0'));
+}
+
+/** How long ago an ISO timestamp was, in the one unit that matters. */
+function ago(iso) {
+  const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (!Number.isFinite(seconds)) return '';
+  if (seconds < 90) return 'just now';
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 36 * 3600) return `${Math.round(seconds / 3600)} h ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
+}
+
+/** A count with thousands separated. */
+function count(n) {
+  return Number(n ?? 0).toLocaleString('en-US');
 }
 
 function shortAddress(address) {
@@ -320,6 +339,7 @@ export class Menu {
 
   showPane(name) {
     this.pane = name;
+    if (name === 'fair') this._loadProof();
     for (const pane of PANES) {
       const on = pane === name;
       this.root.querySelector(`.pane[data-pane="${pane}"]`).classList.toggle('hidden', !on);
@@ -327,6 +347,92 @@ export class Menu {
         .querySelector(`#menu-tabs [data-pane="${pane}"]`)
         .classList.toggle('on', on);
     }
+  }
+
+  /**
+   * The payout record, read from the server's `/proof` and drawn as it
+   * came. Every amount is the ledger's own sum; this formats them and adds
+   * nothing up.
+   */
+  async _loadProof() {
+    const now = Date.now();
+    if (this._proofAt && now - this._proofAt < PROOF_STALE_MS) return;
+    this._proofAt = now;
+    const figures = this.root.querySelector('#proof-figures');
+    try {
+      const response = await fetch('/proof', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      this._drawProof(await response.json());
+    } catch (err) {
+      this._proofAt = 0;
+      figures.innerHTML =
+        '<div class="dim">The record could not be read just now. It is the ledger itself, so it will be back when the server is.</div>';
+      console.warn('proof', err);
+    }
+  }
+
+  _drawProof(proof) {
+    const q = (id) => this.root.querySelector(id);
+    const cluster = proof.network ?? 'devnet';
+
+    // Said before any figure, so nobody reads a test total as real money.
+    const notes = [];
+    if (proof.network === 'devnet') {
+      notes.push('Money here moves on Solana <b>devnet</b>: test SOL, not real money.');
+    }
+    if (proof.dev_money) {
+      notes.push('This server funds new players with development money, so most of these figures are test money too.');
+    }
+    q('#proof-note').innerHTML = notes.join(' ');
+    q('#proof-note').classList.toggle('hidden', notes.length === 0);
+
+    const card = (value, caption, detail) =>
+      `<div class="figure"><b>${value}</b><span class="caption">${caption}</span>` +
+      `<span class="detail">${detail}</span></div>`;
+    const best = proof.best_life;
+    q('#proof-figures').innerHTML = [
+      card(
+        money(proof.kill_rewards_micro_usd),
+        'paid for kills',
+        `${count(proof.kills_paid)} kills &middot; ${money(proof.kill_rewards_24h_micro_usd)} today`,
+      ),
+      card(
+        money(proof.withdrawn_micro_usd),
+        'withdrawn to wallets',
+        `${count(proof.withdrawals)} landed on-chain`,
+      ),
+      card(
+        money(proof.stakes_returned_micro_usd),
+        'stakes handed back',
+        `whole, to the ${count(proof.survivors)} alive at the whistle`,
+      ),
+      card(
+        best ? money(best.winnings_micro_usd) : '&mdash;',
+        'best single life',
+        best
+          ? `${count(best.kills)} kills at the ${money(best.stake_micro_usd)} table &middot; ${escapeHtml(best.map)}`
+          : 'nobody has been paid yet',
+      ),
+      card(
+        count(proof.players_24h),
+        'played today',
+        `${count(proof.lives_24h)} lives &middot; ${money(proof.in_play_micro_usd)} in play now`,
+      ),
+      card(money(proof.house_cut_micro_usd), 'the house cut', 'everything we have kept, all told'),
+    ].join('');
+    q('#proof-asof').textContent = proof.as_of
+      ? `Summed from the ledger that pays you, ${ago(proof.as_of)}. Nothing here is estimated.`
+      : '';
+
+    const rows = (proof.recent_withdrawals ?? []).map(
+      (w) =>
+        `<li><b>${money(w.amount_micro_usd)}</b> <span class="dim">${sol(w.lamports)} SOL &middot; ${ago(w.at)}</span> ` +
+        `<a href="https://explorer.solana.com/tx/${encodeURIComponent(w.signature)}?cluster=${encodeURIComponent(cluster)}" ` +
+        'target="_blank" rel="noopener">see it on the chain</a></li>',
+    );
+    q('#proof-withdrawals').innerHTML = rows.length
+      ? rows.join('')
+      : '<li class="dim">none yet</li>';
   }
 
   /** Whether the menu is the thing on screen. */
@@ -495,6 +601,7 @@ const TEMPLATE = `
       <button type="button" data-pane="play" class="on">play</button>
       <button type="button" data-pane="wallet">wallet</button>
       <button type="button" data-pane="profile">profile</button>
+      <button type="button" data-pane="fair">fair play</button>
       <button type="button" data-pane="settings">settings</button>
     </nav>
 
@@ -631,6 +738,68 @@ const TEMPLATE = `
           <button type="submit">sign in</button>
         </form>
       </div>
+    </section>
+
+    <section class="pane hidden" data-pane="fair">
+      <div class="label">paid out, in public</div>
+      <div id="proof-note" class="notice hidden"></div>
+      <div id="proof-figures" class="figures"><div class="dim">reading the ledger&hellip;</div></div>
+      <p class="fine" id="proof-asof"></p>
+
+      <div class="wallet-block">
+        <div class="label">landed on-chain</div>
+        <ul id="proof-withdrawals" class="plain"><li class="dim">none yet</li></ul>
+        <p class="fine">
+          The latest withdrawals to land, each with its transaction. Follow one
+          and the chain shows it to you, with no need to take our word for it.
+        </p>
+      </div>
+
+      <div class="label">fair play</div>
+      <div class="rules wide">
+        <div><b>the server decides</b><span>Your game sends the keys you press
+          and where you aim, and nothing else. Where everybody is, what a shot
+          hit and who died are worked out on our server, the same for
+          everybody. A modified game cannot report a kill.</span></div>
+        <div><b>money is booked twice</b><span>Every cent moves through a
+          double-entry ledger that the database refuses to let fall out of
+          balance. Nothing in it is ever edited; a correction is a new entry
+          with a reason.</span></div>
+        <div><b>aim is watched</b><span>Accuracy, headshots and flicks over
+          your last twenty lives are held against lines no human aim reaches.
+          Crossing one holds your withdrawals until a person has looked. It
+          never takes your balance or stops you playing.</span></div>
+        <div><b>no second life</b><span>One stake buys one life. Nobody can
+          pay their way back into a match they are losing.</span></div>
+      </div>
+
+      <div class="label">what is not done yet</div>
+      <ul class="plain honest">
+        <li>Solatel is new and small. Tables fill fastest at the play times we announce.</li>
+        <li>Your account is a key this browser keeps. Lose it and the balance goes
+          with it, so save a copy from the profile pane.</li>
+        <li>The anti-cheat is statistics and a person, not a program on your
+          machine. It will not catch everybody on day one, and we would rather
+          say so than pretend.</li>
+      </ul>
+
+      <div class="label">credits</div>
+      <ul class="plain credits">
+        <li>The arena is based on
+          <a href="https://sketchfab.com/3d-models/lowpoly-fps-tdm-game-map-by-resoforge-d41a19f699ea421a9aa32b407cb7537b" target="_blank" rel="noopener">"LOWPOLY | FPS | TDM | GAME | MAP by ResoForge"</a>
+          by <a href="https://sketchfab.com/aslbekburonbey" target="_blank" rel="noopener">Space_One</a>,
+          licensed under <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY-4.0</a>.
+          Changed by Solatel: repainted, two walls taken down, and extended with
+          buildings, stairs and walls of our own.</li>
+        <li>The yard, and the vehicles and props dressing the facility, are from
+          a low-poly map pack by ResoForge, repainted by Solatel.</li>
+        <li>Soldier and animations from <a href="https://www.mixamo.com" target="_blank" rel="noopener">Adobe Mixamo</a>.
+          Rifle: "Assault Rifle" by Zsky.</li>
+        <li>Photographed surfaces, leaves, grass and sky from
+          <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a> (CC0).
+          Drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT).</li>
+        <li>The facility, the code and everything else: Solatel.</li>
+      </ul>
     </section>
 
     <section class="pane hidden" data-pane="settings">

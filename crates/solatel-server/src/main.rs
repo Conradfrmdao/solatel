@@ -8,7 +8,9 @@ mod admin;
 mod config;
 mod db;
 mod game;
+mod lease;
 mod ledger;
+mod proof;
 mod reconcile;
 mod records;
 mod solana;
@@ -55,6 +57,8 @@ pub struct AppState {
     game: GameHandle,
     /// The operator's view. `None` unless `SOLATEL_ADMIN_TOKEN` is set.
     pub admin: Option<admin::AdminKey>,
+    /// The public record of what has been paid, at `/proof`.
+    pub proof: proof::Proof,
 }
 
 impl AppState {
@@ -225,6 +229,19 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Nothing touches escrow until this process holds the lease on it: the
+    // ledger's first act is to settle what a previous run left there, and a
+    // second server doing that would forfeit this one's live stakes. Free
+    // play has no escrow to own.
+    let lease_pool = pool.clone();
+    let escrow_lease = if free_play {
+        None
+    } else {
+        let held = lease::acquire(&pool, lease::ESCROW).await?;
+        lease::keep(pool.clone(), held.clone());
+        Some(held)
+    };
+
     let (game, commands) = game::channel();
     let wake = std::sync::Arc::new(tokio::sync::Notify::new());
     let ledger = if free_play {
@@ -258,9 +275,11 @@ async fn main() -> Result<()> {
     );
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));
 
+    let proof = proof::Proof::new(terms.is_some(), free_play || ledger::dev_grant().is_some());
     let state = AppState {
         pool,
         tiers,
+        proof,
         wallet: terms,
         wallet_health,
         started_at: Instant::now(),
@@ -279,6 +298,7 @@ async fn main() -> Result<()> {
     // CORS handling and no cross-origin cookie story.
     let app = Router::new()
         .route("/health", get(health))
+        .route("/proof", get(proof::handler))
         .route("/ws", get(ws::handler))
         .merge(admin::router(state.clone()))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
@@ -300,10 +320,22 @@ async fn main() -> Result<()> {
 
     tracing::info!("listening on http://{}", config.bind_addr);
 
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("server error")
+        .context("server error");
+    // Hand escrow on straight away rather than making the next server wait
+    // out the lease. What is still in it is this process's matches, which end
+    // with it; the next owner settles them.
+    if let Some(held) = &escrow_lease
+        && let Err(err) = lease::release(&lease_pool, held).await
+    {
+        tracing::warn!(
+            ?err,
+            "could not release the escrow lease; the next server will wait for it to lapse"
+        );
+    }
+    served
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

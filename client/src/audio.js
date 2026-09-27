@@ -235,8 +235,12 @@ export class Audio {
    * cash. Two struck bells a beat apart, each with an inharmonic partner so
    * they ring like metal instead of a synthesiser, over a short bright
    * shimmer of coin.
+   *
+   * `streak` is which kill this is in a run of quick ones. Each climbs two
+   * semitones and the third onwards strikes a third bell, so a double kill
+   * is heard as one without looking at the screen.
    */
-  paid() {
+  paid(streak = 1) {
     if (!this.ready) return;
     const { context } = this;
     const now = context.currentTime;
@@ -271,8 +275,21 @@ export class Audio {
         osc.stop(at + 0.6);
       }
     };
-    strike(now, 1180, 0.5);
-    strike(now + 0.09, 1770, 0.42);
+    const lift = 2 ** (Math.min(Math.max(streak, 1) - 1, 4) * (2 / 12));
+    strike(now, 1180 * lift, 0.5);
+    strike(now + 0.09, 1770 * lift, 0.42);
+    if (streak >= 3) strike(now + 0.18, 2360 * lift, 0.34);
+  }
+
+  /**
+   * The reward reaching the winnings counter: one small, bright tick, far
+   * quieter than the till. It closes the moment the till opened.
+   */
+  landed() {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    this.blip(now, 2640, 0.14, 0.05);
+    this.blip(now + 0.035, 3960, 0.08, 0.04);
   }
 
   /**

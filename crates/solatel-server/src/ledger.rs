@@ -1459,6 +1459,42 @@ pub async fn withdrawals_in_flight(pool: &PgPool) -> Result<i64> {
         .context("counting withdrawals in flight")
 }
 
+/// A real kill, for a test that reads the ledger: two players of the test's
+/// own, a dollar deposited for the victim, a match bought and the kill
+/// settled, exactly as the lobby would. Returns the reward and the rake it
+/// posted.
+#[cfg(test)]
+pub(crate) async fn post_test_kill(pool: &PgPool) -> Result<(i64, i64)> {
+    let mut accounts = Accounts::default();
+    let (victim, killer) = (PlayerId::new(), PlayerId::new());
+    let account = balance_account(pool, &mut accounts, victim).await?;
+    balance_account(pool, &mut accounts, killer).await?;
+    let external = system_account(pool, &mut accounts, "external").await?;
+    let stakes = Stakes::from_usd(1).context("a one dollar table")?;
+    let entry = stakes.entry().micros();
+    post(
+        pool,
+        "deposit",
+        &format!("test-deposit:{victim}"),
+        &[(external, -entry), (account, entry)],
+    )
+    .await?;
+    let match_id = MatchId::new();
+    let funded = buy_match(pool, &mut accounts, stakes, match_id, &[victim], None).await?;
+    anyhow::ensure!(funded.paid == [victim], "the test player could not buy in");
+    settle_kill(
+        pool,
+        &mut accounts,
+        EntryId {
+            match_id,
+            player_id: victim,
+        },
+        killer,
+    )
+    .await?;
+    Ok((stakes.reward().micros(), stakes.rake().micros()))
+}
+
 #[cfg(test)]
 mod review_hold {
     use super::*;

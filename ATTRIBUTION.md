@@ -170,6 +170,10 @@ one at 1k and re-encodes it as WebP; nothing else is done to them.
 
 ## Credit in the product
 
-CC-BY-4.0 requires the credit to reach players, not just this repository. A
-credits panel is not built yet; when one exists, the two CC-BY-4.0 notices above
-belong in it verbatim.
+CC-BY-4.0 requires the credit to reach players, not just this repository. It
+does: the menu's **fair play** pane (`client/src/menu.js`) ends with the
+credits, and they carry the arena's CC-BY-4.0 notice as it is given above,
+with its links, and what Solatel changed. The same list credits the yard's
+pack, Mixamo, the rifle's author, Poly Haven and three.js, none of which
+requires it. A new CC-BY asset is not cleared to ship until its notice is in
+that list too.

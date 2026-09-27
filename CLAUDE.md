@@ -75,8 +75,19 @@ right answer when matches outgrow a machine. It is the wrong one here for one
 specific reason: **the escrow sweep assumes one process owns the escrow
 account**. A second process pointing at this database would settle the first
 one's live stakes out from under it, and those are real money being played
-for. Splitting later means an escrow account per server, or a lease on that
-sweep, and that is the work to do *first*.
+for. Splitting later means an escrow account per server, and that is the
+work to do *first*.
+
+**The lease is what enforces one owner until then** (`lease.rs`, migration
+0007). Before the ledger touches escrow a server takes the `escrow` row of
+`escrow_lease`, renews it every ten seconds and releases it on a graceful
+shutdown. A second server waits up to ninety seconds for it to lapse - a
+crashed holder's does within thirty - and then refuses to start, naming the
+holder. A server that finds its lease taken, or cannot renew it before it
+would lapse, exits: its stakes are then orphans for the next owner to settle,
+which is the safe side to be wrong on. A row with a heartbeat rather than an
+advisory lock, because an advisory lock belongs to one session and Neon's
+pooled endpoint does not keep one. Free play takes no lease.
 
 A **`Connection`** is a person - socket, name, wallet, resume token. A
 **`Body`** is that person inside one match - position, health, stats,
@@ -219,8 +230,8 @@ forms - because which map it loads is whichever table the player picked.
 `body.in-menu` hides the canvas and the frame loop draws nothing while there
 is no match.
 
-Four panes: **play** (map, then stake), **wallet**, **profile**, **settings**.
-The settings moved here from the HUD - they belong on a screen you go to
+Five panes: **play** (map, then stake), **wallet**, **profile**, **fair
+play**, **settings**. The settings moved here from the HUD - they belong on a screen you go to
 between matches, not over your crosshair - though the wiring stayed in
 `hud.js` and looks them up in the document. The menu is therefore built before
 the HUD, or the HUD looks for sliders that do not exist yet.
@@ -234,6 +245,24 @@ tests for the canvas rather than listing the things to stay off.
 **A player's balance is asked for when they arrive** (`LedgerRequest::
 ReadBalance`), so the wallet reads `$0.00` rather than a dash. A menu that
 shows a dash cannot tell "you have nothing" from "we have not looked".
+
+**Fair play is the proof, and the credits.** Early players of a real-money
+game expect to be farmed, and the PRD's answer is visible proof of payouts.
+The pane shows what `/proof` returns - paid for kills, withdrawn to wallets
+with each landed withdrawal's signature linked to the explorer, stakes handed
+back, the best single life, who played today, and the house cut, all told -
+then the rules that make it fair, a plain list of what is not built yet, and
+the credits, which carry the arena's CC-BY-4.0 notice as ATTRIBUTION.md gives
+it. A devnet server, or one handing out development money, says so above the
+figures, so a test total is never read as real money.
+
+`/proof` (`proof.rs`) is public, unauthenticated and readable from any origin,
+so it names nobody: totals are facts about the game, and who earned them is a
+fact about a person. Every figure is one statement's sum over the ledger's own
+legs by transaction kind - not a counter kept beside the ledger, which could
+disagree with it - and the answer is cached for a minute, so a crowd costs one
+query. Adding a figure means adding it to that statement and to its test,
+`the_record_moves_by_exactly_what_a_kill_pays`.
 
 `node client/menu.mjs` drives the whole thing in a real browser: that the menu
 is what a player lands on, that every tab opens, that queueing does not steal
@@ -1205,6 +1234,16 @@ of them are level. It is also its own message rather than part of the
 snapshot: snapshots are twenty a second and already the bulk of the traffic,
 and a name plus six counters per player in every one of them would be most of
 a kilobyte a second per client to say nothing had changed.
+
+**A kill that pays is seen paying.** `hud.payout` punches the table's reward
+in under the crosshair (`+$0.90`, tagged HEADSHOT, GRENADE, DOUBLE KILL),
+holds it, and flies it up into the winnings counter, which ticks over as it
+lands. The amount is `MatchStarted.tier.kill_reward_micro_usd` - the
+server's statement of what every credited kill pays - and each kill shows
+its own; two kills are two payouts, never a total the client added up. The
+counter waits for the flight but always draws the server's figure: the wait
+moves *when* it is drawn, never what it says. The till climbs two semitones
+a kill through a run (`STREAK_MS`), so a double kill is heard as one.
 
 Names are cosmetic and are treated as hostile input. `sanitise_name` collapses
 whitespace, drops other control characters, bounds the length in `char`s and

@@ -57,6 +57,16 @@ export class Hud {
     this.balance = root.querySelector('#balance');
 
     this.winnings = root.querySelector('#winnings');
+    this.payouts = root.querySelector('#payouts');
+    /** Payouts on screen that have not reached the counter yet. */
+    this._pops = new Set();
+    /** Kills in the current quick run, and when the last one was. */
+    this._streak = 0;
+    this._streakAt = -Infinity;
+    /** The winnings as last drawn, and whether a payout has just reached
+     *  the counter so that it should tick over. */
+    this._shownWinnings = null;
+    this._landed = false;
     this.playerName = document.querySelector('#playername');
     this.matchClock = root.querySelector('#matchclock');
     this.killfeed = root.querySelector('#killfeed');
@@ -175,6 +185,197 @@ export class Hud {
       this.killfeed.lastElementChild.remove();
     }
     window.setTimeout(() => line.remove(), KILLFEED_MS);
+  }
+
+  /**
+   * The moment a kill pays. The reward punches in under the crosshair,
+   * holds long enough to read, and flies up into the winnings counter,
+   * which ticks over as it lands.
+   *
+   * `rewardMicroUsd` is the reward the server stated for this match's table
+   * in `MatchStarted`, and every kill it credits pays exactly that; this
+   * only formats it. Each kill shows its own reward. Two kills are two
+   * payouts, never a total the client added up - the total is the counter,
+   * and the counter is the server's.
+   *
+   * Returns which kill this is in a quick run, for the sound.
+   */
+  payout(event, rewardMicroUsd, { onLand } = {}) {
+    const now = performance.now();
+    this._streak = now - this._streakAt <= STREAK_MS ? this._streak + 1 : 1;
+    this._streakAt = now;
+    const paid = Number.isInteger(rewardMicroUsd) && rewardMicroUsd > 0;
+
+    // Anything still under the crosshair goes up now, so a second kill
+    // never lands on top of the first.
+    for (const pop of this._pops) pop.fly();
+
+    const box = document.createElement('div');
+    box.className = 'payout';
+    const amount = document.createElement('div');
+    amount.className = paid ? 'amount' : 'amount unpaid';
+    amount.textContent = paid ? `+${formatMoney(rewardMicroUsd)}` : 'ELIMINATED';
+    const details = document.createElement('div');
+    details.className = 'details';
+    const tags = document.createElement('div');
+    tags.className = 'tags';
+    const tag = (text, kind) => {
+      const span = document.createElement('span');
+      span.className = `tag ${kind}`;
+      span.textContent = text;
+      tags.appendChild(span);
+    };
+    if (event.headshot) tag('HEADSHOT', 'head');
+    const how = { grenade: 'GRENADE', zone: 'ZONE', fall: 'FALL' }[event.cause];
+    if (how) tag(how, 'cause');
+    if (this._streak >= 2) tag(streakName(this._streak), 'streak');
+    const victim = document.createElement('div');
+    victim.className = 'victim';
+    const name = document.createElement('b');
+    // A name off the wire goes in as text, never markup.
+    name.textContent = event.victim_name ?? '';
+    // With no reward to show, the headline already says it.
+    victim.append(paid ? 'eliminated ' : '', name);
+    if (tags.childElementCount) details.appendChild(tags);
+    details.appendChild(victim);
+    box.append(amount, details);
+    this.payouts.appendChild(box);
+
+    amount.animate(
+      [
+        { transform: 'scale(1.9)', opacity: 0 },
+        { transform: 'scale(0.93)', opacity: 1, offset: 0.55 },
+        { transform: 'scale(1)', opacity: 1 },
+      ],
+      { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'both' },
+    );
+    details.animate(
+      [
+        { transform: 'translateY(-5px)', opacity: 0 },
+        { transform: 'none', opacity: 1 },
+      ],
+      { duration: 200, delay: 90, easing: 'ease-out', fill: 'both' },
+    );
+    // A drift upwards while it is read, so it never sits dead still.
+    box.animate([{ translate: '0 0' }, { translate: '0 -8px' }], {
+      duration: PAYOUT_HOLD_MS,
+      easing: 'ease-out',
+      fill: 'forwards',
+    });
+    this._sparks(box, amount);
+
+    let flown = false;
+    let finished = false;
+    const pop = {};
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      box.remove();
+      this._pops.delete(pop);
+      if (paid) {
+        this._landed = true;
+        onLand?.();
+      }
+    };
+    pop.fly = () => {
+      if (flown) return;
+      flown = true;
+      details.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' });
+      if (!paid) {
+        amount.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, fill: 'forwards' });
+        window.setTimeout(finish, 280);
+        return;
+      }
+      // Up to the counter along a curve that passes to one side of the
+      // crosshair rather than across it, speeding up as it goes.
+      const from = amount.getBoundingClientRect();
+      const to = this._winningsTarget();
+      const dx = to.x - (from.left + from.width / 2);
+      const dy = to.y - (from.top + from.height / 2);
+      const bow = Math.abs(dy) * 0.32;
+      const frames = [];
+      for (let k = 0; k <= FLIGHT_FRAMES; k += 1) {
+        const u = k / FLIGHT_FRAMES;
+        const t = u ** 2.1;
+        // A quadratic curve through a control point off to the right.
+        const x = 2 * (1 - t) * t * (dx * 0.5 + bow) + t * t * dx;
+        const y = 2 * (1 - t) * t * (dy * 0.45) + t * t * dy;
+        const scale = 1 + (0.3 - 1) * t;
+        frames.push({
+          transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${scale.toFixed(3)})`,
+          opacity: k === FLIGHT_FRAMES ? 0.3 : 1 - 0.4 * t,
+        });
+      }
+      amount
+        .animate(frames, { duration: PAYOUT_FLY_MS, fill: 'forwards' })
+        .finished.then(finish, finish);
+      // Animations are not guaranteed to finish in a hidden tab; the
+      // counter must not wait on one forever.
+      window.setTimeout(finish, PAYOUT_FLY_MS + 250);
+    };
+    this._pops.add(pop);
+    window.setTimeout(pop.fly, PAYOUT_HOLD_MS);
+    return this._streak;
+  }
+
+  /** A burst of sparks off the reward as it lands on screen. Decoration. */
+  _sparks(box, amount) {
+    const centre = amount.offsetTop + amount.offsetHeight / 2;
+    for (let i = 0; i < SPARKS; i += 1) {
+      const spark = document.createElement('i');
+      spark.className = 'spark';
+      spark.style.top = `${centre}px`;
+      box.appendChild(spark);
+      const angle = (i / SPARKS) * Math.PI * 2 + Math.random() * 0.45;
+      const reach = 44 + Math.random() * 40;
+      // Wider than tall, the shape of the number it comes off, and each
+      // streak pointing the way it flies.
+      const x = Math.cos(angle) * reach * 1.8;
+      const y = Math.sin(angle) * reach * 0.8;
+      const turn = `rotate(${Math.atan2(y, x).toFixed(3)}rad)`;
+      const at = (f, stretch) =>
+        `translate(${(x * f).toFixed(1)}px, ${(y * f).toFixed(1)}px) ${turn} scaleX(${stretch})`;
+      spark.animate(
+        [
+          { transform: at(0.3, 1.8), opacity: 1 },
+          { transform: at(1, 0.4), opacity: 0 },
+        ],
+        {
+          duration: 480 + Math.random() * 220,
+          easing: 'cubic-bezier(0.1, 0.7, 0.3, 1)',
+          fill: 'forwards',
+        },
+      ).finished.then(() => spark.remove(), () => spark.remove());
+    }
+  }
+
+  /** Where the winnings counter is on screen, measured even while it is
+   *  hidden - before the first kill of a match it is. */
+  _winningsTarget() {
+    const hidden = this.winnings.classList.contains('hidden');
+    if (hidden) this.winnings.classList.remove('hidden');
+    const rect = this.winnings.getBoundingClientRect();
+    if (hidden) this.winnings.classList.add('hidden');
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  /** The counter taking the reward: a swell and a flash of white. */
+  _bumpWinnings() {
+    this.winnings.animate(
+      [
+        { transform: 'translateX(-50%) scale(1)' },
+        { transform: 'translateX(-50%) scale(1.5)', offset: 0.22 },
+        { transform: 'translateX(-50%) scale(1)' },
+      ],
+      { duration: 460, easing: 'ease-out' },
+    );
+    this.winnings.firstChild.animate(
+      [
+        { color: '#ffffff', textShadow: '0 0 14px rgba(159, 232, 180, 1), 0 0 3px #ffffff' },
+        { color: '#9fe8b4', textShadow: '0 1px 2px rgba(0, 0, 0, 0.9)' },
+      ],
+      { duration: 800, easing: 'ease-out' },
+    );
   }
 
   /**
@@ -309,9 +510,22 @@ export class Hud {
     // What the match has been worth so far: kills times the reward, counted
     // by the server. Shown only once there is something to show, so a player
     // with no kills is not stared at by a zero all match.
-    this.winnings.classList.toggle('hidden', local.winningsMicroUsd <= 0);
-    if (local.winningsMicroUsd > 0) {
-      this.winnings.firstChild.textContent = formatMoney(local.winningsMicroUsd);
+    //
+    // While a payout is on its way up the counter waits for it, so the
+    // reward lands and the total ticks over in the same instant. The figure
+    // drawn is the server's either way - this moves when it is drawn, never
+    // what it says.
+    const waiting = this._pops.size > 0 && !this._landed;
+    if (!waiting && local.winningsMicroUsd !== this._shownWinnings) {
+      this._shownWinnings = local.winningsMicroUsd;
+      this.winnings.classList.toggle('hidden', this._shownWinnings <= 0);
+      if (this._shownWinnings > 0) {
+        this.winnings.firstChild.textContent = formatMoney(this._shownWinnings);
+      }
+    }
+    if (this._landed) {
+      this._landed = false;
+      if (this._shownWinnings > 0) this._bumpWinnings();
     }
 
     // The clock, and whether the circle is moving right now. A player
@@ -425,6 +639,26 @@ export class Hud {
 /** How long a killfeed line stays up. */
 const KILLFEED_MS = 6000;
 
+/** How long a payout sits under the crosshair before it flies to the
+ *  counter, and how long the flight takes. */
+const PAYOUT_HOLD_MS = 900;
+const PAYOUT_FLY_MS = 520;
+
+/** Steps the flight's curve is drawn in. */
+const FLIGHT_FRAMES = 10;
+
+/** Sparks thrown off a payout as it lands. */
+const SPARKS = 12;
+
+/** Kills closer together than this are one run: a double, a triple. */
+const STREAK_MS = 4500;
+
+function streakName(count) {
+  if (count === 2) return 'DOUBLE KILL';
+  if (count === 3) return 'TRIPLE KILL';
+  return `KILL STREAK ×${count}`;
+}
+
 /** Most lines kept at once, so a busy fight cannot paper over the screen. */
 const KILLFEED_MAX = 5;
 
@@ -481,6 +715,7 @@ const TEMPLATE = `
   <div id="matchclock"></div>
   <div id="crosshair"></div>
   <div id="hitmarker"></div>
+  <div id="payouts"></div>
   <div id="killfeed"></div>
   <div id="scoreboard" class="hidden"></div>
   <div id="lock-hint">click to capture the mouse &middot; escape to release</div>
