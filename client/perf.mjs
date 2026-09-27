@@ -1,6 +1,11 @@
 // Measures frame rate in a real, GPU-accelerated Chrome.
 //
-//   node client/perf.mjs [--seconds 8]
+//   node client/perf.mjs [--seconds 8] [--map facility]
+//
+// It queues for the cheapest table on the map and measures once the match is
+// live, so the server wants `SOLATEL_MATCH_FLOOR=1` and a short
+// `SOLATEL_QUEUE_WAIT`. Each row is one graphics level (quality.js), plus the
+// cost of shadows altogether.
 //
 // The smoke test runs headless, where WebGL falls back to a software rasteriser
 // and a frame takes half a second. That is fine for asking "did it load", and
@@ -16,12 +21,18 @@ const URL = process.env.SOLATEL_URL ?? 'http://localhost:8080/?debug=1&nolock=1'
 
 const at = process.argv.indexOf('--seconds');
 const seconds = at === -1 ? 8 : Number(process.argv[at + 1]);
+const mapAt = process.argv.indexOf('--map');
+const mapName = mapAt === -1 ? null : process.argv[mapAt + 1];
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
-  headless: false,
+  // Headless draws with a software rasteriser, so its numbers mean nothing;
+  // it is only for checking that the script itself still works.
+  headless: process.env.PERF_HEADLESS === '1',
   defaultViewport: null,
   args: [
+    // Containers run as root, where Chrome will not start sandboxed.
+    ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
     '--window-size=1600,900',
     // Off to the side, so a profiling run does not take over the screen.
     '--window-position=2400,80',
@@ -47,11 +58,24 @@ const renderer = await page.evaluate(() => {
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
   return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
 });
-console.log(`GPU: ${renderer}\n`);
+console.log(`GPU: ${renderer}`);
+
+// Nothing is drawn in the menu, so get into a match first.
+await page.waitForSelector('#menu-tables .table', { timeout: 60000 });
+if (mapName) await page.click(`#menu-maps [data-map="${mapName}"]`);
+await page.click('#menu-tables .table');
+await page.waitForFunction(
+  () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
+  { timeout: 240000, polling: 250 },
+);
+console.log(
+  `map: ${await page.evaluate(() => window.solatel.local.mapName)}, ` +
+    `auto picked: ${await page.evaluate(() => window.solatel.quality)}\n`,
+);
 
 /** Runs for a while and reports the frame rate the client itself measured. */
-async function sample(label, setup) {
-  if (setup) await page.evaluate(setup);
+async function sample(label, setup, arg) {
+  if (setup) await page.evaluate(setup, arg);
   // A moment to settle before counting: changing a render setting recompiles
   // shaders, and those frames are not representative of anything.
   await new Promise((r) => setTimeout(r, 1200));
@@ -93,15 +117,19 @@ async function sample(label, setup) {
 // Each row turns the camera through a full circle from the spawn, so all four
 // see the same geometry and the difference between them is the setting rather
 // than the view. Draw calls and triangles are the worst the spin found.
-await sample('as shipped');
-await sample('without ambient occlusion', () => window.solatel.setComposer(false));
-await sample('without shadows', () => {
+await sample('as the player gets it');
+for (const level of ['low', 'medium', 'high', 'ultra']) {
+  await sample(`quality: ${level}`, (level) => window.solatel.setQuality(level), level);
+}
+// Last, because it cannot be undone: what shadows cost altogether, which no
+// level turns off (see quality.js for why).
+await sample('high, without shadows', () => {
+  window.solatel.setQuality('high');
   window.solatel.renderer.shadowMap.enabled = false;
   window.solatel.scene.traverse((n) => {
     if (n.isMesh) n.castShadow = n.receiveShadow = false;
   });
 });
-await sample('at half resolution', () => window.solatel.renderer.setPixelRatio(0.5));
 
 if (errors.length) {
   console.log('\nerrors:');

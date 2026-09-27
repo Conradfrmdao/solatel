@@ -38,6 +38,21 @@ const GRASS_STEP = 0.75;
 /** How far the eye moves before the grass is re-planted round it. */
 const GRASS_REPLANT = 5;
 
+/**
+ * How much of the scenery is drawn, from the graphics quality: `grass` is
+ * the share of `GRASS_RADIUS` planted and `sky` whether birds and chimney
+ * smoke are. Nothing here changes what a player can see of another player -
+ * the trees are the same at every level - which is the rule the presets keep.
+ */
+const detail = { grass: 1, sky: true, version: 0 };
+
+export function setNatureDetail({ grass = 1, sky = true } = {}) {
+  if (grass === detail.grass && sky === detail.sky) return;
+  detail.grass = grass;
+  detail.sky = sky;
+  detail.version += 1;
+}
+
 // ---- the textures --------------------------------------------------------
 
 function seeded(seed) {
@@ -643,17 +658,21 @@ class Grass {
     return code === 0 ? -1 : (code - 1) * 0.25;
   }
 
-  /** Plant round `eye` (in the map's own units) if it has moved far enough. */
+  /** Plant round `eye` (in the map's own units) if it has moved far enough,
+   *  or if the quality setting has changed how far out to plant. */
   plant(eye) {
-    if (this.at && Math.hypot(eye.x - this.at.x, eye.z - this.at.z) < GRASS_REPLANT) return;
+    const moved = !this.at || Math.hypot(eye.x - this.at.x, eye.z - this.at.z) >= GRASS_REPLANT;
+    if (!moved && this._detail === detail.version) return;
     this.at = { x: eye.x, z: eye.z };
+    this._detail = detail.version;
     const m = this._matrix;
     let n = 0;
-    const r2 = GRASS_RADIUS * GRASS_RADIUS;
-    const i0 = Math.floor((eye.x - GRASS_RADIUS) / GRASS_STEP);
-    const i1 = Math.ceil((eye.x + GRASS_RADIUS) / GRASS_STEP);
-    const j0 = Math.floor((eye.z - GRASS_RADIUS) / GRASS_STEP);
-    const j1 = Math.ceil((eye.z + GRASS_RADIUS) / GRASS_STEP);
+    const radius = GRASS_RADIUS * detail.grass;
+    const r2 = radius * radius;
+    const i0 = Math.floor((eye.x - radius) / GRASS_STEP);
+    const i1 = Math.ceil((eye.x + radius) / GRASS_STEP);
+    const j0 = Math.floor((eye.z - radius) / GRASS_STEP);
+    const j1 = Math.ceil((eye.z + radius) / GRASS_STEP);
     for (let i = i0; i <= i1; i += 1) {
       for (let j = j0; j <= j1; j += 1) {
         const h = hash2(i, j);
@@ -667,7 +686,7 @@ class Grass {
         const y = this.heightAt(x, z);
         if (y < 0) continue;
         // Shrink to nothing at the edge of the patch rather than stopping.
-        const edge = 1 - Math.sqrt(d2) / GRASS_RADIUS;
+        const edge = 1 - Math.sqrt(d2) / radius;
         const size = Math.min(1, edge * 5) * (0.7 + hash2(x, z) * 0.7);
         this._q.setFromAxisAngle(this._up, h * 6.28);
         m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(size, size * (0.8 + patch * 0.35), size));
@@ -732,6 +751,13 @@ class Smoke {
         this.puffs.push({ sprite, origin: new THREE.Vector3(x, y, z), age: (i / 36) * 22, life: 22, spin: Math.random() });
       }
     }
+  }
+
+  /** Drawn or not, from the quality setting. */
+  show(on) {
+    if (on === this.shown) return;
+    this.shown = on;
+    for (const puff of this.puffs) puff.sprite.visible = on;
   }
 
   update(dt) {
@@ -926,8 +952,12 @@ export async function growNature(map) {
     update(eye) {
       const dt = Math.min(0.1, Math.max(0, wind.value - last));
       last = wind.value;
-      smoke?.update(dt);
-      birds?.update(wind.value);
+      smoke?.show(detail.sky);
+      if (detail.sky) smoke?.update(dt);
+      if (birds) {
+        birds.mesh.visible = detail.sky;
+        if (detail.sky) birds.update(wind.value);
+      }
       if (!grass) return;
       local.copy(eye);
       map.worldToLocal(local);

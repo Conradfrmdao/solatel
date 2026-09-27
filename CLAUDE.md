@@ -581,6 +581,34 @@ one), a restrained bloom that only finds real highlights, tonemapping, and a
 light colour grade with a vignette. `scripts/fetch-photo-assets.mjs`
 downloads and transcodes every photograph; `ATTRIBUTION.md` lists them.
 
+### Graphics quality
+
+`quality.js`. Four levels - low, medium, high, ultra - and **auto**, the
+default: it guesses from the graphics chip (software rendering and phones
+start low, integrated graphics medium, anything else high, nothing ultra),
+then steps down one level at a time while a match is being drawn if the
+median frame rate over five seconds is under 48. It only ever steps down -
+stepping back up on a good stretch would oscillate - and remembers where it
+settled, so a slow machine does not start every session too high. A
+`?quality=` in the address forces a level for a script.
+
+**A level changes what drawing costs, never what can be seen.** Fog, the far
+plane, the trees and the players are identical at every level: a setting that
+thinned foliage or pulled the fog in would pay to be turned down, in a game
+that pays per kill. What moves is the pixel ratio (low draws at three
+quarters), the composer (off on low, where the renderer tonemaps directly),
+bloom, ambient occlusion (ultra only - 60 fps against 23 on an Iris Xe), the
+shadow map's resolution over the *same* area (shadows get coarser, never
+shorter or absent, because a shadow round a corner is information), how far
+out grass is planted, and birds and chimney smoke. Grass may vary only
+because it is too short to hide anybody: the tallest tuft is about 0.7 m
+against 1.25 m for a crouched player. Anything added to a preset has to pass
+the same test.
+
+`node client/perf.mjs` queues into a match and measures each level in turn on
+a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
+since a software rasteriser's frame rate means nothing.
+
 ### Trees, grass, smoke and birds
 
 `nature.js` grows what a map's scene extras describe. **Trees are data, not

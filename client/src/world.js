@@ -793,12 +793,27 @@ export class World {
    * it was the previous client's mistake, and a scene lit mostly by ambient
    * has no form in it at all, only coloured shapes.
    */
+  /**
+   * The shadow map's size, from the graphics quality. Over the same area at
+   * every size, so a lower setting makes shadows coarser, never shorter: a
+   * shadow round a corner is information, and no setting takes it away.
+   */
+  setShadowSize(size) {
+    const shadow = this.sun?.shadow;
+    if (!shadow || shadow.mapSize.x === size) return;
+    shadow.mapSize.set(size, size);
+    // Made again at the new size on the next frame.
+    shadow.map?.dispose();
+    shadow.map = null;
+  }
+
   _buildLighting() {
     const sun = new THREE.DirectionalLight(0xfff2e0, 3.2);
     sun.position.set(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
     sun.castShadow = true;
-    // 2048, not 4096. Four times the shadow texels cost real frames on
-    // integrated graphics and buy an edge nobody looks at while being shot at.
+    // 2048 until the quality setting says otherwise (`setShadowSize`): four
+    // times the texels cost real frames on integrated graphics and buy an
+    // edge nobody looks at while being shot at, so only ultra pays for them.
     sun.shadow.mapSize.set(2048, 2048);
 
     // The shadow camera is an orthographic box that has to contain everything

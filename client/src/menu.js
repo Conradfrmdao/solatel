@@ -824,11 +824,23 @@ const TEMPLATE = `
           <input id="rawmouse" type="checkbox" />
           <span>turn off if aim sticks after switching windows</span>
         </label>
-        <label class="check">
-          extra shading
-          <input id="quality" type="checkbox" />
-          <span>costs fps</span>
+        <label>
+          graphics
+          <select id="quality">
+            <option value="auto">auto</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="ultra">ultra</option>
+          </select>
+          <span id="quality-note"></span>
         </label>
+        <p class="fine settings-note">
+          Every level shows the same world: fog, distance, trees and players
+          are identical, so nobody sees more by turning it down. Lower levels
+          draw fewer pixels and cheaper effects. Ultra adds ambient occlusion,
+          which roughly halves the frame rate on laptop graphics.
+        </p>
       </div>
     </section>
 

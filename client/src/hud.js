@@ -436,10 +436,16 @@ export class Hud {
    * nothing to most players, and the thing they need to know is that it is the
    * setting to turn off when the game stutters.
    */
+  /** Wires the graphics level: `auto` or a preset, see quality.js. */
   bindQuality(initial, onChange) {
-    this.quality.checked = initial;
-    this.quality.addEventListener('change', () => onChange(this.quality.checked));
-    this.quality.addEventListener('keydown', (event) => event.preventDefault());
+    this.quality.value = initial;
+    this.quality.addEventListener('change', () => onChange(this.quality.value));
+  }
+
+  /** What is in force, and why, beside the setting. */
+  setQualityNote(text) {
+    const note = document.querySelector('#quality-note');
+    if (note) note.textContent = text;
   }
 
   /** Fades the crosshair with the sights up. Never to nothing: the dot is

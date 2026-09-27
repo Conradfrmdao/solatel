@@ -19,6 +19,8 @@
 
 import * as THREE from 'three';
 import { buildPost } from './post.js';
+import { Quality } from './quality.js';
+import { setNatureDetail } from './nature.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
@@ -44,6 +46,8 @@ const CLIENT_BUILD = 'solatel-client-three/0.1.0';
  */
 const DEFAULT_HORIZONTAL_FOV = 90;
 const FOV_KEY = 'solatel.fov';
+/** Where the old "extra shading" box kept its answer, read once so a player
+ *  who had turned ambient occlusion on starts on the level that has it. */
 const AO_KEY = 'solatel.ao';
 
 
@@ -109,12 +113,12 @@ async function boot() {
     antialias: true,
     powerPreference: 'high-performance',
   });
+  // The pixel ratio is the quality setting's (quality.js): capped at 2 even at
+  // ultra, because a 4K display would otherwise ask the GPU for four times
+  // the pixels for a difference nobody is looking for during a firefight.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  // Capped at 2, not the raw ratio. A 4K display would otherwise ask the GPU
-  // for four times the pixels for a difference nobody is looking for during a
-  // firefight.
   // Filmic tonemapping is most of the difference between "flat coloured
   // shapes" and "a lit place". Without it, bright surfaces clip to their raw
   // material colour and the whole scene reads as a diagram.
@@ -286,6 +290,13 @@ async function boot() {
       get composer() {
         return composer;
       },
+      /** The graphics level in force, and a way to set one - for perf.mjs. */
+      get quality() {
+        return quality.level;
+      },
+      setQuality(choice) {
+        quality.choose(choice);
+      },
       /** The current map's collision boxes, for scripts that need to know
        *  what is solid - a camera placed for a screenshot, say. */
       get brushes() {
@@ -312,30 +323,21 @@ async function boot() {
   }
 
   /**
-   * Ambient occlusion - built, but off unless asked for.
+   * The post-processing chain, built once and switched by the quality
+   * setting (quality.js) rather than rebuilt.
    *
-   * It is the best-looking thing available here: this arena is flat-shaded and
-   * untextured, so darkening the creases where surfaces meet is most of what
-   * turns a pile of coloured shapes into a pile of objects.
-   *
-   * It is also, measured on an Intel Iris Xe, the difference between 60 fps and
-   * 23. That is not a trade worth making by default in a shooter - a smooth 60
-   * beats a prettier 23 every time, and the player who wants it can say so.
-   * `perf.mjs` is what produced those numbers and will produce them again.
+   * Ambient occlusion is the best-looking thing in it, and measured on an
+   * Intel Iris Xe the difference between 60 fps and 23 - so only ultra has
+   * it, and nothing picks ultra for a player. A smooth 60 beats a prettier
+   * 23 every time in a shooter. `perf.mjs` measures every level.
    */
   const post = buildPost(renderer, scene, camera);
   const builtComposer = post?.composer ?? null;
   const aoPass = post?.aoPass ?? null;
+  const bloomPass = post?.bloomPass ?? null;
   let composer = builtComposer;
-  // Ambient occlusion is the expensive pass (see above) and stays a choice;
-  // the rest of the chain is cheap and always on.
-  let wantAo = options.has('ao');
-  try {
-    if (window.localStorage.getItem(AO_KEY) === '1') wantAo = true;
-  } catch {
-    /* private browsing */
-  }
-  if (aoPass) aoPass.enabled = wantAo;
+  // `?ao` turns ambient occlusion on at any level, for measuring it.
+  const forceAo = options.has('ao');
 
   const resize = () => {
     const width = window.innerWidth;
@@ -353,14 +355,32 @@ async function boot() {
   window.addEventListener('resize', resize);
   resize();
 
-  hud.bindQuality(Boolean(aoPass?.enabled), (on) => {
-    if (aoPass) aoPass.enabled = on;
-    try {
-      window.localStorage.setItem(AO_KEY, on ? '1' : '0');
-    } catch {
-      /* private browsing */
+  // The old box for ambient occlusion becomes the level that has it.
+  try {
+    if (window.localStorage.getItem(AO_KEY) === '1' && !window.localStorage.getItem('solatel.quality')) {
+      window.localStorage.setItem('solatel.quality', 'ultra');
     }
-  });
+    window.localStorage.removeItem(AO_KEY);
+  } catch {
+    /* private browsing */
+  }
+  const quality = new Quality(
+    renderer,
+    (level, preset) => {
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.ratio) * preset.scale);
+      builtComposer?.setPixelRatio(renderer.getPixelRatio());
+      composer = preset.post ? builtComposer : null;
+      if (bloomPass) bloomPass.enabled = preset.bloom;
+      if (aoPass) aoPass.enabled = preset.ao || forceAo;
+      world.setShadowSize(preset.shadows);
+      setNatureDetail({ grass: preset.grass, sky: preset.sky });
+      resize();
+    },
+    { forced: options.get('quality') },
+  );
+  hud.bindQuality(quality.choice, (choice) => quality.choose(choice));
+  quality.onChange = () => hud.setQualityNote(quality.describe());
+  quality.onChange();
 
   hud.bindFov(horizontalFov, (value) => {
     horizontalFov = value;
@@ -511,6 +531,9 @@ async function boot() {
     // empty scene until it is in.
     if (local.matchId && local.matchId !== enteredMatch && !entering && !link.parked) {
       enteredMatch = local.matchId;
+      // Loading a map compiles shaders for seconds; none of that is a
+      // judgement on the machine.
+      quality.reset(now);
       entering = enterMatch(local.mapName).finally(() => {
         entering = null;
       });
@@ -644,6 +667,9 @@ async function boot() {
     // through the pass only costs frames.
     renderer.clearDepth();
     renderer.render(viewmodel.scene, viewmodel.camera);
+
+    // Only frames of a match being drawn say anything about the machine.
+    quality.sample(now, dt * 1000);
   }
 
   renderer.autoClear = false;
