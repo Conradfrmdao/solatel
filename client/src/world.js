@@ -547,6 +547,23 @@ const SHADOW_EXTENT = 34;
 const SUN_OFFSET = { x: 18, y: 34, z: 12 };
 
 /**
+ * Each map's sky, and the light it gives: a photographed panorama
+ * (`assets/sky/<file>`), how strong and what colour its sun, and how much
+ * the sky itself lights. The yard is under cloud, so its sun is weak and its
+ * shadows soft; the arena has a late sun, low and warm. Weather is the same
+ * for everybody on a map, which is all the fairness it needs - a darker sky
+ * is a harder map for every player on it alike.
+ */
+const SKIES = {
+  facility: { file: 'partly', sun: 3.4, sunColour: 0xfff0dc, sky: 0.9 },
+  yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25 },
+  arena: { file: 'afternoon', sun: 3.1, sunColour: 0xffd9ab, sky: 0.85 },
+};
+
+/** The sky for anything not in `SKIES`. */
+const DEFAULT_SKY = 'facility';
+
+/**
  * A soft round glow, for the sun.
  *
  * Drawn rather than downloaded, like everything else here. A disc with a hard
@@ -691,6 +708,49 @@ function playBounds(map, box) {
   return box;
 }
 
+/**
+ * The brightest a sky texel may be when it is blurred into the environment
+ * light. The blur renders into half-float targets, whose largest value is
+ * 65,504: a clear sky's sun disc is twice that, becomes infinity there, and
+ * the whole frame goes to white or black. Well under the limit, because the
+ * blur adds neighbours together.
+ */
+const SKY_TEXEL_LIMIT = 24000;
+
+/**
+ * Brings every texel of an equirectangular sky under `SKY_TEXEL_LIMIT` by
+ * spreading what is over it evenly across the texels round it - a few
+ * degrees of sky - so the sun keeps all of its light and loses only the
+ * sharpness of its disc, which the blur takes off anyway for anything but a
+ * mirror. The sun that casts shadows is the directional light, not this.
+ */
+function spreadSun(data, width, height) {
+  const R = 6;
+  const share = 1 / ((2 * R + 1) * (2 * R + 1));
+  const over = [];
+  for (let i = 0; i < width * height; i += 1) {
+    const peak = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+    if (peak > SKY_TEXEL_LIMIT) over.push(i);
+  }
+  for (const i of over) {
+    const peak = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
+    const keep = SKY_TEXEL_LIMIT / peak;
+    const x0 = i % width;
+    const y0 = Math.floor(i / width);
+    for (let c = 0; c < 3; c += 1) {
+      const excess = data[i * 4 + c] * (1 - keep);
+      data[i * 4 + c] *= keep;
+      for (let dy = -R; dy <= R; dy += 1) {
+        const y = Math.min(height - 1, Math.max(0, y0 + dy));
+        for (let dx = -R; dx <= R; dx += 1) {
+          const x = (x0 + dx + width) % width;
+          data[(y * width + x) * 4 + c] += excess * share;
+        }
+      }
+    }
+  }
+}
+
 export class World {
   constructor(scene, renderer = null) {
     this.scene = scene;
@@ -705,7 +765,46 @@ export class World {
     this._buildSky();
     this._buildTracerPool();
     this._buildZone();
-    this.skyReady = renderer ? this._loadSky().catch((err) => console.warn('sky unavailable:', err)) : null;
+    // No sky until a map: each map brings its own (`load`), and a player
+    // downloads only the one they are playing under.
+    this.skyReady = null;
+  }
+
+  /**
+   * Put up the sky for `mapName`, reading it the first time it is asked for
+   * and keeping it after. If it cannot be read the last sky stays up: a
+   * wrong sky is a small thing, and no sky is a black one.
+   */
+  async useSky(mapName) {
+    const spec = SKIES[mapName] ?? SKIES[DEFAULT_SKY];
+    this._skies = this._skies ?? new Map();
+    if (!this._skies.has(spec.file)) this._skies.set(spec.file, this._loadSky(spec.file));
+    // Only the latest request goes up: the sky read at startup may still be
+    // arriving after the map's own.
+    this._wantSky = spec.file;
+    let sky;
+    try {
+      sky = await this._skies.get(spec.file);
+    } catch (err) {
+      this._skies.delete(spec.file);
+      console.warn('sky unavailable:', err);
+      return;
+    }
+    if (this._wantSky !== spec.file) return;
+    this.scene.environment = sky.environment;
+    this.scene.environmentIntensity = spec.sky;
+    this.scene.background = sky.background;
+    this.scene.backgroundIntensity = 1.0;
+    this.scene.fog.color.copy(sky.horizon);
+    this.sunOffset.copy(sky.toSun).multiplyScalar(42);
+    // The sky now does the fill the hemisphere, bounce and ambient lights
+    // stood in for; keep a little of each so interiors are not black.
+    this._fill.hemisphere.intensity = 0.35;
+    this._fill.bounce.intensity = 0.3;
+    this._fill.ambient.intensity = 0.0;
+    this.sun.intensity = spec.sun;
+    this.sun.color.set(spec.sunColour);
+    if (this.sunSprite) this.sunSprite.visible = false;
   }
 
   /**
@@ -722,8 +821,8 @@ export class World {
    * the colour of the panorama's horizon, so the land fades into the sky
    * behind it rather than into a grey of its own.
    */
-  async _loadSky() {
-    const hdr = await new HDRLoader().setDataType(THREE.FloatType).loadAsync('assets/sky/sky_1k.hdr');
+  async _loadSky(file) {
+    const hdr = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(`assets/sky/${file}_1k.hdr`);
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const { data, width, height } = hdr.image;
     let best = -1;
@@ -745,19 +844,16 @@ export class World {
       Math.sin(elevation),
       Math.sin(azimuth) * Math.cos(elevation),
     );
-    this.sunOffset.copy(toSun).multiplyScalar(42);
+    spreadSun(data, width, height);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromEquirectangular(hdr).texture;
-    this.scene.environmentIntensity = 0.9;
+    const environment = pmrem.fromEquirectangular(hdr).texture;
     pmrem.dispose();
     hdr.dispose();
 
-    const background = await new THREE.TextureLoader().loadAsync('assets/sky/sky.webp');
+    const background = await new THREE.TextureLoader().loadAsync(`assets/sky/${file}.webp`);
     background.mapping = THREE.EquirectangularReflectionMapping;
     background.colorSpace = THREE.SRGBColorSpace;
-    this.scene.background = background;
-    this.scene.backgroundIntensity = 1.0;
 
     // The horizon's colour, from the band of the panorama just above it.
     const canvas = document.createElement('canvas');
@@ -769,16 +865,8 @@ export class World {
     const sum = [0, 0, 0];
     for (let i = 0; i < band.length; i += 4) for (let c = 0; c < 3; c += 1) sum[c] += band[i + c];
     const n = band.length / 4;
-    this.scene.fog.color.setRGB(sum[0] / n / 255, sum[1] / n / 255, sum[2] / n / 255, THREE.SRGBColorSpace);
-
-    // The sky now does the fill the hemisphere, bounce and ambient lights
-    // stood in for; keep a little of each so interiors are not black.
-    this._fill.hemisphere.intensity = 0.35;
-    this._fill.bounce.intensity = 0.3;
-    this._fill.ambient.intensity = 0.0;
-    this.sun.intensity = 3.4;
-    this.sun.color.set(0xfff0dc);
-    if (this.sunSprite) this.sunSprite.visible = false;
+    const horizon = new THREE.Color().setRGB(sum[0] / n / 255, sum[1] / n / 255, sum[2] / n / 255, THREE.SRGBColorSpace);
+    return { environment, background, toSun, horizon };
   }
 
   /**
@@ -1117,6 +1205,16 @@ export class World {
    * screen for something already in memory.
    */
   async load(url) {
+    // The map's own sky, read alongside the map rather than after it.
+    const sky = this.renderer ? this.useSky(/([a-z]+)\.glb$/.exec(url)?.[1]) : null;
+    try {
+      return await this._loadMap(url);
+    } finally {
+      await sky;
+    }
+  }
+
+  async _loadMap(url) {
     if (this.arena && this._loadedUrl === url) {
       this._takeWater(this.arena);
       return this.arena;

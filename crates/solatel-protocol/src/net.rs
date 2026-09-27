@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -187,6 +187,12 @@ pub struct GrenadeSnapshot {
 pub struct PlayerSnapshot {
     pub id: PlayerId,
     pub state: PlayerState,
+    /// Changing magazines right now. Sent to everybody, because a reload is
+    /// done in plain view and heard: it is what a player standing there
+    /// would see. How many rounds anybody has left is not sent to anybody
+    /// but them.
+    #[serde(default)]
+    pub reloading: bool,
 }
 
 /// One player's match record, as counted by the server.
@@ -665,6 +671,7 @@ mod tests {
             players: vec![PlayerSnapshot {
                 id: PlayerId::new(),
                 state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
+                reloading: true,
             }],
             ammo: 30,
             reload_ms: 0,

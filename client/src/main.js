@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import { buildPost } from './post.js';
 import { Quality } from './quality.js';
+import { Impacts } from './impacts.js';
 import { setNatureDetail } from './nature.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
@@ -147,6 +148,7 @@ async function boot() {
   const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 220);
 
   const world = new World(scene, renderer);
+  const impacts = new Impacts(scene);
   const remotes = new Remotes(scene);
   const viewmodel = new Viewmodel();
 
@@ -286,7 +288,7 @@ async function boot() {
   if (options.has('debug')) {
     window.solatel = {
       link, local, input, world, remotes, viewmodel, scene, camera, SIM,
-      renderer, audio, hud,
+      renderer, audio, hud, impacts,
       get composer() {
         return composer;
       },
@@ -423,6 +425,10 @@ async function boot() {
         remotes.record(message, now);
       } else if (message.t === 'shot_fired') {
         world.addTracer(message.from, message.to, message.hit_player);
+        // Where it landed, as the server says: dust off a wall, a mist off
+        // a player. Drawn for every shot, the player's own included, from
+        // the server's account rather than this client's prediction.
+        impacts.strike(message.from, message.to, message.hit_player, camera.position);
         const mine = message.shooter === local.id;
         // This player's own shot was already kicked, flashed and heard when
         // they fired it - see the predicted shots below. Doing it again here
@@ -624,11 +630,13 @@ async function boot() {
 
     local.tickTimers(dt);
     world.update(dt);
+    impacts.update(dt);
     world.followWithShadows(eye);
     world.positionSky(eye, camera.far);
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position);
+    for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     hud.update(now, link, local, input);
 
