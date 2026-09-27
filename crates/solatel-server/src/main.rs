@@ -8,6 +8,7 @@ mod admin;
 mod config;
 mod db;
 mod game;
+mod lease;
 mod ledger;
 mod reconcile;
 mod records;
@@ -225,6 +226,19 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Nothing touches escrow until this process holds the lease on it: the
+    // ledger's first act is to settle what a previous run left there, and a
+    // second server doing that would forfeit this one's live stakes. Free
+    // play has no escrow to own.
+    let lease_pool = pool.clone();
+    let escrow_lease = if free_play {
+        None
+    } else {
+        let held = lease::acquire(&pool, lease::ESCROW).await?;
+        lease::keep(pool.clone(), held.clone());
+        Some(held)
+    };
+
     let (game, commands) = game::channel();
     let wake = std::sync::Arc::new(tokio::sync::Notify::new());
     let ledger = if free_play {
@@ -300,10 +314,22 @@ async fn main() -> Result<()> {
 
     tracing::info!("listening on http://{}", config.bind_addr);
 
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("server error")
+        .context("server error");
+    // Hand escrow on straight away rather than making the next server wait
+    // out the lease. What is still in it is this process's matches, which end
+    // with it; the next owner settles them.
+    if let Some(held) = &escrow_lease
+        && let Err(err) = lease::release(&lease_pool, held).await
+    {
+        tracing::warn!(
+            ?err,
+            "could not release the escrow lease; the next server will wait for it to lapse"
+        );
+    }
+    served
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

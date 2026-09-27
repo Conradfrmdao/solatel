@@ -75,8 +75,19 @@ right answer when matches outgrow a machine. It is the wrong one here for one
 specific reason: **the escrow sweep assumes one process owns the escrow
 account**. A second process pointing at this database would settle the first
 one's live stakes out from under it, and those are real money being played
-for. Splitting later means an escrow account per server, or a lease on that
-sweep, and that is the work to do *first*.
+for. Splitting later means an escrow account per server, and that is the
+work to do *first*.
+
+**The lease is what enforces one owner until then** (`lease.rs`, migration
+0007). Before the ledger touches escrow a server takes the `escrow` row of
+`escrow_lease`, renews it every ten seconds and releases it on a graceful
+shutdown. A second server waits up to ninety seconds for it to lapse - a
+crashed holder's does within thirty - and then refuses to start, naming the
+holder. A server that finds its lease taken, or cannot renew it before it
+would lapse, exits: its stakes are then orphans for the next owner to settle,
+which is the safe side to be wrong on. A row with a heartbeat rather than an
+advisory lock, because an advisory lock belongs to one session and Neon's
+pooled endpoint does not keep one. Free play takes no lease.
 
 A **`Connection`** is a person - socket, name, wallet, resume token. A
 **`Body`** is that person inside one match - position, health, stats,
