@@ -1217,6 +1217,16 @@ snapshot: snapshots are twenty a second and already the bulk of the traffic,
 and a name plus six counters per player in every one of them would be most of
 a kilobyte a second per client to say nothing had changed.
 
+**A kill that pays is seen paying.** `hud.payout` punches the table's reward
+in under the crosshair (`+$0.90`, tagged HEADSHOT, GRENADE, DOUBLE KILL),
+holds it, and flies it up into the winnings counter, which ticks over as it
+lands. The amount is `MatchStarted.tier.kill_reward_micro_usd` - the
+server's statement of what every credited kill pays - and each kill shows
+its own; two kills are two payouts, never a total the client added up. The
+counter waits for the flight but always draws the server's figure: the wait
+moves *when* it is drawn, never what it says. The till climbs two semitones
+a kill through a run (`STREAK_MS`), so a double kill is heard as one.
+
 Names are cosmetic and are treated as hostile input. `sanitise_name` collapses
 whitespace, drops other control characters, bounds the length in `char`s and
 falls back to a stable name rather than rejecting anybody. Whitespace is

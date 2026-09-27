@@ -446,10 +446,15 @@ async function boot() {
         hud.addKill(message);
         if (message.killer === local.id) {
           // A kill is the only thing in this game that pays, so it gets the
-          // only sound that means money. The hit confirmation stays under
-          // it: one says "you connected", the other says "you got paid",
-          // and they are different pieces of information.
-          audio.paid();
+          // only sound that means money and the reward on screen. The hit
+          // confirmation stays under it: one says "you connected", the
+          // other says "you got paid", and they are different pieces of
+          // information. The reward is the one the server stated for this
+          // table when the match started.
+          const streak = hud.payout(message, local.tier?.kill_reward_micro_usd, {
+            onLand: () => audio.landed(),
+          });
+          audio.paid(streak);
         }
       }
     }
