@@ -17,6 +17,9 @@
 // itself, because a preview that disagreed with the transfer would be a
 // preview that lied about money.
 
+import qrcode from 'qrcode-generator';
+import { canSend, connect, depositTransaction, latestBlockhash, parseSol, signAndSend, signText, watchWallets } from './solana.js';
+
 const PANES = ['play', 'wallet', 'profile', 'fair', 'settings'];
 
 /** How long a read of the payout record is shown before it is read again.
@@ -233,6 +236,150 @@ export class Menu {
   }
 
   /**
+   * Signing in with a Solana wallet, and paying in from one.
+   *
+   * The wallets are whatever this browser has, found through the Wallet
+   * Standard (`solana.js`). Signing in asks the server for text to sign,
+   * has the wallet sign it, and sends the signature back: the server checks
+   * it and either links the wallet to this account or, when the wallet is
+   * another account's, hands over a key for that account (`switchTo`). A
+   * deposit is a transfer with this player's memo, built here and signed
+   * and sent by the wallet; the server credits it when the chain has it,
+   * exactly as it credits one sent any other way.
+   */
+  bindSolana({ challenge, prove, switchTo }) {
+    this.solana = { wallet: null, account: null, challenge, prove, switchTo, signingIn: false };
+    const q = (id) => this.root.querySelector(id);
+    watchWallets((wallets) => this._drawWallets(wallets));
+    q('#solana-wallets').addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-wallet]');
+      if (!button) return;
+      const wallet = this._wallets?.[Number(button.dataset.wallet)];
+      if (!wallet) return;
+      try {
+        this.solana.account = await connect(wallet);
+        this.solana.wallet = wallet;
+        q('#solana-address').textContent = this.solana.account.address;
+        q('#solana-connected').classList.remove('hidden');
+        q('#solana-deposit button').disabled = !canSend(wallet);
+        this.say(`connected to ${wallet.name}`);
+      } catch (err) {
+        this.say(`the wallet did not connect: ${err?.message ?? err}`, true);
+      }
+    });
+    q('#solana-signin').addEventListener('click', () => {
+      if (!this.solana.account) return;
+      this.solana.signingIn = true;
+      this.say('asking the server for something to sign…');
+      challenge();
+    });
+    q('#solana-deposit').addEventListener('submit', (event) => {
+      event.preventDefault();
+      this._depositFromWallet();
+    });
+  }
+
+  /** The server's text to sign: the connected wallet signs it. */
+  async walletChallenge(text) {
+    const { wallet, account, prove, signingIn } = this.solana ?? {};
+    if (!signingIn || !wallet || !account) return;
+    this.solana.signingIn = false;
+    try {
+      this.say(`sign the message in ${wallet.name}`);
+      const signature = await signText(wallet, account, text);
+      this.say('checking the signature…');
+      prove(account.address, signature);
+    } catch (err) {
+      this.say(`not signed: ${err?.message ?? err}`, true);
+    }
+  }
+
+  /** The signature checked out. */
+  walletSignedIn(message) {
+    if (message.account_key) {
+      // The wallet is another account's: this browser becomes it.
+      this.say('signed in; switching to the account that wallet belongs to…');
+      this.solana?.switchTo(message.account_key);
+      return;
+    }
+    this.setSolana(message.public_key);
+    this.say('signed in: this account is yours from any browser you sign in to with that wallet');
+  }
+
+  walletRefused(reason) {
+    this.say(reason, true);
+  }
+
+  /** The wallet this account is signed in with, or null. */
+  setSolana(publicKey) {
+    const q = (id) => this.root.querySelector(id);
+    const linked = Boolean(publicKey);
+    q('#solana-status').innerHTML = linked
+      ? `Signed in with <code>${escapeHtml(shortAddress(publicKey))}</code>. Sign in with that wallet on any browser and this account, and its balance, are there.`
+      : 'Not signed in with a wallet yet. Sign in with one and this account is yours from any browser, rather than resting on a key kept in this one.';
+    q('#profile-wallet').textContent = linked ? publicKey : 'none yet: sign in with one in the wallet pane';
+  }
+
+  _drawWallets(wallets) {
+    this._wallets = wallets;
+    const q = (id) => this.root.querySelector(id);
+    q('#solana-none').classList.toggle('hidden', wallets.length > 0);
+    q('#solana-wallets').innerHTML = '';
+    wallets.forEach((wallet, i) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.wallet = String(i);
+      button.className = 'wallet-choice';
+      // A wallet's icon is a data URL it supplies; anything else is dropped
+      // rather than fetched.
+      if (typeof wallet.icon === 'string' && wallet.icon.startsWith('data:image/')) {
+        const icon = document.createElement('img');
+        icon.src = wallet.icon;
+        icon.alt = '';
+        button.appendChild(icon);
+      }
+      button.append(`connect ${wallet.name ?? 'wallet'}`);
+      q('#solana-wallets').appendChild(button);
+    });
+  }
+
+  async _depositFromWallet() {
+    const { wallet, account } = this.solana ?? {};
+    const terms = this.terms;
+    if (!wallet || !account || !terms) return;
+    const lamports = parseSol(this.root.querySelector('#solana-amount').value);
+    if (lamports === null || lamports <= 0n) {
+      this.say('that is not an amount of SOL', true);
+      return;
+    }
+    if (!canSend(wallet)) {
+      this.say(`${wallet.name} cannot send from this page; use the address and memo below`, true);
+      return;
+    }
+    try {
+      this.say('building the transfer…');
+      const blockhash = await latestBlockhash();
+      const transaction = depositTransaction({
+        payer: account.address,
+        to: terms.deposit_address,
+        lamports,
+        blockhash,
+        memo: terms.deposit_memo,
+      });
+      this.say(`approve it in ${wallet.name}`);
+      const signature = await signAndSend(wallet, account, transaction, `solana:${terms.network}`);
+      const cluster = encodeURIComponent(terms.network);
+      this.walletNote.innerHTML =
+        `sent: it is in your balance about fifteen seconds after it is final. ` +
+        `<a href="https://explorer.solana.com/tx/${encodeURIComponent(signature)}?cluster=${cluster}" target="_blank" rel="noopener">see it on the chain</a>`;
+      this.walletNote.classList.remove('warn');
+      this.root.querySelector('#solana-amount').value = '';
+    } catch (err) {
+      this.say(`not sent: ${err?.message ?? err}`, true);
+    }
+  }
+
+  /**
    * What the server offers for money in and out, from the `Welcome`.
    *
    * Null is a server with no wallet, and the pane says so in words rather
@@ -254,9 +401,20 @@ export class Menu {
     q('#deposit-memo').textContent = terms.deposit_memo;
     q('#deposit-rate').textContent =
       `1 SOL = ${money(terms.micro_usd_per_sol)} here. A fixed rate, not the market's.`;
-    q('#deposit-link').href =
+    const pay =
       `solana:${terms.deposit_address}?memo=${encodeURIComponent(terms.deposit_memo)}` +
       '&label=Solatel';
+    q('#deposit-link').href = pay;
+    // The same Solana Pay request as a code for a phone's wallet to scan: it
+    // opens a transfer to the treasury with the memo already filled in.
+    try {
+      const code = qrcode(0, 'M');
+      code.addData(pay);
+      code.make();
+      q('#deposit-qr').innerHTML = code.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
+    } catch (err) {
+      console.warn('no QR code:', err);
+    }
     q('#deposit-cli').textContent =
       `solana transfer ${terms.deposit_address} 0.1 --with-memo ${terms.deposit_memo} ` +
       `--url ${terms.network} --allow-unfunded-recipient`;
@@ -663,8 +821,27 @@ const TEMPLATE = `
       <div id="wallet-on" class="hidden">
         <div id="wallet-network"></div>
 
+        <div class="wallet-block" id="solana-block">
+          <div class="label">your solana wallet</div>
+          <p class="fine" id="solana-status"></p>
+          <div id="solana-wallets"></div>
+          <p class="fine hidden" id="solana-none">
+            No wallet found in this browser. Phantom, Solflare and Backpack all
+            work here; on a phone, scan the code below with yours.
+          </p>
+          <div id="solana-connected" class="hidden">
+            <div class="field"><span>connected</span><code id="solana-address"></code></div>
+            <button type="button" id="solana-signin">sign in with this wallet</button>
+            <form id="solana-deposit" class="inline">
+              <span class="with-unit"><input id="solana-amount" inputmode="decimal" autocomplete="off" placeholder="0.10" /><span>SOL</span></span>
+              <button type="submit">deposit from this wallet</button>
+            </form>
+          </div>
+        </div>
+
         <div class="wallet-block">
           <div class="label">put money in</div>
+          <div id="deposit-qr" class="qr" title="scan with a phone wallet"></div>
           <div class="field">
             <span>send SOL to</span><code id="deposit-address"></code>
             <button type="button" data-copy="deposit-address">copy</button>
@@ -724,6 +901,9 @@ const TEMPLATE = `
           <button type="button" data-copy="account-id">copy</button>
         </div>
         <div class="field">
+          <span>wallet</span><code id="profile-wallet"></code>
+        </div>
+        <div class="field">
           <span>account key</span><code id="account-key" class="secret">hidden</code>
           <button type="button" id="account-reveal">show</button>
           <button type="button" id="account-copy">copy</button>
@@ -776,8 +956,9 @@ const TEMPLATE = `
       <div class="label">what is not done yet</div>
       <ul class="plain honest">
         <li>Solatel is new and small. Tables fill fastest at the play times we announce.</li>
-        <li>Your account is a key this browser keeps. Lose it and the balance goes
-          with it, so save a copy from the profile pane.</li>
+        <li>Without a Solana wallet, your account is a key this browser keeps,
+          and losing it loses the balance. Sign in with a wallet in the wallet
+          pane and the account is yours from any browser.</li>
         <li>The anti-cheat is statistics and a person, not a program on your
           machine. It will not catch everybody on day one, and we would rather
           say so than pretend.</li>
@@ -797,7 +978,9 @@ const TEMPLATE = `
           Rifle: "Assault Rifle" by Zsky.</li>
         <li>Photographed surfaces, leaves, grass and sky from
           <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a> (CC0).
-          Drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT).</li>
+          Drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT).
+          Payment codes by <a href="https://github.com/kazuhikoarase/qrcode-generator" target="_blank" rel="noopener">qrcode-generator</a>,
+          Copyright (c) 2009 Kazuhiko Arase (MIT).</li>
         <li>The facility, the code and everything else: Solatel.</li>
       </ul>
     </section>

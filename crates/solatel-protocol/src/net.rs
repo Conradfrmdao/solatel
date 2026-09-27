@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 13;
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -157,6 +157,16 @@ pub enum ClientMsg {
         amount_micro_usd: i64,
         /// A base58 Solana address. Checked on the server, not trusted.
         destination: String,
+    },
+    /// Asks for something to sign with a Solana wallet, to prove it is this
+    /// player's. Answered with [`ServerMsg::WalletChallenge`].
+    WalletChallenge,
+    /// The challenge, signed. `public_key` and `signature` are base58, as
+    /// wallets give them. The server checks the signature itself; nothing
+    /// here is taken on trust.
+    WalletProof {
+        public_key: String,
+        signature: String,
     },
     /// Diagnostic round-trip check. Retained from Phase 1.
     Echo { payload: String },
@@ -363,6 +373,9 @@ pub enum ServerMsg {
         account_key: Option<String>,
         /// Deposits and withdrawals, if this server takes them.
         wallet: Option<WalletTerms>,
+        /// The Solana wallet this account is signed in with, if it has one.
+        #[serde(default)]
+        solana_pubkey: Option<String>,
     },
     Pong {
         seq: u32,
@@ -601,6 +614,24 @@ pub enum ServerMsg {
     },
     /// A withdrawal was not accepted. Nothing moved.
     WithdrawalRefused {
+        reason: String,
+    },
+    /// Text for the player's wallet to sign, to prove the wallet is theirs.
+    /// Good once, and only for a few minutes.
+    WalletChallenge {
+        message: String,
+    },
+    /// The wallet's signature checked out. Either this account now carries
+    /// the wallet (`account_key` is `None`), or the wallet belongs to
+    /// another account, which this browser is now signed in as: keep
+    /// `account_key` and connect again with it.
+    WalletSignedIn {
+        public_key: String,
+        player_id: PlayerId,
+        account_key: Option<String>,
+    },
+    /// Signing in with a wallet did not happen, and why.
+    WalletRefused {
         reason: String,
     },
     Echo {

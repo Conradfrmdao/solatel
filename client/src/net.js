@@ -298,6 +298,8 @@ export class Link {
           writeAccountKey(message.account_key);
         }
         this.wallet = message.wallet ?? null;
+        /** The Solana wallet this account is signed in with, or null. */
+        this.solanaPubkey = message.solana_pubkey ?? null;
         this.serverTickHz = message.tick_hz;
         /** Every map this server runs, with how many each seats. The menu
          *  offers these; the server forms a match on whichever is picked. */

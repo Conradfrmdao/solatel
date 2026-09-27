@@ -368,7 +368,7 @@ async fn handle(
             for row in withdrawals {
                 game.send(GameCommand::Tell {
                     player_id,
-                    message: row.message(),
+                    message: Box::new(row.message()),
                 })
                 .await;
             }
@@ -392,7 +392,7 @@ async fn handle(
                     .await;
                     game.send(GameCommand::Tell {
                         player_id,
-                        message: row.message(),
+                        message: Box::new(row.message()),
                     })
                     .await;
                     if let Some(wallet) = wallet {
@@ -402,7 +402,7 @@ async fn handle(
                 Err(reason) => {
                     game.send(GameCommand::Tell {
                         player_id,
-                        message: ServerMsg::WithdrawalRefused { reason },
+                        message: Box::new(ServerMsg::WithdrawalRefused { reason }),
                     })
                     .await;
                 }
@@ -1457,6 +1457,33 @@ pub async fn withdrawals_in_flight(pool: &PgPool) -> Result<i64> {
         .fetch_one(pool)
         .await
         .context("counting withdrawals in flight")
+}
+
+/// Account ids, for a test that posts to the ledger.
+#[cfg(test)]
+pub(crate) fn test_accounts() -> Accounts {
+    Accounts::default()
+}
+
+/// A test deposit into `player`'s balance, the way the chain watcher posts a
+/// real one.
+#[cfg(test)]
+pub(crate) async fn test_deposit(
+    pool: &PgPool,
+    accounts: &mut Accounts,
+    player: PlayerId,
+    micros: i64,
+) -> Result<()> {
+    let account = balance_account(pool, accounts, player).await?;
+    let external = system_account(pool, accounts, "external").await?;
+    post(
+        pool,
+        "deposit",
+        &format!("test-deposit:{player}:{}", Uuid::new_v4()),
+        &[(external, -micros), (account, micros)],
+    )
+    .await?;
+    Ok(())
 }
 
 /// A real kill, for a test that reads the ledger: two players of the test's

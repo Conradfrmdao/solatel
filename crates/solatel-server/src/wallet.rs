@@ -410,7 +410,10 @@ impl Chain<'_> {
 
     async fn tell(&self, player_id: PlayerId, message: ServerMsg) {
         self.game
-            .send(GameCommand::Tell { player_id, message })
+            .send(GameCommand::Tell {
+                player_id,
+                message: Box::new(message),
+            })
             .await;
     }
 

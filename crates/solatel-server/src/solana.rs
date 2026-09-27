@@ -242,8 +242,19 @@ impl Rpc {
     /// A blockhash recent enough for a transaction to be accepted, and the
     /// last block height at which a transaction signed against it can land.
     pub async fn recent_blockhash(&self) -> Result<([u8; 32], u64)> {
+        self.blockhash_at("finalized").await
+    }
+
+    /// A blockhash only confirmed, not finalized: some thirty blocks newer,
+    /// so a transaction built on it lasts that much longer - which is what a
+    /// person approving a deposit in their wallet needs.
+    pub async fn confirmed_blockhash(&self) -> Result<([u8; 32], u64)> {
+        self.blockhash_at("confirmed").await
+    }
+
+    async fn blockhash_at(&self, commitment: &str) -> Result<([u8; 32], u64)> {
         let result = self
-            .call("getLatestBlockhash", json!([{"commitment": "finalized"}]))
+            .call("getLatestBlockhash", json!([{"commitment": commitment}]))
             .await?;
         let value = result.get("value").context("no blockhash in the answer")?;
         let text = value

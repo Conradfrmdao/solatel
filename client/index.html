@@ -842,6 +842,7 @@
       /* ---- the wallet and the account -------------------------------- */
       #wallet-note { font-size: 13px; color: var(--dim); min-height: 1.3em; }
       #wallet-note.warn { color: var(--bad); }
+      #wallet-note a { color: #9fe8b4; }
       #wallet-on { display: grid; gap: 14px; }
       #wallet-network {
         font-size: 12px;
@@ -926,6 +927,27 @@
       form.inline input { flex: 1 1 240px; }
       .with-unit { display: flex; align-items: center; gap: 6px; min-width: 0; }
       .with-unit input { flex: 1; }
+      /* A Solana Pay code, on white: a scanner wants the quiet zone. */
+      .qr {
+        justify-self: start;
+        width: 148px;
+        height: 148px;
+        padding: 6px;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+      .qr svg { display: block; width: 100%; height: 100%; }
+      #solana-wallets { display: flex; flex-wrap: wrap; gap: 8px; }
+      #solana-connected { display: grid; gap: 8px; }
+      .wallet-choice {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .wallet-choice img { width: 20px; height: 20px; border-radius: 4px; }
+      @media (max-width: 560px) {
+        .qr { justify-self: center; }
+      }
       #wallet-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
       #wallet-history .in b { color: #9fe8b4; }
       #wallet-history .out.returned b { color: var(--bad); }
