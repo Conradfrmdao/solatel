@@ -166,14 +166,21 @@ if (wallet.terms) {
 }
 
 // 3. The tabs work.
-for (const pane of ['wallet', 'profile', 'settings', 'play']) {
+for (const pane of ['wallet', 'profile', 'fair', 'settings', 'play']) {
   await page.click(`#menu-tabs [data-pane="${pane}"]`);
   const shown = await page.$eval(`.pane[data-pane="${pane}"]`, (e) =>
     !e.classList.contains('hidden'),
   );
   if (!shown) fail(`the ${pane} tab did not open its pane`);
+  if (pane === 'fair') {
+    // The payout record is read from the ledger when the pane opens; a pane
+    // that only ever says "reading" is a pane with nothing to prove.
+    await page
+      .waitForSelector('#proof-figures .figure', { timeout: 10000 })
+      .catch(() => fail('the fair play pane never showed the payout record'));
+  }
 }
-console.log('>> every tab opens its pane');
+console.log('>> every tab opens its pane, and the payout record loads');
 
 // 4. Pick the cheapest table on the first map and get in line.
 const stake = Math.min(...stakes);

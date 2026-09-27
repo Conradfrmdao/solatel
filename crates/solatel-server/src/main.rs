@@ -10,6 +10,7 @@ mod db;
 mod game;
 mod lease;
 mod ledger;
+mod proof;
 mod reconcile;
 mod records;
 mod solana;
@@ -56,6 +57,8 @@ pub struct AppState {
     game: GameHandle,
     /// The operator's view. `None` unless `SOLATEL_ADMIN_TOKEN` is set.
     pub admin: Option<admin::AdminKey>,
+    /// The public record of what has been paid, at `/proof`.
+    pub proof: proof::Proof,
 }
 
 impl AppState {
@@ -272,9 +275,11 @@ async fn main() -> Result<()> {
     );
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));
 
+    let proof = proof::Proof::new(terms.is_some(), free_play || ledger::dev_grant().is_some());
     let state = AppState {
         pool,
         tiers,
+        proof,
         wallet: terms,
         wallet_health,
         started_at: Instant::now(),
@@ -293,6 +298,7 @@ async fn main() -> Result<()> {
     // CORS handling and no cross-origin cookie story.
     let app = Router::new()
         .route("/health", get(health))
+        .route("/proof", get(proof::handler))
         .route("/ws", get(ws::handler))
         .merge(admin::router(state.clone()))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))

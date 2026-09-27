@@ -937,6 +937,70 @@
         #withdraw-form label { grid-column: 1 / -1; }
       }
 
+      /* ---- fair play: the payout record, the rules, the credits -------- */
+      .notice {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--dim);
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(255, 196, 80, 0.08);
+        border: 1px solid rgba(255, 196, 80, 0.3);
+      }
+      .notice b { color: #ffc450; text-transform: uppercase; letter-spacing: 1px; }
+      .figures {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 8px;
+      }
+      .figures > .dim { font-size: 13px; color: var(--dim); }
+      .figure {
+        display: grid;
+        gap: 3px;
+        align-content: start;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: rgba(159, 232, 180, 0.05);
+        border: 1px solid rgba(159, 232, 180, 0.22);
+        min-width: 0;
+      }
+      .figure b {
+        font-size: 24px;
+        font-weight: 600;
+        color: #9fe8b4;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      .figure .caption {
+        font-size: 11px;
+        color: var(--ink);
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+      }
+      .figure .detail { font-size: 12px; color: var(--dim); }
+      .rules.wide { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      @media (max-width: 560px) {
+        .figures { grid-template-columns: 1fr 1fr; }
+        .figure { padding: 10px; }
+        .figure b { font-size: 19px; }
+      }
+      #proof-asof { margin: 0; font-size: 12px; color: var(--dim); }
+      ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+      ul.plain .dim, ul.plain .dim a { color: var(--dim); }
+      #proof-withdrawals b { color: #9fe8b4; }
+      #proof-withdrawals a { color: #9fe8b4; }
+      ul.honest li,
+      ul.credits li {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--dim);
+        padding-left: 14px;
+        position: relative;
+      }
+      ul.honest li::before,
+      ul.credits li::before { content: '\2022'; position: absolute; left: 2px; color: rgba(190, 210, 240, 0.4); }
+      ul.credits a { color: var(--ink); }
+
       #menu-status {
         font-size: 13px;
         color: var(--dim);
