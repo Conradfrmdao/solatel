@@ -184,6 +184,11 @@ pub fn sol_text(lamports: u64) -> String {
 pub struct Terms {
     pub treasury: Address,
     pub rate: SolUsd,
+    /// The USDC mint, and the treasury's account for it: where a USDC
+    /// deposit lands. One base unit of USDC is one micro-USD, so it needs no
+    /// rate.
+    pub usdc_mint: Address,
+    pub usdc_account: Address,
     /// False when this server hands out development money. That money can be
     /// played with and must not leave as SOL, however worthless devnet SOL
     /// is: the habit is the thing being kept.
@@ -209,6 +214,8 @@ impl Terms {
             micro_usd_per_sol: self.rate.micro_usd(),
             min_withdrawal_micro_usd: MIN_WITHDRAWAL.micros(),
             withdrawals_open: self.withdrawals_open,
+            usdc_mint: Some(self.usdc_mint.to_string()),
+            usdc_address: Some(self.usdc_account.to_string()),
         }
     }
 
@@ -289,6 +296,11 @@ impl Wallet {
             terms: Terms {
                 treasury: treasury.address,
                 rate,
+                usdc_mint: Address::parse(solana::USDC_DEVNET)?,
+                usdc_account: solana::associated_token_address(
+                    treasury.address,
+                    Address::parse(solana::USDC_DEVNET)?,
+                )?,
                 withdrawals_open: !dev_grant,
             },
             treasury,
@@ -304,7 +316,9 @@ impl Wallet {
 #[derive(Debug, Clone, Default)]
 pub struct Solvency {
     pub treasury_lamports: u64,
-    /// The treasury at the configured rate.
+    /// USDC in the treasury's token account, in base units (micro-USD).
+    pub treasury_usdc_units: u64,
+    /// The treasury at the configured rate, USDC included one to one.
     pub treasury_micro_usd: i64,
     /// Every player balance, every stake in escrow and every withdrawal in
     /// flight.
@@ -410,7 +424,10 @@ impl Chain<'_> {
 
     async fn tell(&self, player_id: PlayerId, message: ServerMsg) {
         self.game
-            .send(GameCommand::Tell { player_id, message })
+            .send(GameCommand::Tell {
+                player_id,
+                message: Box::new(message),
+            })
             .await;
     }
 
@@ -429,12 +446,37 @@ impl Chain<'_> {
 
     /// Judge every finalized transaction to the treasury not judged before.
     async fn scan_deposits(&self, accounts: &mut Accounts) -> Result<()> {
+        // SOL lands on the treasury itself and USDC on its token account, so
+        // both histories are read; a transaction in both is judged once.
+        let mut fresh: Vec<solana::Seen> = Vec::new();
+        for address in [self.treasury(), self.wallet.terms.usdc_account] {
+            for seen in self.fresh_for(address).await? {
+                if !fresh.iter().any(|s| s.signature == seen.signature) {
+                    fresh.push(seen);
+                }
+            }
+        }
+        // Oldest first, so money is credited in the order the chain made it.
+        fresh.sort_by_key(|s| s.slot);
+        for seen in fresh {
+            if let Err(err) = self.judge(accounts, &seen).await {
+                // One transaction the node will not describe yet must not
+                // hold up every one after it. It is not recorded, so the
+                // next pass asks again.
+                tracing::debug!(signature = %seen.signature, ?err, "could not judge a treasury transaction yet");
+            }
+        }
+        Ok(())
+    }
+
+    /// The finalized transactions touching `address` not yet judged.
+    async fn fresh_for(&self, address: Address) -> Result<Vec<solana::Seen>> {
         let mut fresh = Vec::new();
         let mut before: Option<String> = None;
         for _ in 0..MAX_PAGES {
             let page = self
                 .rpc
-                .signatures_for(self.treasury(), PAGE, before.as_deref())
+                .signatures_for(address, PAGE, before.as_deref())
                 .await?;
             if page.is_empty() {
                 break;
@@ -457,17 +499,7 @@ impl Chain<'_> {
                 break;
             }
         }
-
-        // Oldest first, so money is credited in the order the chain made it.
-        for seen in fresh.into_iter().rev() {
-            if let Err(err) = self.judge(accounts, &seen).await {
-                // One transaction the node will not describe yet must not
-                // hold up every one after it. It is not recorded, so the
-                // next pass asks again.
-                tracing::debug!(signature = %seen.signature, ?err, "could not judge a treasury transaction yet");
-            }
-        }
-        Ok(())
+        Ok(fresh)
     }
 
     async fn judge(&self, accounts: &mut Accounts, seen: &solana::Seen) -> Result<()> {
@@ -475,6 +507,7 @@ impl Chain<'_> {
         let nothing = |signature: &str| Receipt {
             signature: signature.to_string(),
             lamports: 0,
+            usdc_units: 0,
             memo: None,
             player_id: None,
             micro_usd: 0,
@@ -487,14 +520,18 @@ impl Chain<'_> {
             ledger::record_receipt(self.pool, accounts, &nothing(&seen.signature)).await?;
             return Ok(());
         }
-        let Some(incoming) = self.rpc.incoming(&seen.signature, self.treasury()).await? else {
+        let usdc = Some((self.wallet.terms.usdc_account, self.wallet.terms.usdc_mint));
+        let Some(incoming) = self.rpc.incoming(&seen.signature, self.treasury(), usdc).await? else {
             // It touched the treasury and paid it nothing - usually one of
             // our own withdrawals going out.
             ledger::record_receipt(self.pool, accounts, &nothing(&seen.signature)).await?;
             return Ok(());
         };
 
-        let micro_usd = rate.micros_for(incoming.lamports);
+        // USDC's base unit is a micro-USD; SOL goes at the configured rate.
+        let micro_usd = rate
+            .micros_for(incoming.lamports)
+            .saturating_add(i64::try_from(incoming.usdc_units).unwrap_or(i64::MAX));
         let named = incoming.memo.as_deref().and_then(memo_player);
         let player_id = match named {
             Some(id) => {
@@ -518,6 +555,7 @@ impl Chain<'_> {
         let receipt = Receipt {
             signature: incoming.signature.clone(),
             lamports: incoming.lamports,
+            usdc_units: incoming.usdc_units,
             memo: incoming.memo.clone(),
             player_id: player_id.filter(|_| outcome == ReceiptOutcome::Credited),
             micro_usd: if outcome == ReceiptOutcome::Credited {
@@ -545,6 +583,7 @@ impl Chain<'_> {
                     ServerMsg::Deposited {
                         amount_micro_usd: micro_usd,
                         lamports: incoming.lamports,
+                        usdc_units: incoming.usdc_units,
                         signature: incoming.signature,
                     },
                 )
@@ -711,11 +750,15 @@ impl Chain<'_> {
 
     async fn solvency(&self) -> Result<Solvency> {
         let lamports = self.rpc.balance(self.treasury()).await?;
+        let usdc = self.rpc.token_balance(self.wallet.terms.usdc_account).await?;
         let owed = ledger::owed(self.pool).await?;
         let rate = self.wallet.terms.rate;
         Ok(Solvency {
             treasury_lamports: lamports,
-            treasury_micro_usd: rate.micros_for(lamports),
+            treasury_usdc_units: usdc,
+            treasury_micro_usd: rate
+                .micros_for(lamports)
+                .saturating_add(i64::try_from(usdc).unwrap_or(i64::MAX)),
             owed_micro_usd: owed.micros(),
             micro_usd_per_sol: rate.micro_usd(),
         })
@@ -765,6 +808,8 @@ mod tests {
         Terms {
             treasury: Treasury::from_seed([1u8; 32]).address,
             rate: SolUsd::parse("140").unwrap(),
+            usdc_mint: solana::Address::parse(solana::USDC_DEVNET).unwrap(),
+            usdc_account: solana::Treasury::from_seed([3u8; 32]).address,
             withdrawals_open: true,
         }
     }

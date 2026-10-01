@@ -5,6 +5,7 @@
 
 mod account;
 mod admin;
+mod chain;
 mod config;
 mod db;
 mod game;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub admin: Option<admin::AdminKey>,
     /// The public record of what has been paid, at `/proof`.
     pub proof: proof::Proof,
+    /// The cluster, for a page building a deposit. `None` without a wallet.
+    pub chain: Option<chain::Chain>,
 }
 
 impl AppState {
@@ -276,10 +279,16 @@ async fn main() -> Result<()> {
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));
 
     let proof = proof::Proof::new(terms.is_some(), free_play || ledger::dev_grant().is_some());
+    let chain = if terms.is_some() {
+        Some(chain::Chain::new(solana::Rpc::new(solana::Cluster::devnet())?))
+    } else {
+        None
+    };
     let state = AppState {
         pool,
         tiers,
         proof,
+        chain,
         wallet: terms,
         wallet_health,
         started_at: Instant::now(),
@@ -299,6 +308,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/proof", get(proof::handler))
+        .route("/chain/blockhash", get(chain::blockhash))
+        .route("/chain/usdc-account", get(chain::usdc_account))
         .route("/ws", get(ws::handler))
         .merge(admin::router(state.clone()))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
@@ -358,6 +369,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         .map(|health| match health.get() {
             Some(s) => json!({
                 "treasury_lamports": s.treasury_lamports,
+                "treasury_usdc_units": s.treasury_usdc_units,
                 "treasury_micro_usd": s.treasury_micro_usd,
                 "owed_micro_usd": s.owed_micro_usd,
                 "micro_usd_per_sol": s.micro_usd_per_sol,

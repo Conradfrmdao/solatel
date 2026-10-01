@@ -232,8 +232,22 @@ async function boot() {
       window.location.reload();
     },
   });
+  // Signing in with a Solana wallet: text from the server, signed by the
+  // wallet, checked by the server. A wallet that is another account's makes
+  // this browser that account, with a key of its own - the same fresh start
+  // as restoring a key.
+  menu.bindSolana({
+    challenge: () => link.send({ t: 'wallet_challenge' }),
+    prove: (publicKey, signature) =>
+      link.send({ t: 'wallet_proof', public_key: publicKey, signature }),
+    switchTo(key) {
+      writeAccountKey(key);
+      window.location.reload();
+    },
+  });
   menu.setPlayer(link.playerId);
   menu.setWallet(link.wallet);
+  menu.setSolana(link.solanaPubkey);
   if (link.accountReplaced) {
     menu.say(
       'the account key this browser had was not recognised, so this is a new account',
@@ -461,6 +475,13 @@ async function boot() {
         // wallet, and a new account may have been made.
         menu.setPlayer(link.playerId);
         menu.setWallet(link.wallet);
+        menu.setSolana(link.solanaPubkey);
+      } else if (message.t === 'wallet_challenge') {
+        menu.walletChallenge(message.message);
+      } else if (message.t === 'wallet_signed_in') {
+        menu.walletSignedIn(message);
+      } else if (message.t === 'wallet_refused') {
+        menu.walletRefused(message.reason);
       } else if (message.t === 'scoreboard') {
         hud.setScores(message.entries);
       } else if (message.t === 'match_found') {

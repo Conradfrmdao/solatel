@@ -16,6 +16,7 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, Utf8Bytes, WebSocket},
     },
+    http::{HeaderMap, header},
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
@@ -28,7 +29,10 @@ use solatel_protocol::{
         sanitise_name,
     },
 };
-use std::{sync::atomic::Ordering, time::Duration};
+use std::{
+    sync::atomic::Ordering,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
 
 /// A client that connects but never completes the handshake is dropped rather
@@ -46,14 +50,25 @@ const OUTBOUND_CAPACITY: usize = 128;
 /// How often the server measures this connection's round-trip time.
 const RTT_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 
-pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+pub async fn handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    // Which site the browser thinks it is on, for the text a wallet is asked
+    // to sign: a message signed for another page names that page.
+    let domain = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     ws.max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
             let session_id = SessionId::new();
             state.sessions.fetch_add(1, Ordering::Relaxed);
 
-            match run_session(socket, &state, session_id).await {
+            match run_session(socket, &state, session_id, &domain).await {
                 Ok(()) => tracing::info!(%session_id, "session closed cleanly"),
                 Err(err) => tracing::info!(%session_id, error = %err, "session ended"),
             }
@@ -62,7 +77,12 @@ pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Res
         })
 }
 
-async fn run_session(mut socket: WebSocket, state: &AppState, session_id: SessionId) -> Result<()> {
+async fn run_session(
+    mut socket: WebSocket,
+    state: &AppState,
+    session_id: SessionId,
+    domain: &str,
+) -> Result<()> {
     let hello = read_hello(&mut socket, session_id).await?;
 
     // Who this is, before the lobby hears of them. A database round trip,
@@ -139,7 +159,8 @@ async fn run_session(mut socket: WebSocket, state: &AppState, session_id: Sessio
                 })
                 .collect(),
             account_key: signed_in.new_key,
-            wallet: state.wallet.as_ref().map(|terms| terms.offer(player_id)),
+            wallet: state.wallet.as_ref().map(|terms| Box::new(terms.offer(player_id))),
+            solana_pubkey: signed_in.solana_pubkey,
         },
     )
     .await?;
@@ -147,7 +168,7 @@ async fn run_session(mut socket: WebSocket, state: &AppState, session_id: Sessio
     let (sink, mut stream) = socket.split();
     let writer = tokio::spawn(write_loop(sink, outbound_rx, state.clone()));
 
-    let result = read_loop(&mut stream, state, session_id, player_id).await;
+    let result = read_loop(&mut stream, state, session_id, player_id, domain).await;
 
     state
         .game
@@ -205,7 +226,11 @@ async fn read_loop(
     state: &AppState,
     session_id: SessionId,
     player_id: PlayerId,
+    domain: &str,
 ) -> Result<()> {
+    // The text this connection's wallet was last asked to sign, and when.
+    // Kept here, per connection: it is good once and for nobody else.
+    let mut challenge: Option<(String, Instant)> = None;
     while let Some(frame) = stream.next().await {
         let frame = frame.context("websocket receive failed")?;
 
@@ -290,6 +315,40 @@ async fn read_loop(
                     })
                     .await;
             }
+            ClientMsg::WalletChallenge => {
+                let reply = match crate::account::challenge(domain, player_id) {
+                    Ok(message) => {
+                        challenge = Some((message.clone(), Instant::now()));
+                        ServerMsg::WalletChallenge { message }
+                    }
+                    Err(err) => {
+                        tracing::error!(?err, "could not make a sign-in challenge");
+                        ServerMsg::WalletRefused {
+                            reason: "the server could not make a challenge; try again".into(),
+                        }
+                    }
+                };
+                tell(state, player_id, reply).await;
+            }
+            ClientMsg::WalletProof {
+                public_key,
+                signature,
+            } => {
+                // Good once: taken whether or not it checks out.
+                let reply = match challenge.take() {
+                    None => refused("ask for something to sign first"),
+                    Some((_, at)) if at.elapsed() > crate::account::CHALLENGE_LIFETIME => {
+                        refused("that took too long to sign; try again")
+                    }
+                    Some((message, _)) => {
+                        match crate::account::verify(&message, &public_key, &signature) {
+                            Err(reason) => refused(reason),
+                            Ok(key) => wallet_reply(state, player_id, key).await,
+                        }
+                    }
+                };
+                tell(state, player_id, reply).await;
+            }
             ClientMsg::Ping { .. } | ClientMsg::Echo { .. } => {
                 // These are diagnostics that need a direct reply, which the
                 // world task has no reason to be involved in.
@@ -303,6 +362,45 @@ async fn read_loop(
     }
 
     Ok(())
+}
+
+fn refused(reason: impl Into<String>) -> ServerMsg {
+    ServerMsg::WalletRefused {
+        reason: reason.into(),
+    }
+}
+
+/// What signing in with a checked wallet comes to, as the reply to send.
+async fn wallet_reply(state: &AppState, player_id: PlayerId, public_key: String) -> ServerMsg {
+    use crate::account::WalletOutcome;
+    match crate::account::wallet_sign_in(&state.pool, player_id, &public_key).await {
+        Ok(WalletOutcome::Linked) => ServerMsg::WalletSignedIn {
+            public_key,
+            player_id,
+            account_key: None,
+        },
+        Ok(WalletOutcome::SignedInAs { player_id, key }) => ServerMsg::WalletSignedIn {
+            public_key,
+            player_id,
+            account_key: Some(key),
+        },
+        Ok(WalletOutcome::Refused(reason)) => refused(reason),
+        Err(err) => {
+            tracing::error!(?err, "wallet sign-in failed");
+            refused("the server could not sign you in with that wallet; try again")
+        }
+    }
+}
+
+/// A reply down this player's own outbound queue, in order with the rest.
+async fn tell(state: &AppState, player_id: PlayerId, message: ServerMsg) {
+    state
+        .game
+        .send(GameCommand::Tell {
+            player_id,
+            message: Box::new(message),
+        })
+        .await;
 }
 
 /// Ping and Echo are answered through the player's own outbound queue, so they
@@ -324,7 +422,7 @@ async fn handle_diagnostic(state: &AppState, player_id: PlayerId, msg: ClientMsg
         .game
         .send(GameCommand::Tell {
             player_id,
-            message: reply,
+            message: Box::new(reply),
         })
         .await;
 }

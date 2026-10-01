@@ -262,7 +262,9 @@ pub enum GameCommand {
     /// everything else they are sent.
     Tell {
         player_id: PlayerId,
-        message: ServerMsg,
+        /// Boxed: a `Welcome`-sized message would make every command that
+        /// size, and most are a few words.
+        message: Box<ServerMsg>,
     },
 }
 
@@ -1375,7 +1377,7 @@ impl Lobby {
 
             GameCommand::Tell { player_id, message } => {
                 if let Some(connection) = self.connections.get(&player_id) {
-                    connection.send(message);
+                    connection.send(*message);
                 }
             }
 

@@ -433,16 +433,41 @@ somebody closed a tab. So a browser holds an **account key**.
 - The profile pane shows the player id and, when asked, the key, with a
   warning; and takes a saved key to sign in with.
 
-It is the weakest part of the wallet on purpose and for now: lose the key and
-the balance goes with it. The answer is signing in with the Solana wallet the
-money came from, which is what `players.solana_pubkey` is waiting for.
+### Signing in with a Solana wallet
 
-`client/menu.mjs` checks the lot in a real browser: a closed tab comes back as
-the same player, and a second tab takes over while the first stays put.
+On its own the key is the weakest part of the wallet: lose it and the balance
+goes with it. So an account can carry a Solana wallet (protocol 14, migration
+0008), and signing in with that wallet from any browser is being that player.
+
+- **The server writes what is signed.** `WalletChallenge` gets text naming
+  the site (the upgrade's `Host`, filtered), the account, a nonce and the
+  time; it is kept in the connection's own task, is good once, and lapses
+  after five minutes. `WalletProof` carries the public key and the signature
+  in base58, and `account::verify` checks the ed25519 signature itself.
+- **What a good signature does** (`wallet_sign_in`): a wallet nobody has is
+  linked to this account (`players.solana_pubkey`, unique); one this account
+  has is already linked; one another account has signs this browser in as
+  that account, with a **key of its own** in `account_keys`, which the
+  browser keeps and reconnects with. The first browser's key keeps working -
+  the server holds only hashes and could not hand the first one out anyway.
+  An account has one wallet.
+- **It will not strand money.** Leaving an account that holds a balance and
+  has no wallet, for a wallet's account, is refused with the amount: the
+  browser is about to forget the only key to it.
+- The Wallet Standard is spoken directly (`solana.js`): the page announces
+  itself, every wallet extension registers, and anything with
+  `standard:connect` and `solana:signMessage` on a Solana chain is offered.
+  No wallet library, and no key ever in the page.
+
+`client/menu.mjs` checks the account in a real browser: a closed tab comes
+back as the same player, and a second tab takes over while the first stays
+put. Wallet sign-in was checked the same way with a Wallet Standard wallet
+injected into the page and signing with a real ed25519 key: linked, a second
+browser signed in as the first account, the first still itself.
 
 ## The wallet
 
-`wallet.rs`, `solana.rs`, `ledger.rs`, migrations 0004 and 0005. Playing never
+`wallet.rs`, `solana.rs`, `ledger.rs`, `chain.rs`, migrations 0004, 0005 and 0009. Playing never
 touches a chain; money crosses it exactly twice, in and out. **Devnet only**:
 `solana::Cluster::devnet()` is the only cluster there is.
 
@@ -462,9 +487,43 @@ once into `treasury_receipts`: `credited`, `unmatched` (the memo names
 nobody), `too_small` or `not_incoming`. A credit posts `external -> player`
 under `deposit:<signature>`, the chain's own name for the event, in the same
 database transaction as the receipt - so a transfer seen twice is credited
-once. The memo parser tolerates text around the UUID. Most wallets have no
-memo box, so `./x pay <memo> <sol>` sends a test deposit from
-`SOLATEL_DEV_PAYER_KEY`.
+once. The memo parser tolerates text around the UUID.
+
+Most wallets' send screens have no memo box, so the wallet pane offers three
+ways in that fill it for the player:
+
+- **A connected wallet pays from the page.** The page builds the transfer
+  with the memo (`depositTransaction` in `solana.js`) and the wallet signs
+  and sends it (`solana:signAndSendTransaction`); the page never holds a
+  key. The layout is `build_transfer`'s, byte for byte - checked against it
+  on identical inputs, and by devnet itself, whose signature-verified
+  simulation of one got as far as "this account holds nothing". The
+  blockhash comes from `GET /chain/blockhash` (`chain.rs`, cached four
+  seconds), never from the cluster directly, so a paid RPC's key stays the
+  server's.
+- **A Solana Pay code**, drawn from the same `solana:` link, for a phone's
+  wallet to scan.
+- The address and memo to copy, and `./x pay <memo> <sol>` from
+  `SOLATEL_DEV_PAYER_KEY` for testing.
+
+However it is sent, the watcher credits it the same way when the chain has
+it; nothing the page says about a deposit moves money.
+
+**USDC comes in the same way, at one to one** (protocol 15, migration
+0009). A USDC unit is a millionth of a dollar, which is exactly a
+`MicroUsd`, so there is no rate and nothing to round. It arrives at the
+treasury's associated token account for the devnet USDC mint
+(`USDC_DEVNET`, `associated_token_address` - a program-derived address,
+checked against real devnet accounts), and the watcher reads that account's
+history as well as the treasury's, judging each signature once whichever
+list it was seen on. A deposit is credited from the token balances the
+chain recorded before and after it (`read_incoming`, tested against a real
+devnet transfer kept in `fixtures/`), never from the instruction's stated
+amount, plus whatever SOL moved at the rate; the receipt keeps `usdc_units`
+beside `lamports`. The page builds a USDC deposit as create-account-if-
+missing, `TransferChecked` and the memo (`usdcDepositTransaction`), asking
+`GET /chain/usdc-account?owner=` for the sender's token account, and the
+Solana Pay code carries `spl-token=`. Withdrawals are still paid in SOL.
 
 **Out: three ledger steps, never one.**
 
@@ -488,7 +547,8 @@ keeps its own rent-exempt minimum plus the fee, and a withdrawal it cannot
 cover is returned with a reason.
 
 Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
-Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms. The
+Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms;
+protocol 14 adds wallet sign-in (see *Accounts*) and 15 USDC. The
 menu's wallet pane states the rate and shows what the server says it is
 sending; it never converts an amount itself. `/health` has a `wallet` block -
 the treasury against what is owed - which is an operator's number, not a
