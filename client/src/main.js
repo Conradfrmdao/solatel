@@ -185,6 +185,8 @@ async function boot() {
   /** Where the death sequence puts the camera, reused frame to frame. */
   const deathPose = { position: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, t: 0 };
   let wasDying = false;
+  /** A hit taken rolls the view, signed, decaying to nothing. */
+  let flinch = 0;
   hud.bindSensitivity(input);
   hud.bindRawMouse(input);
   hud.bindVolume(audio.volume, (value) => audio.setVolume(value));
@@ -464,6 +466,11 @@ async function boot() {
         if (mine && message.hit_player) audio.hitConfirmed(false);
       } else if (message.t === 'damaged') {
         audio.hurt();
+        // Which way it came from, held on screen as the player turns, and a
+        // flinch: the view rolls a little and comes back. A roll only - the
+        // middle of the screen, where a shot goes, stays where it was aimed.
+        hud.damageFrom(now, remotes.positionOf(message.attacker), message.amount);
+        flinch = (Math.random() < 0.5 ? -1 : 1) * Math.min(1, Math.abs(flinch) + message.amount / 40);
       } else if (message.t === 'hit_confirmed') {
         // The server's own confirmation, which is the one that counts. The
         // tracer's `hit_player` is drawn the instant the shot goes out; this
@@ -542,7 +549,8 @@ async function boot() {
     camera.position.copy(eye);
     // Recoil rolls the view around its own axis and nothing else, so the
     // middle of the screen - where the shot goes - stays where it was aimed.
-    camera.rotation.set(input.pitch, input.yaw, viewmodel.cameraRoll, 'YXZ');
+    flinch *= Math.exp(-dt * 9);
+    camera.rotation.set(input.pitch, input.yaw, viewmodel.cameraRoll + flinch * 0.045, 'YXZ');
     camera.getWorldDirection(forward);
 
     // A debug-only detached camera, for looking at things that are otherwise
@@ -712,6 +720,7 @@ async function boot() {
     for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     hud.update(now, link, local, input);
+    hud.updateDamage(now, eye, input.yaw);
 
     // The sights narrow the world's view, and turning slows by the same
     // factor so a flick covers the same part of the screen either way. The

@@ -1378,6 +1378,11 @@ where the stake went, what the life won. A click skips it after the fall.
 Nothing in it is asked of the server: the match has stopped sending to this
 player, and the killer's position is the last snapshot's.
 
+**A hit taken says where it came from.** `Damaged` names the attacker, and
+the HUD holds a red arc round the crosshair on that side - turned as the
+player turns, one per attacker, for 2.2 s - and the view flinches: a roll
+only, so the middle of the screen, where a shot goes, never moves.
+
 **A kill that pays is seen paying.** `hud.payout` punches the table's reward
 in under the crosshair (`+$0.90`, tagged HEADSHOT, GRENADE, DOUBLE KILL),
 holds it, and flies it up into the winnings counter, which ticks over as it

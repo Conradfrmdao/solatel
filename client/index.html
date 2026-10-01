@@ -206,6 +206,28 @@
         background: radial-gradient(ellipse at center, transparent 55%, rgba(190, 20, 20, 0.55));
       }
       #hurt-flash.flash { animation: hurt 450ms ease-out; }
+      /* Where a hit came from: an arc round the crosshair on that side. */
+      #damage-dirs { position: absolute; inset: 0; pointer-events: none; }
+      #damage-dirs .dmg {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 300px;
+        height: 300px;
+      }
+      #damage-dirs .dmg i {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        width: 150px;
+        height: 46px;
+        transform: translateX(-50%);
+        border-top: 9px solid rgba(230, 36, 30, 0.95);
+        border-radius: 50% / 100% 100% 0 0;
+        filter: drop-shadow(0 0 6px rgba(255, 40, 30, 0.7));
+        -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+        mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+      }
       @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
       .kill .cause { margin-left: 6px; font-size: 0.8em; opacity: 0.7; }
 
