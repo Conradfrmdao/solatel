@@ -33,7 +33,7 @@ const wind = { value: 0 };
 const GRASS_RADIUS = 34;
 
 /** Metres between grass tufts before jitter. */
-const GRASS_STEP = 0.75;
+const GRASS_STEP = 0.6;
 
 /** How far the eye moves before the grass is re-planted round it. */
 const GRASS_REPLANT = 5;
@@ -207,8 +207,27 @@ const NEEDLE_SPRIGS = [
   [0.641, 0.617, 0.953, 0.961],
 ];
 
-/** The row of grass tufts along the bottom of the grass atlas. */
-const GRASS_STRIP = [0.2, 0.0, 0.8, 0.22];
+/**
+ * The five whole tufts along the bottom of the grass atlas, each as
+ * [u0, v0, u1, v1] with v0 at the roots. Measured off the alpha map, one
+ * box per tuft. The whole bottom strip used to be one card, which ran
+ * through half-cut tufts and a stray brown blade-end between two of them,
+ * and from any distance a field of those read as fallen leaves.
+ */
+const GRASS_TUFTS = [
+  [0.029, 0.019, 0.205, 0.133],
+  [0.193, 0.109, 0.493, 0.256],
+  [0.24, 0.014, 0.498, 0.109],
+  [0.586, 0.143, 0.815, 0.244],
+  [0.574, 0.012, 0.786, 0.14],
+];
+
+/** Which tufts each kind of clump is made of, so neighbours differ. */
+const GRASS_CLUMPS = [
+  [1, 3, 0],
+  [4, 2, 1],
+  [3, 0, 4],
+];
 
 // ---- the geometry -----------------------------------------------------------
 
@@ -575,19 +594,21 @@ function leafShadow({ albedo, alpha }) {
 // ---- the grass -------------------------------------------------------------
 
 /**
- * One tuft: two crossed cards of photographed grass, and a third lying
- * lower and wider, so it reads as a clump from any side and from above.
+ * One clump: three cards of photographed tufts standing crossed at sixty
+ * degrees, so it is the same clump from any side. Each card is as wide as
+ * its own tuft is in the atlas for its height - stretched, a tuft reads as
+ * smeared - and they are of slightly different heights, as grass is.
  */
-function tuftGeometry() {
+function tuftGeometry(clump) {
   const b = new Builder();
-  const [u0, v0, u1, v1] = GRASS_STRIP;
   const up = new THREE.Vector3(0, 1, 0);
-  const cards = [
-    [0, 1.0, 0.42],
-    [Math.PI / 2, 0.9, 0.38],
-    [Math.PI / 4, 1.2, 0.3],
-  ];
-  for (const [angle, width, height] of cards) {
+  const heights = [0.42, 0.35, 0.29];
+  clump.forEach((tuft, k) => {
+    const [u0, v0, u1, v1] = GRASS_TUFTS[tuft];
+    const height = heights[k];
+    // The atlas is square, so a texel is as wide as it is tall.
+    const width = (height * (u1 - u0)) / (v1 - v0);
+    const angle = (k * Math.PI) / 3;
     const dx = Math.cos(angle) * width * 0.5;
     const dz = Math.sin(angle) * width * 0.5;
     const ids = [
@@ -597,7 +618,7 @@ function tuftGeometry() {
       b.vertex(new THREE.Vector3(-dx, height, -dz), up, u0, v1, 1),
     ];
     b.quad(ids[0], ids[1], ids[2], ids[3]);
-  }
+  });
   return b.geometry();
 }
 
@@ -635,13 +656,18 @@ class Grass {
       { flutter: 0.0, lean: 0.12 },
     );
     material.alphaToCoverage = true;
-    this.mesh = new THREE.InstancedMesh(tuftGeometry(), material, capacity);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.count = 0;
-    this.mesh.receiveShadow = true;
-    this.mesh.frustumCulled = false;
-    this.mesh.name = 'grass';
-    parent.add(this.mesh);
+    // One mesh per kind of clump, sharing the material: three draws, and a
+    // field that does not repeat one clump to the horizon.
+    this.meshes = GRASS_CLUMPS.map((clump) => {
+      const mesh = new THREE.InstancedMesh(tuftGeometry(clump), material, capacity);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.count = 0;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.name = 'grass';
+      parent.add(mesh);
+      return mesh;
+    });
     this.at = null;
     this._matrix = new THREE.Matrix4();
     this._colour = new THREE.Color();
@@ -666,7 +692,8 @@ class Grass {
     this.at = { x: eye.x, z: eye.z };
     this._detail = detail.version;
     const m = this._matrix;
-    let n = 0;
+    const counts = this.meshes.map(() => 0);
+    const capacity = this.meshes[0].instanceMatrix.count;
     const radius = GRASS_RADIUS * detail.grass;
     const r2 = radius * radius;
     const i0 = Math.floor((eye.x - radius) / GRASS_STEP);
@@ -690,19 +717,24 @@ class Grass {
         const size = Math.min(1, edge * 5) * (0.7 + hash2(x, z) * 0.7);
         this._q.setFromAxisAngle(this._up, h * 6.28);
         m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(size, size * (0.8 + patch * 0.35), size));
-        this.mesh.setMatrixAt(n, m);
+        const kind = Math.floor(hash2(z * 1.7, x * 0.9) * this.meshes.length) % this.meshes.length;
+        const mesh = this.meshes[kind];
+        const n = counts[kind];
+        if (n >= capacity) continue;
+        mesh.setMatrixAt(n, m);
         const dry = 0.5 + 0.5 * Math.sin(x * 0.05 + z * 0.037);
         // Darker than the photograph, which was shot in full sun: a field
         // of it at full brightness reads as lime rather than as grass.
-        this._colour.setRGB(0.62 + dry * 0.12, 0.66 + hash2(z, x) * 0.08, 0.5 - dry * 0.1);
-        this.mesh.setColorAt(n, this._colour);
-        n += 1;
-        if (n >= this.mesh.instanceMatrix.count) break;
+        this._colour.setRGB(0.5 + dry * 0.16, 0.62 + hash2(z, x) * 0.1, 0.36 - dry * 0.08);
+        mesh.setColorAt(n, this._colour);
+        counts[kind] = n + 1;
       }
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.meshes.forEach((mesh, kind) => {
+      mesh.count = counts[kind];
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
   }
 }
 

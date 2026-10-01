@@ -10,8 +10,10 @@
 //
 // Which node is which comes from its name, the way the maps name them:
 // `truck`, `car`, `barrel`, `crate` for the facility's placements, `CAR`,
-// `Wood` (the yard's drums) and two named trucks for the yard. The loader
-// drops the dot from `truck.001`, so the names are matched without one.
+// `Wood` (some of the yard's drums) and two named trucks for the yard. The
+// yard's other three hundred drums and all its tyres are plain `Cylinder`s,
+// told apart by their paint. The loader drops the dot from `truck.001`, so
+// the names are matched without one.
 //
 // Everything is instanced: one draw per part per kind, however many there
 // are, and each copy's paint comes from the stand-in's own colour.
@@ -30,7 +32,25 @@ const KINDS = [
   { kind: 'car', test: /^(car(_blue|_olive)?\d+|CAR\d+)$/ },
   { kind: 'drum', test: /^(barrel(_blue)?\d+|Wood\d+)$/ },
   { kind: 'crate', test: /^crate(_dark)?\d+$/ },
+  // The yard's drums and tyres are cylinders like any other, told apart by
+  // their paint: the barrel colours are drums, rubber is a tyre, and a
+  // rubber cylinder taller than it is wide is a stack of them.
+  { kind: 'cylinder', test: /^Cylinder\d*$/, yard: true },
 ];
+
+/** What a yard cylinder is, from its materials and its shape. */
+function cylinderKind(node, map) {
+  let names = '';
+  node.traverse((n) => {
+    if (n.isMesh) for (const m of [n.material].flat()) names += ` ${m?.name ?? ''}`;
+  });
+  if (/barrel_/.test(names)) return 'drum';
+  if (!/rubber/.test(names)) return null;
+  const placed = fit(node, map, 'tyre');
+  if (!placed) return null;
+  const [length, height] = placed.dims;
+  return height > length ? 'tyres' : 'tyre';
+}
 
 // ---- building blocks ----------------------------------------------------------
 
@@ -79,18 +99,88 @@ function box(x0, y0, z0, x1, y1, z1) {
   return g;
 }
 
+/**
+ * A tyre lying flat, turned on a lathe from its cross-section: a bead round
+ * the hole, rounded shoulders, and the tread's grooves running round it.
+ * `outer` and `inner` are radii and `width` its height lying down.
+ */
+function tyreGeometry(outer, inner, width, segments = 24) {
+  const o = outer;
+  const i = inner;
+  const w = width;
+  const shoulder = w * 0.16;
+  const groove = Math.max(0.006, o * 0.025);
+  const pts = [[i, w * 0.12], [i + w * 0.08, 0], [o - shoulder, 0], [o - shoulder * 0.35, w * 0.05], [o, shoulder]];
+  // Four ribs of tread with three grooves between them.
+  const ribs = 4;
+  const span = w - 2 * shoulder;
+  for (let k = 0; k < ribs; k += 1) {
+    const y0 = shoulder + (span * k) / ribs;
+    const y1 = shoulder + (span * (k + 1)) / ribs;
+    const gap = span * 0.05;
+    pts.push([o, k === 0 ? y0 : y0 + gap], [o, k === ribs - 1 ? y1 : y1 - gap]);
+    if (k < ribs - 1) pts.push([o - groove, y1 - gap], [o - groove, y1 + gap]);
+  }
+  pts.push([o, w - shoulder], [o - shoulder * 0.35, w * 0.95], [o - shoulder, w], [i + w * 0.08, w], [i, w * 0.88],
+    [i - w * 0.03, w * 0.5], [i, w * 0.12]);
+  return new THREE.LatheGeometry(pts.map(([x, y]) => new THREE.Vector2(x, y)), segments);
+}
+
 /** A wheel standing on the ground at `x`, `z`, axle across z. */
 function wheel(x, z, radius, width) {
-  const tyre = new THREE.CylinderGeometry(radius, radius, width, 22, 1);
-  tyre.rotateX(Math.PI / 2);
-  tyre.translate(x, radius, z);
-  const rim = new THREE.CylinderGeometry(radius * 0.58, radius * 0.58, width + 0.02, 14, 1);
-  rim.rotateX(Math.PI / 2);
-  rim.translate(x, radius, z);
-  const hub = new THREE.CylinderGeometry(radius * 0.18, radius * 0.18, width + 0.06, 8, 1);
-  hub.rotateX(Math.PI / 2);
-  hub.translate(x, radius, z);
+  const stand = (g) => {
+    g.translate(0, -width / 2, 0);
+    g.rotateX(Math.PI / 2);
+    g.translate(x, radius, z);
+    return g;
+  };
+  const tyre = stand(tyreGeometry(radius, radius * 0.66, width, 28));
+  // A pressed steel wheel: a dish, five spokes across it, and a hub.
+  const rim = [stand(new THREE.CylinderGeometry(radius * 0.66, radius * 0.66, width * 0.7, 20, 1).translate(0, width / 2, 0))];
+  for (let k = 0; k < 5; k += 1) {
+    const spoke = new THREE.BoxGeometry(radius * 0.11, width * 0.9, radius * 0.5);
+    spoke.translate(0, width / 2, radius * 0.3);
+    spoke.rotateY((k * 2 * Math.PI) / 5);
+    rim.push(stand(spoke));
+  }
+  const hub = stand(new THREE.CylinderGeometry(radius * 0.17, radius * 0.17, width + 0.04, 10, 1).translate(0, width / 2, 0));
   return { tyre, rim, hub };
+}
+
+/** A tyre on its side, one metre across. */
+function tyre() {
+  return { size: [1, 0.32, 1], rubber: [tyreGeometry(0.5, 0.3, 0.32)] };
+}
+
+/** Five tyres stacked, not quite square on each other, as they are left. */
+function tyres() {
+  const w = 0.32;
+  const rubber = [];
+  for (let k = 0; k < 5; k += 1) {
+    const g = tyreGeometry(0.49, 0.29, w);
+    g.translate(Math.sin(k * 2.1) * 0.012, k * w, Math.cos(k * 1.7) * 0.012);
+    rubber.push(g);
+  }
+  return { size: [1, 5 * w, 1], rubber };
+}
+
+/**
+ * A side profile with a wheel arch cut over each wheel: the bottom edge,
+ * rear to front, rising round each `[x, radius]` arch centred at
+ * `axle` height.
+ */
+function bottomWithArches(x0, x1, y, arches, axle) {
+  const pts = [[x0, y]];
+  for (const [cx, r] of arches) {
+    pts.push([cx - r, y], [cx - r, axle]);
+    for (let k = 1; k < 10; k += 1) {
+      const a = Math.PI - (k * Math.PI) / 10;
+      pts.push([cx + r * Math.cos(a), axle + r * Math.sin(a)]);
+    }
+    pts.push([cx + r, axle], [cx + r, y]);
+  }
+  pts.push([x1, y]);
+  return pts;
 }
 
 // ---- the models ---------------------------------------------------------------
@@ -104,9 +194,13 @@ function sedan() {
   const H = 1.46;
   const hx = L / 2;
   const body = W - 0.16;
+  const wheelR = 0.33;
+  const axles = [-1.4, 1.38];
   const paint = [
-    // Lower body: bumper to bumper, a raked nose and a short boot.
-    profile([[-hx + 0.05, 0.28], [hx - 0.1, 0.28], [hx, 0.46], [hx - 0.04, 0.66], [hx - 0.35, 0.8],
+    // Lower body: bumper to bumper, a raked nose and a short boot, with an
+    // arch over each wheel so the wheels sit in the body and not under it.
+    profile([...bottomWithArches(-hx + 0.05, hx - 0.1, 0.28, axles.map((x) => [x, wheelR + 0.06]), wheelR),
+      [hx, 0.46], [hx - 0.04, 0.66], [hx - 0.35, 0.8],
       [1.05, 0.9], [-1.75, 0.95], [-hx + 0.12, 0.88], [-hx, 0.66], [-hx, 0.42]], body, 0.1, 4),
     // The roof, over a narrower glasshouse.
     profile([[0.38, 1.36], [-0.95, 1.38], [-1.0, 1.44], [0.33, 1.42]], body - 0.34, 0.05, 3),
@@ -121,13 +215,24 @@ function sedan() {
   ];
   const rubber = [];
   const metal = [];
-  for (const x of [1.38, -1.4]) {
+  for (const x of axles) {
     for (const z of [W / 2 - 0.12, -W / 2 + 0.12]) {
-      const w = wheel(x, z, 0.33, 0.23);
+      const w = wheel(x, z, wheelR, 0.23);
       rubber.push(w.tyre);
-      metal.push(w.rim, w.hub);
+      metal.push(...w.rim, w.hub);
     }
   }
+  // Door mirrors at the foot of the windscreen, and a pillar between the
+  // two side windows, so the glasshouse is a car's and not a visor.
+  for (const side of [1, -1]) {
+    paint.push(box(0.86, 0.95, side * (body / 2) - 0.05, 1.0, 1.06, side * (body / 2 + 0.13)));
+  }
+  const pillar = (body - 0.3) / 2 + 0.012;
+  dark.push(box(-0.36, 0.92, -pillar, -0.27, 1.37, pillar));
+  const plates = [
+    box(hx - 0.02, 0.3, -0.26, hx + 0.035, 0.42, 0.26),
+    box(-hx - 0.035, 0.46, -0.26, -hx + 0.02, 0.58, 0.26),
+  ];
   const lamps = [
     box(hx - 0.1, 0.6, 0.48, hx + 0.01, 0.7, 0.76),
     box(hx - 0.1, 0.6, -0.76, hx + 0.01, 0.7, -0.48),
@@ -136,7 +241,7 @@ function sedan() {
     box(-hx - 0.01, 0.7, 0.52, -hx + 0.06, 0.8, 0.8),
     box(-hx - 0.01, 0.7, -0.8, -hx + 0.06, 0.8, -0.52),
   ];
-  return { size: [L, H, W], paint, glass, dark, rubber, metal, lamps, tail };
+  return { size: [L, H, W], paint, glass, dark, rubber, metal, lamps, tail, plates };
 }
 
 function cargoTruck() {
@@ -190,7 +295,7 @@ function cargoTruck() {
     for (const z of [W / 2 - 0.26, -W / 2 + 0.26]) {
       const w = wheel(x, z, 0.55, 0.42);
       rubber.push(w.tyre);
-      metal.push(w.rim, w.hub);
+      metal.push(...w.rim, w.hub);
     }
   }
   const lamps = [
@@ -236,7 +341,7 @@ function crate() {
   return { size: [1.02, 1.0, 1.02], planks, battens };
 }
 
-const MODELS = { car: sedan, truck: cargoTruck, drum, crate };
+const MODELS = { car: sedan, truck: cargoTruck, drum, crate, tyre, tyres };
 
 // ---- materials -------------------------------------------------------------
 
@@ -272,11 +377,12 @@ async function materials() {
     // catching the sky on the curves.
     paint: new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
-      roughness: 0.55,
-      metalness: 0.25,
-      clearcoat: 0.35,
-      clearcoatRoughness: 0.35,
+      roughness: 0.45,
+      metalness: 0.3,
+      clearcoat: 0.75,
+      clearcoatRoughness: 0.14,
     }),
+    plates: new THREE.MeshStandardMaterial({ color: 0xd9d6c8, roughness: 0.5, metalness: 0.3 }),
     glass: new THREE.MeshPhysicalMaterial({
       color: 0x10161b,
       roughness: 0.05,
@@ -285,7 +391,8 @@ async function materials() {
       envMapIntensity: 1.3,
     }),
     dark: new THREE.MeshStandardMaterial({ color: 0x1e1f20, roughness: 0.75, metalness: 0.2 }),
-    rubber: new THREE.MeshStandardMaterial({ color: 0x151516, roughness: 0.95, metalness: 0 }),
+    // Weathered, not new: a tyre left out goes grey at the shoulders.
+    rubber: new THREE.MeshStandardMaterial({ color: 0x1c1c1d, roughness: 0.92, metalness: 0 }),
     metal: withPhoto(new THREE.MeshStandardMaterial({ color: 0x8a8c8e, roughness: 0.45, metalness: 0.8 }), rusty, 0.5),
     lamps: new THREE.MeshStandardMaterial({ color: 0xd8d4c8, emissive: 0x2a2a26, roughness: 0.15 }),
     tail: new THREE.MeshStandardMaterial({ color: 0x7a1a14, emissive: 0x1a0402, roughness: 0.2 }),
@@ -381,7 +488,7 @@ function fit(object, map, kind) {
  */
 export async function dressProps(map) {
   map.updateMatrixWorld(true);
-  const found = { car: [], truck: [], drum: [], crate: [] };
+  const found = { car: [], truck: [], drum: [], crate: [], tyre: [], tyres: [] };
   let yard = false;
   map.traverse((node) => {
     if (/^CAR\d+$/.test(node.name ?? '')) yard = true;
@@ -391,7 +498,8 @@ export async function dressProps(map) {
     for (const { kind, test, yard: yardOnly } of KINDS) {
       if (yardOnly && !yard) continue;
       if (test.test(node.name)) {
-        found[kind].push(node);
+        const what = kind === 'cylinder' ? cylinderKind(node, map) : kind;
+        if (what) found[what].push(node);
         return;
       }
     }

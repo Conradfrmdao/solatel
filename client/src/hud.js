@@ -36,6 +36,9 @@ export class Hud {
     this.go = root.querySelector('#go');
     this._wasWarming = false;
     this.hurtFlash = root.querySelector('#hurt-flash');
+    this.damageRing = root.querySelector('#damage-dirs');
+    /** Where recent hits came from, each kept until it fades. */
+    this._damage = [];
     this._lastHealth = null;
     this.crosshair = root.querySelector('#crosshair');
     this.marker = root.querySelector('#hitmarker');
@@ -457,6 +460,45 @@ export class Hud {
     this.crosshair.style.opacity = value;
   }
 
+  /**
+   * A hit taken from somebody at `from` (world metres): an arc round the
+   * crosshair on the side it came from, held there as the player turns, so
+   * "where is that coming from" is answered at a glance. Fades in
+   * `DAMAGE_SHOW_MS`; a harder hit is a heavier arc.
+   */
+  damageFrom(now, from, amount) {
+    if (!from || !this.damageRing) return;
+    // One arc per attacker: a second hit from the same place refreshes it.
+    let entry = this._damage.find((d) => d.from.distanceToSquared(from) < 4);
+    if (!entry) {
+      const el = document.createElement('div');
+      el.className = 'dmg';
+      el.appendChild(document.createElement('i'));
+      this.damageRing.appendChild(el);
+      entry = { el, from: from.clone() };
+      this._damage.push(entry);
+    }
+    entry.from.copy(from);
+    entry.until = now + DAMAGE_SHOW_MS;
+    entry.weight = Math.min(1, 0.45 + amount / 50);
+  }
+
+  /** Turns each arc to where its hit came from, as the view turns. */
+  updateDamage(now, eye, yaw) {
+    this._damage = this._damage.filter((d) => {
+      const left = d.until - now;
+      if (left <= 0) {
+        d.el.remove();
+        return false;
+      }
+      const toYaw = Math.atan2(-(d.from.x - eye.x), -(d.from.z - eye.z));
+      const relative = toYaw - yaw;
+      d.el.style.transform = `translate(-50%, -50%) rotate(${-relative}rad)`;
+      d.el.style.opacity = String(Math.min(1, left / 600) * d.weight);
+      return true;
+    });
+  }
+
   update(now, link, local, input) {
     this._frames += 1;
     if (now - this._fpsAt >= 500) {
@@ -645,6 +687,9 @@ export class Hud {
 /** How long a killfeed line stays up. */
 const KILLFEED_MS = 6000;
 
+/** How long an arc saying where a hit came from stays up. */
+const DAMAGE_SHOW_MS = 2200;
+
 /** How long a payout sits under the crosshair before it flies to the
  *  counter, and how long the flight takes. */
 const PAYOUT_HOLD_MS = 900;
@@ -715,6 +760,7 @@ const TEMPLATE = `
   </div>
   <div id="go">GO</div>
   <div id="hurt-flash"></div>
+  <div id="damage-dirs"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
   <div id="balance"><span class="amount">$0.00</span><span class="caption">yours</span></div>
   <div id="winnings" class="hidden"><span class="amount">$0.00</span><span class="caption">won</span></div>

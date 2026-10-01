@@ -735,7 +735,17 @@ drum, a boarded crate with battens - and fitted into its stand-in's own box
 Instanced per part, painted in the stand-in's colour. Stand-ins are found by
 node name, without the dot the loader strips (`truck001`, `CAR002`, `Wood003`,
 `crate017`); the yard's two trucks are `Cube.036` and `Cube.051`, matched in
-the yard only because the arena has an unrelated `Cube.036`.
+the yard only because the arena has an unrelated `Cube.036`. The yard's
+other drums and all its tyres are bare `Cylinder`s, told apart by material
+(`cylinderKind`): a barrel colour is a drum, rubber is a tyre - turned on a
+lathe with tread grooves - and rubber taller than it is wide is a stack of
+five. The sedan has arches cut over its wheels, five-spoke steel wheels,
+mirrors, a B-pillar and plates.
+
+**Grass is cut from whole tufts** (`GRASS_TUFTS` in `nature.js`), five
+boxes measured off the atlas's alpha, three crossed per clump in three
+mixes. A card spanning the atlas's whole bottom strip took in half-cut tufts
+and a stray blade-end and read, across a field, as fallen leaves.
 
 ### The weapon in your hands
 
@@ -1357,6 +1367,21 @@ of them are level. It is also its own message rather than part of the
 snapshot: snapshots are twenty a second and already the bulk of the traffic,
 and a name plus six counters per player in every one of them would be most of
 a kilobyte a second per client to say nothing had changed.
+
+**A death is seen happening** (`death.js`). Being killed is the most
+expensive thing in the game and used to be a cut straight to the menu. Now
+the last frame of the match is held for 3.6 s: the view drops to the floor
+and rolls, colour drains, the sound goes dull behind a ring and a heartbeat
+(`audio.dying`, a low-pass every sound already passes through), and the view
+turns to where the killer was last drawn, under a card - who, how, how far,
+where the stake went, what the life won. A click skips it after the fall.
+Nothing in it is asked of the server: the match has stopped sending to this
+player, and the killer's position is the last snapshot's.
+
+**A hit taken says where it came from.** `Damaged` names the attacker, and
+the HUD holds a red arc round the crosshair on that side - turned as the
+player turns, one per attacker, for 2.2 s - and the view flinches: a roll
+only, so the middle of the screen, where a shot goes, never moves.
 
 **A kill that pays is seen paying.** `hud.payout` punches the table's reward
 in under the crosshair (`+$0.90`, tagged HEADSHOT, GRENADE, DOUBLE KILL),
