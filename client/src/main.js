@@ -22,6 +22,7 @@ import { buildPost } from './post.js';
 import { Quality } from './quality.js';
 import { Impacts } from './impacts.js';
 import { DEATH_TIME_SCALE, Death } from './death.js';
+import { Clips, clipsSupported, clipsWanted, setClipsWanted } from './clips.js';
 import { setNatureDetail } from './nature.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
@@ -182,9 +183,40 @@ async function boot() {
   const hud = new Hud(hudRoot);
   const audio = new Audio();
   const death = new Death();
+  // The last seconds of play, kept for F8. Off unless the player turned it on.
+  const clips = new Clips();
+  clips.setEnabled(clipsWanted());
   /** Where the death sequence puts the camera, reused frame to frame. */
   const deathPose = { position: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, t: 0 };
   let wasDying = false;
+  {
+    const box = document.querySelector('#clips');
+    const note = document.querySelector('#clips-note');
+    if (box) {
+      box.checked = clipsWanted() && clipsSupported();
+      if (!clipsSupported()) {
+        box.disabled = true;
+        if (note) note.textContent = 'this browser cannot record video';
+      }
+      box.addEventListener('change', () => {
+        setClipsWanted(box.checked);
+        clips.setEnabled(box.checked);
+      });
+      box.addEventListener('keydown', (event) => event.preventDefault());
+    }
+    window.addEventListener('keydown', (event) => {
+      if (event.code !== 'F8') return;
+      event.preventDefault();
+      if (!clips.enabled) {
+        clips.toast(clipsSupported() ? 'clips are off: turn them on in settings' : 'this browser cannot record video');
+        return;
+      }
+      clips
+        .save()
+        .then((seconds) => clips.toast(seconds > 0 ? `clip saved: ${Math.round(seconds)} s` : 'nothing to save yet'))
+        .catch((err) => clips.toast(`could not save the clip: ${err?.message ?? err}`));
+    });
+  }
   /** A hit taken rolls the view, signed, decaying to nothing. */
   let flinch = 0;
   hud.bindSensitivity(input);
@@ -309,7 +341,7 @@ async function boot() {
   if (options.has('debug')) {
     window.solatel = {
       link, local, input, world, remotes, viewmodel, scene, camera, SIM,
-      renderer, audio, hud, impacts, death,
+      renderer, audio, hud, impacts, death, clips,
       get composer() {
         return composer;
       },
@@ -701,6 +733,7 @@ async function boot() {
       renderer.clear();
       if (composer) composer.render();
       else renderer.render(scene, camera);
+      clips.capture(renderer.domElement, now);
       return;
     }
     if (!playing) {
@@ -757,6 +790,8 @@ async function boot() {
     // through the pass only costs frames.
     renderer.clearDepth();
     renderer.render(viewmodel.scene, viewmodel.camera);
+    // While the canvas still holds the frame.
+    clips.capture(renderer.domElement, now);
 
     // Only frames of a match being drawn say anything about the machine.
     quality.sample(now, dt * 1000);

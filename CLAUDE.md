@@ -653,6 +653,20 @@ one), a restrained bloom that only finds real highlights, tonemapping, and a
 light colour grade with a vignette. `scripts/fetch-photo-assets.mjs`
 downloads and transcodes every photograph; `ATTRIBUTION.md` lists them.
 
+### Clips
+
+`clips.js`. With the setting on, every drawn frame is scaled to at most
+720p, marked SOLATEL in the corner and encoded with WebCodecs (VP9, else
+VP8), a keyframe a second by the clock; the encoded chunks of the last twenty
+seconds are kept, cut at a keyframe; F8 writes them out as a WebM. The
+container is written here (`muxWebm`, a few dozen bytes of EBML round the
+frames) rather than by a library: the maintained one is ten megabytes. The
+clip is the canvas only - no HUD, no sound yet - and the setting is off by
+default, because encoding costs frames on a machine without any spare. The
+death sequence is captured too, which is most of what anybody will want to
+show. Checked by recording in a real match and decoding the file in a
+`<video>` element.
+
 ### Graphics quality
 
 `quality.js`. Four levels - low, medium, high, ultra - and **auto**, the
