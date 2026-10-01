@@ -2019,6 +2019,8 @@ fn wallet_terms() -> crate::wallet::Terms {
     crate::wallet::Terms {
         treasury: crate::solana::Treasury::from_seed([1u8; 32]).address,
         rate: crate::wallet::SolUsd::parse("140").unwrap(),
+        usdc_mint: crate::solana::Address::parse(crate::solana::USDC_DEVNET).unwrap(),
+        usdc_account: crate::solana::Treasury::from_seed([3u8; 32]).address,
         withdrawals_open: true,
     }
 }

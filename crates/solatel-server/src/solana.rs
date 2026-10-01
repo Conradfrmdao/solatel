@@ -59,6 +59,40 @@ const MEMO_PROGRAM: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 /// `SystemInstruction::Transfer`, which is variant 2.
 const TRANSFER: u32 = 2;
 
+/// The SPL token program, and the program that gives every wallet one
+/// well-known account for each token it holds.
+pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+pub const ASSOCIATED_TOKEN_PROGRAM: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+
+/// USDC on devnet: Circle's own mint. It has six decimals, so one of its
+/// base units is exactly one micro-USD, and a deposit of it needs no rate.
+pub const USDC_DEVNET: &str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+
+/// The account `owner` holds `mint` in: an address derived from the two, off
+/// the ed25519 curve so nobody can hold a key to it, and the address anybody
+/// sending that token to `owner` sends it to. This is Solana's
+/// `find_program_address` over the seeds the associated token program uses.
+pub fn associated_token_address(owner: Address, mint: Address) -> Result<Address> {
+    use sha2::{Digest, Sha256};
+    let token = Address::parse(TOKEN_PROGRAM)?;
+    let program = Address::parse(ASSOCIATED_TOKEN_PROGRAM)?;
+    for bump in (0..=255u8).rev() {
+        let mut hasher = Sha256::new();
+        hasher.update(owner.0);
+        hasher.update(token.0);
+        hasher.update(mint.0);
+        hasher.update([bump]);
+        hasher.update(program.0);
+        hasher.update(b"ProgramDerivedAddress");
+        let hash: [u8; 32] = hasher.finalize().into();
+        // Off the curve: no point decompresses from it, so no key signs for it.
+        if ed25519_dalek::VerifyingKey::from_bytes(&hash).is_err() {
+            return Ok(Address(hash));
+        }
+    }
+    bail!("no address off the curve for this owner and mint")
+}
+
 /// A 32-byte account address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Address(pub [u8; 32]);
@@ -172,6 +206,8 @@ pub struct Seen {
     pub signature: String,
     /// It ran and failed. Nothing moved, and there is no need to fetch it.
     pub failed: bool,
+    /// Which slot it landed in, to put what two addresses saw in order.
+    pub slot: u64,
 }
 
 /// One transfer into the treasury, as the chain reports it.
@@ -185,6 +221,8 @@ pub struct Incoming {
     pub memo: Option<String>,
     /// How much the treasury gained, in lamports.
     pub lamports: u64,
+    /// How much its USDC account gained, in base units - micro-USD.
+    pub usdc_units: u64,
     /// Block time, seconds since the epoch, when the chain reports one.
     pub at: Option<i64>,
 }
@@ -307,6 +345,7 @@ impl Rpc {
                         Some(Seen {
                             signature: signature.to_string(),
                             failed: row.get("err").is_some_and(|e| !e.is_null()),
+                            slot: row.get("slot").and_then(Value::as_u64).unwrap_or(0),
                         })
                     })
                     .collect()
@@ -321,7 +360,12 @@ impl Rpc {
     /// is what actually landed: a transaction can pay an address in more ways
     /// than one, and the difference is the only number that is true of all of
     /// them.
-    pub async fn incoming(&self, signature: &str, treasury: Address) -> Result<Option<Incoming>> {
+    pub async fn incoming(
+        &self,
+        signature: &str,
+        treasury: Address,
+        usdc: Option<(Address, Address)>,
+    ) -> Result<Option<Incoming>> {
         let result = self
             .call(
                 "getTransaction",
@@ -338,59 +382,26 @@ impl Rpc {
         if result.is_null() {
             return Ok(None);
         }
-        if result
-            .get("meta")
-            .and_then(|m| m.get("err"))
-            .is_some_and(|e| !e.is_null())
+        Ok(read_incoming(&result, signature, treasury, usdc))
+    }
+
+    /// What a token account holds, in base units; zero if it does not exist.
+    pub async fn token_balance(&self, account: Address) -> Result<u64> {
+        let result = match self
+            .call("getTokenAccountBalance", json!([account.to_string(), {"commitment": "finalized"}]))
+            .await
         {
-            // It failed on chain. Nothing moved.
-            return Ok(None);
-        }
-
-        let keys: Vec<String> = result
-            .pointer("/transaction/message/accountKeys")
-            .and_then(Value::as_array)
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| {
-                        row.get("pubkey")
-                            .and_then(Value::as_str)
-                            .or_else(|| row.as_str())
-                    })
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let wanted = treasury.to_string();
-        let Some(index) = keys.iter().position(|k| *k == wanted) else {
-            return Ok(None);
+            Ok(result) => result,
+            // An account nobody has paid into yet does not exist, and holds
+            // nothing.
+            Err(err) if err.to_string().contains("could not find account") => return Ok(0),
+            Err(err) => return Err(err),
         };
-
-        let before = result
-            .pointer("/meta/preBalances")
-            .and_then(Value::as_array)
-            .and_then(|a| a.get(index))
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        let after = result
-            .pointer("/meta/postBalances")
-            .and_then(Value::as_array)
-            .and_then(|a| a.get(index))
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        let Some(gained) = after.checked_sub(before).filter(|n| *n > 0) else {
-            // It did not pay the treasury. A withdrawal this server sent is
-            // the usual reason, and it is not a deposit.
-            return Ok(None);
-        };
-
-        Ok(Some(Incoming {
-            signature: signature.to_string(),
-            memo: read_memo(&result),
-            lamports: gained,
-            at: result.get("blockTime").and_then(Value::as_i64),
-        }))
+        Ok(result
+            .pointer("/value/amount")
+            .and_then(Value::as_str)
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(0))
     }
 
     /// Sign a transfer out of `from`, without sending it.
@@ -477,6 +488,109 @@ pub enum Outcome {
     Finalized,
     /// Final, and it failed. Nothing moved but the fee.
     Failed,
+}
+
+/// What one transaction, as `getTransaction` describes it in jsonParsed
+/// form, paid the treasury: lamports to `treasury`, and USDC to its token
+/// account when `usdc` names it and the mint. `None` if it paid nothing or
+/// failed on chain. Apart from the call, so a real answer can be tested.
+fn read_incoming(
+    result: &Value,
+    signature: &str,
+    treasury: Address,
+    usdc: Option<(Address, Address)>,
+) -> Option<Incoming> {
+    if result
+        .get("meta")
+        .and_then(|m| m.get("err"))
+        .is_some_and(|e| !e.is_null())
+    {
+        // It failed on chain. Nothing moved.
+        return None;
+    }
+
+    let keys: Vec<String> = result
+        .pointer("/transaction/message/accountKeys")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    row.get("pubkey")
+                        .and_then(Value::as_str)
+                        .or_else(|| row.as_str())
+                })
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let wanted = treasury.to_string();
+    let lamports = match keys.iter().position(|k| *k == wanted) {
+        Some(index) => {
+            let before = result
+                .pointer("/meta/preBalances")
+                .and_then(Value::as_array)
+                .and_then(|a| a.get(index))
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let after = result
+                .pointer("/meta/postBalances")
+                .and_then(Value::as_array)
+                .and_then(|a| a.get(index))
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            after.saturating_sub(before)
+        }
+        None => 0,
+    };
+
+    // USDC lands in the treasury's token account, and the chain records
+    // that account's token balance either side, as it does lamports.
+    let usdc_units = match usdc {
+        Some((account, mint)) => {
+            let account = account.to_string();
+            let mint = mint.to_string();
+            keys.iter()
+                .position(|k| *k == account)
+                .map(|index| {
+                    let units = |which: &str| {
+                        result
+                            .pointer(which)
+                            .and_then(Value::as_array)
+                            .and_then(|rows| {
+                                rows.iter().find(|row| {
+                                    row.get("accountIndex").and_then(Value::as_u64)
+                                        == Some(index as u64)
+                                        && row.get("mint").and_then(Value::as_str)
+                                            == Some(mint.as_str())
+                                })
+                            })
+                            .and_then(|row| row.pointer("/uiTokenAmount/amount"))
+                            .and_then(Value::as_str)
+                            .and_then(|text| text.parse::<u64>().ok())
+                            .unwrap_or(0)
+                    };
+                    units("/meta/postTokenBalances")
+                        .saturating_sub(units("/meta/preTokenBalances"))
+                })
+                .unwrap_or(0)
+        }
+        None => 0,
+    };
+
+    if lamports == 0 && usdc_units == 0 {
+        // It paid the treasury nothing. A withdrawal this server sent is
+        // the usual reason, and it is not a deposit.
+        return None;
+    }
+
+    Some(Incoming {
+        signature: signature.to_string(),
+        memo: read_memo(result),
+        lamports,
+        usdc_units,
+        at: result.get("blockTime").and_then(Value::as_i64),
+    })
 }
 
 /// The memo attached to a transaction, wherever the RPC chose to put it.
@@ -598,6 +712,39 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Against two USDC accounts read off devnet, with the wallets that own
+    /// them: the derivation has to land on the address the chain made.
+    #[test]
+    fn the_usdc_account_is_the_one_the_chain_uses() {
+        let mint = Address::parse(USDC_DEVNET).unwrap();
+        for (owner, account) in [
+            ("FTgHbQu5Q1xxyhnXvjXmveJGgXBU7q4etcQnommxifH9", "2cH44wHepo7DdLfPnR7FPCp9yd8KVdpbVXmkX1XSpmoC"),
+            ("7pSTiDZCvmZqJQKPdDwfGW6wvawe4WQKPdyyZDgMYYkk", "833WYu1GF1sEi9GmxoLnWPGLrYiSt8DVqYN9DXRx7BvB"),
+        ] {
+            let derived = associated_token_address(Address::parse(owner).unwrap(), mint).unwrap();
+            assert_eq!(derived.to_string(), account, "for {owner}");
+        }
+    }
+
+    /// A real devnet transaction moving one USDC: read as a deposit to the
+    /// account that received it, it is exactly one million base units - one
+    /// dollar - and no lamports; read for the sender, it paid nothing.
+    #[test]
+    fn a_real_usdc_transfer_reads_as_exactly_what_moved() {
+        let tx: Value =
+            serde_json::from_str(include_str!("fixtures/devnet_usdc_transfer.json")).unwrap();
+        let mint = Address::parse(USDC_DEVNET).unwrap();
+        let owner = Address::parse("FTgHbQu5Q1xxyhnXvjXmveJGgXBU7q4etcQnommxifH9").unwrap();
+        let account = associated_token_address(owner, mint).unwrap();
+        let got = read_incoming(&tx, "sig", owner, Some((account, mint))).expect("a deposit");
+        assert_eq!(got.usdc_units, 1_000_000);
+        assert_eq!(got.lamports, 0);
+
+        let sender = Address::parse("7pSTiDZCvmZqJQKPdDwfGW6wvawe4WQKPdyyZDgMYYkk").unwrap();
+        let theirs = associated_token_address(sender, mint).unwrap();
+        assert!(read_incoming(&tx, "sig", sender, Some((theirs, mint))).is_none());
+    }
 
     #[test]
     fn shortvec_matches_the_documented_encoding() {

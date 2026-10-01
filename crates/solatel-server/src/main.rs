@@ -309,6 +309,7 @@ async fn main() -> Result<()> {
         .route("/health", get(health))
         .route("/proof", get(proof::handler))
         .route("/chain/blockhash", get(chain::blockhash))
+        .route("/chain/usdc-account", get(chain::usdc_account))
         .route("/ws", get(ws::handler))
         .merge(admin::router(state.clone()))
         .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
@@ -368,6 +369,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         .map(|health| match health.get() {
             Some(s) => json!({
                 "treasury_lamports": s.treasury_lamports,
+                "treasury_usdc_units": s.treasury_usdc_units,
                 "treasury_micro_usd": s.treasury_micro_usd,
                 "owed_micro_usd": s.owed_micro_usd,
                 "micro_usd_per_sol": s.micro_usd_per_sol,

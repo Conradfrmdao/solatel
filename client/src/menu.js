@@ -18,7 +18,19 @@
 // preview that lied about money.
 
 import qrcode from 'qrcode-generator';
-import { canSend, connect, depositTransaction, latestBlockhash, parseSol, signAndSend, signText, watchWallets } from './solana.js';
+import {
+  canSend,
+  connect,
+  depositTransaction,
+  latestBlockhash,
+  parseSol,
+  parseUsdc,
+  signAndSend,
+  signText,
+  usdcAccountOf,
+  usdcDepositTransaction,
+  watchWallets,
+} from './solana.js';
 
 const PANES = ['play', 'wallet', 'profile', 'fair', 'settings'];
 
@@ -273,6 +285,10 @@ export class Menu {
       this.say('asking the server for something to sign…');
       challenge();
     });
+    q('#deposit-assets').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-asset]');
+      if (button) this._drawAsset(button.dataset.asset);
+    });
     q('#solana-deposit').addEventListener('submit', (event) => {
       event.preventDefault();
       this._depositFromWallet();
@@ -347,9 +363,11 @@ export class Menu {
     const { wallet, account } = this.solana ?? {};
     const terms = this.terms;
     if (!wallet || !account || !terms) return;
-    const lamports = parseSol(this.root.querySelector('#solana-amount').value);
-    if (lamports === null || lamports <= 0n) {
-      this.say('that is not an amount of SOL', true);
+    const usdc = this.asset === 'usdc';
+    const typed = this.root.querySelector('#solana-amount').value;
+    const amount = usdc ? parseUsdc(typed) : parseSol(typed);
+    if (amount === null || amount <= 0n) {
+      this.say(`that is not an amount of ${usdc ? 'USDC' : 'SOL'}`, true);
       return;
     }
     if (!canSend(wallet)) {
@@ -359,13 +377,24 @@ export class Menu {
     try {
       this.say('building the transfer…');
       const blockhash = await latestBlockhash();
-      const transaction = depositTransaction({
-        payer: account.address,
-        to: terms.deposit_address,
-        lamports,
-        blockhash,
-        memo: terms.deposit_memo,
-      });
+      const transaction = usdc
+        ? usdcDepositTransaction({
+            payer: account.address,
+            from: await usdcAccountOf(account.address),
+            treasury: terms.deposit_address,
+            to: terms.usdc_address,
+            mint: terms.usdc_mint,
+            units: amount,
+            blockhash,
+            memo: terms.deposit_memo,
+          })
+        : depositTransaction({
+            payer: account.address,
+            to: terms.deposit_address,
+            lamports: amount,
+            blockhash,
+            memo: terms.deposit_memo,
+          });
       this.say(`approve it in ${wallet.name}`);
       const signature = await signAndSend(wallet, account, transaction, `solana:${terms.network}`);
       const cluster = encodeURIComponent(terms.network);
@@ -376,6 +405,43 @@ export class Menu {
       this.root.querySelector('#solana-amount').value = '';
     } catch (err) {
       this.say(`not sent: ${err?.message ?? err}`, true);
+    }
+  }
+
+  /**
+   * SOL or USDC: which the Solana Pay code asks for and the wallet deposit
+   * sends. USDC is credited a dollar to the dollar, SOL at the stated rate.
+   */
+  _drawAsset(asset) {
+    const terms = this.terms;
+    if (!terms) return;
+    this.asset = asset === 'usdc' && terms.usdc_mint ? 'usdc' : 'sol';
+    const q = (id) => this.root.querySelector(id);
+    for (const button of this.root.querySelectorAll('#deposit-assets [data-asset]')) {
+      button.classList.toggle('on', button.dataset.asset === this.asset);
+    }
+    const usdc = this.asset === 'usdc';
+    q('#solana-unit').textContent = usdc ? 'USDC' : 'SOL';
+    q('#solana-amount').placeholder = usdc ? '5.00' : '0.10';
+    // Solana Pay: with `spl-token` the wallet sends USDC to the treasury's
+    // account for it; the memo is the same either way.
+    const pay =
+      `solana:${terms.deposit_address}?memo=${encodeURIComponent(terms.deposit_memo)}` +
+      (usdc ? `&spl-token=${terms.usdc_mint}` : '') +
+      '&label=Solatel';
+    q('#deposit-link').href = pay;
+    q('#deposit-rate').textContent = usdc
+      ? 'USDC is credited dollar for dollar.'
+      : `1 SOL = ${money(terms.micro_usd_per_sol)} here. A fixed rate, not the market's.`;
+    // The same request as a code for a phone's wallet to scan: it opens a
+    // transfer to the treasury with the memo already filled in.
+    try {
+      const code = qrcode(0, 'M');
+      code.addData(pay);
+      code.make();
+      q('#deposit-qr').innerHTML = code.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
+    } catch (err) {
+      console.warn('no QR code:', err);
     }
   }
 
@@ -399,22 +465,8 @@ export class Menu {
         : `<b>${escapeHtml(terms.network)}</b>`;
     q('#deposit-address').textContent = terms.deposit_address;
     q('#deposit-memo').textContent = terms.deposit_memo;
-    q('#deposit-rate').textContent =
-      `1 SOL = ${money(terms.micro_usd_per_sol)} here. A fixed rate, not the market's.`;
-    const pay =
-      `solana:${terms.deposit_address}?memo=${encodeURIComponent(terms.deposit_memo)}` +
-      '&label=Solatel';
-    q('#deposit-link').href = pay;
-    // The same Solana Pay request as a code for a phone's wallet to scan: it
-    // opens a transfer to the treasury with the memo already filled in.
-    try {
-      const code = qrcode(0, 'M');
-      code.addData(pay);
-      code.make();
-      q('#deposit-qr').innerHTML = code.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
-    } catch (err) {
-      console.warn('no QR code:', err);
-    }
+    q('#deposit-assets').classList.toggle('hidden', !terms.usdc_mint);
+    this._drawAsset(this.asset ?? 'sol');
     q('#deposit-cli').textContent =
       `solana transfer ${terms.deposit_address} 0.1 --with-memo ${terms.deposit_memo} ` +
       `--url ${terms.network} --allow-unfunded-recipient`;
@@ -461,7 +513,10 @@ export class Menu {
       if (e.kind === 'in') {
         return (
           `<li class="in"><b>+${money(e.amount_micro_usd)}</b> deposited ` +
-          `<span class="dim">${sol(e.lamports)} SOL</span>${link(e.signature)}</li>`
+          `<span class="dim">${[
+            e.lamports ? `${sol(e.lamports)} SOL` : '',
+            e.usdc_units ? `${money(e.usdc_units)} USDC` : '',
+          ].filter(Boolean).join(' + ')}</span>${link(e.signature)}</li>`
         );
       }
       const status = {
@@ -833,7 +888,7 @@ const TEMPLATE = `
             <div class="field"><span>connected</span><code id="solana-address"></code></div>
             <button type="button" id="solana-signin">sign in with this wallet</button>
             <form id="solana-deposit" class="inline">
-              <span class="with-unit"><input id="solana-amount" inputmode="decimal" autocomplete="off" placeholder="0.10" /><span>SOL</span></span>
+              <span class="with-unit"><input id="solana-amount" inputmode="decimal" autocomplete="off" placeholder="0.10" /><span id="solana-unit">SOL</span></span>
               <button type="submit">deposit from this wallet</button>
             </form>
           </div>
@@ -841,6 +896,10 @@ const TEMPLATE = `
 
         <div class="wallet-block">
           <div class="label">put money in</div>
+          <div id="deposit-assets" class="assets hidden">
+            <button type="button" data-asset="sol" class="on">SOL</button>
+            <button type="button" data-asset="usdc">USDC</button>
+          </div>
           <div id="deposit-qr" class="qr" title="scan with a phone wallet"></div>
           <div class="field">
             <span>send SOL to</span><code id="deposit-address"></code>

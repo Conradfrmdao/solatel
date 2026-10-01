@@ -159,7 +159,7 @@ async fn run_session(
                 })
                 .collect(),
             account_key: signed_in.new_key,
-            wallet: state.wallet.as_ref().map(|terms| terms.offer(player_id)),
+            wallet: state.wallet.as_ref().map(|terms| Box::new(terms.offer(player_id))),
             solana_pubkey: signed_in.solana_pubkey,
         },
     )

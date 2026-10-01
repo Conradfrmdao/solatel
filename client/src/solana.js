@@ -128,6 +128,114 @@ export function depositTransaction({ payer, to, lamports, blockhash, memo }) {
   return new Uint8Array(wire);
 }
 
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+
+/** USDC has six decimals: a base unit is one micro-USD. */
+export const USDC_DECIMALS = 6;
+
+/**
+ * A legacy transaction from instructions, unsigned, with one signer: the fee
+ * payer. Accounts are ordered the way the runtime requires - the signer,
+ * then writable accounts, then read-only ones, programs among them - and
+ * each instruction refers to them by index.
+ *
+ * `instructions` is `[{ program, keys: [{ key, writable }], data }]`, keys
+ * in base58 and data a Uint8Array.
+ */
+export function compileTransaction(payer, instructions, blockhash) {
+  const writable = new Set();
+  const all = [payer];
+  const add = (key, isWritable) => {
+    if (!all.includes(key)) all.push(key);
+    if (isWritable) writable.add(key);
+  };
+  for (const ix of instructions) {
+    for (const k of ix.keys) add(k.key, k.writable);
+  }
+  for (const ix of instructions) add(ix.program, false);
+  const rest = all.filter((k) => k !== payer);
+  const written = rest.filter((k) => writable.has(k));
+  const order = [payer, ...written, ...rest.filter((k) => !writable.has(k))];
+  const readOnly = order.length - 1 - written.length;
+
+  const bytes = order.map(unbase58);
+  const hash = unbase58(blockhash);
+  if (bytes.some((b) => !b || b.length !== 32) || !hash || hash.length !== 32) {
+    throw new Error('a key or the blockhash is not 32 bytes of base58');
+  }
+  const message = [1, 0, readOnly];
+  shortvec(order.length, message);
+  for (const key of bytes) message.push(...key);
+  message.push(...hash);
+  shortvec(instructions.length, message);
+  for (const ix of instructions) {
+    message.push(order.indexOf(ix.program));
+    shortvec(ix.keys.length, message);
+    for (const k of ix.keys) message.push(order.indexOf(k.key));
+    shortvec(ix.data.length, message);
+    message.push(...ix.data);
+  }
+  const wire = [];
+  shortvec(1, wire);
+  wire.push(...new Uint8Array(64));
+  wire.push(...message);
+  return new Uint8Array(wire);
+}
+
+/**
+ * A USDC deposit: the treasury's USDC account made if it is not there yet
+ * (idempotently, paid for by the depositor), `units` moved into it with the
+ * mint and decimals checked, and the memo that says whose it is.
+ */
+export function usdcDepositTransaction({ payer, from, treasury, to, mint, units, blockhash, memo }) {
+  const create = {
+    program: ASSOCIATED_TOKEN_PROGRAM,
+    keys: [
+      { key: payer, writable: true },
+      { key: to, writable: true },
+      { key: treasury, writable: false },
+      { key: mint, writable: false },
+      { key: SYSTEM_PROGRAM, writable: false },
+      { key: TOKEN_PROGRAM, writable: false },
+    ],
+    data: new Uint8Array([1]),
+  };
+  const data = new Uint8Array(10);
+  data[0] = 12; // TransferChecked
+  new DataView(data.buffer).setBigUint64(1, BigInt(units), true);
+  data[9] = USDC_DECIMALS;
+  const transfer = {
+    program: TOKEN_PROGRAM,
+    keys: [
+      { key: from, writable: true },
+      { key: mint, writable: false },
+      { key: to, writable: true },
+      { key: payer, writable: false },
+    ],
+    data,
+  };
+  const note = { program: MEMO_PROGRAM, keys: [], data: new TextEncoder().encode(memo) };
+  return compileTransaction(payer, [create, transfer, note], blockhash);
+}
+
+/** The account `owner` holds USDC in, asked of the server. */
+export async function usdcAccountOf(owner) {
+  const response = await fetch(`/chain/usdc-account?owner=${encodeURIComponent(owner)}`);
+  if (!response.ok) throw new Error(`no USDC account from the server (${response.status})`);
+  return (await response.json()).address;
+}
+
+/**
+ * Dollars typed by a person as USDC base units, digit by digit: "5.25" is
+ * exactly 5,250,000. Null if it is not an amount.
+ */
+export function parseUsdc(text) {
+  const match = /^\s*\$?\s*(\d{1,9})(?:\.(\d{0,6}))?\s*$/.exec(text);
+  if (!match) return null;
+  return BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? '').padEnd(6, '0'));
+}
+
 /**
  * A recent blockhash, for a transaction to be built on - asked of this
  * game's server, which asks the cluster, so the cluster's endpoint (and any

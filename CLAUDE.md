@@ -467,7 +467,7 @@ browser signed in as the first account, the first still itself.
 
 ## The wallet
 
-`wallet.rs`, `solana.rs`, `ledger.rs`, `chain.rs`, migrations 0004 and 0005. Playing never
+`wallet.rs`, `solana.rs`, `ledger.rs`, `chain.rs`, migrations 0004, 0005 and 0009. Playing never
 touches a chain; money crosses it exactly twice, in and out. **Devnet only**:
 `solana::Cluster::devnet()` is the only cluster there is.
 
@@ -509,6 +509,22 @@ ways in that fill it for the player:
 However it is sent, the watcher credits it the same way when the chain has
 it; nothing the page says about a deposit moves money.
 
+**USDC comes in the same way, at one to one** (protocol 15, migration
+0009). A USDC unit is a millionth of a dollar, which is exactly a
+`MicroUsd`, so there is no rate and nothing to round. It arrives at the
+treasury's associated token account for the devnet USDC mint
+(`USDC_DEVNET`, `associated_token_address` - a program-derived address,
+checked against real devnet accounts), and the watcher reads that account's
+history as well as the treasury's, judging each signature once whichever
+list it was seen on. A deposit is credited from the token balances the
+chain recorded before and after it (`read_incoming`, tested against a real
+devnet transfer kept in `fixtures/`), never from the instruction's stated
+amount, plus whatever SOL moved at the rate; the receipt keeps `usdc_units`
+beside `lamports`. The page builds a USDC deposit as create-account-if-
+missing, `TransferChecked` and the memo (`usdcDepositTransaction`), asking
+`GET /chain/usdc-account?owner=` for the sender's token account, and the
+Solana Pay code carries `spl-token=`. Withdrawals are still paid in SOL.
+
 **Out: three ledger steps, never one.**
 
 1. *Requested*: `player -> treasury` under `withdraw:<id>`, on the ledger's
@@ -532,7 +548,7 @@ cover is returned with a reason.
 
 Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
 Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms;
-protocol 14 adds wallet sign-in (see *Accounts*). The
+protocol 14 adds wallet sign-in (see *Accounts*) and 15 USDC. The
 menu's wallet pane states the rate and shows what the server says it is
 sending; it never converts an amount itself. `/health` has a `wallet` block -
 the treasury against what is owed - which is an operator's number, not a

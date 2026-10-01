@@ -9,10 +9,14 @@
 //! Cached for a few seconds, so a room full of players depositing at once
 //! costs the RPC one call rather than one each.
 
-use crate::{AppState, solana::Rpc};
+use crate::{
+    AppState,
+    solana::{self, Address, Rpc},
+};
+use std::collections::HashMap;
 use axum::{
     Json,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -65,6 +69,30 @@ pub async fn blockhash(State(state): State<AppState>) -> Response {
         Err(err) => {
             tracing::warn!(?err, "no blockhash from the cluster");
             StatusCode::BAD_GATEWAY.into_response()
+        }
+    }
+}
+
+/// `GET /chain/usdc-account?owner=<address>`: the account that wallet holds
+/// USDC in, which a USDC deposit is paid from. Derived here, where the curve
+/// arithmetic already lives, rather than in the page.
+pub async fn usdc_account(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    if state.chain.is_none() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(owner) = params.get("owner").and_then(|o| Address::parse(o).ok()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let derived = Address::parse(solana::USDC_DEVNET)
+        .and_then(|mint| solana::associated_token_address(owner, mint));
+    match derived {
+        Ok(account) => Json(json!({ "address": account.to_string() })).into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "no USDC account for an owner");
+            StatusCode::BAD_REQUEST.into_response()
         }
     }
 }

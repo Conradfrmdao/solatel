@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 14;
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -306,6 +306,12 @@ pub struct WalletTerms {
     pub min_withdrawal_micro_usd: i64,
     /// False when this server will not pay out - see `SOLATEL_DEV_GRANT`.
     pub withdrawals_open: bool,
+    /// The USDC mint this server takes, and the treasury's account for it.
+    /// A USDC deposit goes to that account with the same memo.
+    #[serde(default)]
+    pub usdc_mint: Option<String>,
+    #[serde(default)]
+    pub usdc_address: Option<String>,
 }
 
 /// Where a withdrawal has got to.
@@ -371,8 +377,10 @@ pub enum ServerMsg {
         /// It is a bearer credential for the balance, so the client keeps it
         /// and the player should too.
         account_key: Option<String>,
-        /// Deposits and withdrawals, if this server takes them.
-        wallet: Option<WalletTerms>,
+        /// Deposits and withdrawals, if this server takes them. Boxed
+        /// because it is most of the variant's size and sent once a
+        /// connection; serde reads and writes it exactly as unboxed.
+        wallet: Option<Box<WalletTerms>>,
         /// The Solana wallet this account is signed in with, if it has one.
         #[serde(default)]
         solana_pubkey: Option<String>,
@@ -592,6 +600,9 @@ pub enum ServerMsg {
     Deposited {
         amount_micro_usd: i64,
         lamports: u64,
+        /// USDC it brought, in base units - a micro-USD each.
+        #[serde(default)]
+        usdc_units: u64,
         signature: String,
     },
     /// A withdrawal was accepted, or has moved on.

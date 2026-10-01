@@ -9,8 +9,8 @@ move, mouse to look, space to jump, click to shoot, right click to aim, C to
 crouch, R to reload, G to throw a grenade; Escape releases the mouse. Health
 comes back after five seconds out of a fight, and the closing circle burns
 anybody outside it.
-Matches, stakes, kill rewards and the ledger are live. Deposits and withdrawals
-in SOL are built and run against devnet only.
+Matches, stakes, kill rewards and the ledger are live. Deposits in SOL or USDC
+and withdrawals in SOL are built and run against devnet only.
 
 Because this game pays out real money, correctness and fairness rank above
 visual polish everywhere in this codebase.
@@ -140,7 +140,8 @@ escrow, and the wallet's figures. `/proof` is the public payout record the
 menu's *fair play* pane shows: what kills have paid, what has been withdrawn
 (with each landed transaction's signature), stakes handed back and the house
 cut, summed from the ledger and naming nobody. `/chain/blockhash` is what a
-page building a deposit for a connected wallet builds it on. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
+page building a deposit for a connected wallet builds it on, and
+`/chain/usdc-account?owner=` names a wallet's USDC account for a USDC deposit. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
 the operator's view: the ledger's accounts, any player's balance, lives and
 ledger history, any match, and the anti-cheat's review queue.
 

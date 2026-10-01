@@ -1082,6 +1082,8 @@ impl ReceiptOutcome {
 pub(crate) struct Receipt {
     pub signature: String,
     pub lamports: u64,
+    /// USDC it brought, in base units (micro-USD).
+    pub usdc_units: u64,
     pub memo: Option<String>,
     /// Who it was credited to. `Some` exactly when it was.
     pub player_id: Option<PlayerId>,
@@ -1104,8 +1106,9 @@ pub(crate) async fn record_receipt(
 ) -> Result<bool> {
     let insert = sqlx::query(
         "INSERT INTO treasury_receipts
-             (signature, lamports, memo, player_id, micro_usd, micro_usd_per_sol, outcome, block_time)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::bigint))
+             (signature, lamports, memo, player_id, micro_usd, micro_usd_per_sol, outcome, block_time,
+              usdc_units)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::bigint), $9)
          ON CONFLICT (signature) DO NOTHING",
     )
     .bind(&receipt.signature)
@@ -1115,7 +1118,8 @@ pub(crate) async fn record_receipt(
     .bind(receipt.micro_usd)
     .bind(receipt.micro_usd_per_sol)
     .bind(receipt.outcome.as_str())
-    .bind(receipt.block_time);
+    .bind(receipt.block_time)
+    .bind(receipt.usdc_units as i64);
 
     let (ReceiptOutcome::Credited, Some(player_id)) = (receipt.outcome, receipt.player_id) else {
         insert
