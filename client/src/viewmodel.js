@@ -40,7 +40,7 @@
 // hanging where they were, which is most of what makes them read as real.
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { buildRifle } from './rifle.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { HAND, holdMatrix, palms } from './grip.js';
 import { SIM, wrapAngle } from './sim.js';
@@ -646,9 +646,9 @@ export class Viewmodel {
     }
   }
 
-  async load(url) {
-    const gltf = await new GLTFLoader().loadAsync(url);
-    const rifle = gltf.scene;
+  /** The rifle, built in code (`rifle.js`): nobody else's model ships. */
+  async load() {
+    const rifle = buildRifle();
     // The optic goes on the model itself, so every copy of the rifle -
     // everyone else's, in `remotes.js` - carries it too.
     if (this.config.optic) rifle.add(redDot(this.config.optic));

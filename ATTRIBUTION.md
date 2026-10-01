@@ -5,9 +5,9 @@ where, and under what terms. It is not optional paperwork: Solatel charges real
 money to play, which makes shipping an asset we do not have commercial rights to
 a legal problem rather than an etiquette one.
 
-**One asset is currently unlicensed and must not ship: the rifle.** It is
-usable for development and has no written grant. The yard map's terms are
-Conrad's word, recorded below, and are still worth finding in writing.
+**No asset is shipped without a recorded licence.** The rifle, which had none,
+has been replaced by one built in code. The yard map's terms are Conrad's word,
+recorded below, and are still worth finding in writing.
 
 Licence text embedded in a `.glb` lives in its `asset.extras` field. To re-check
 a file's own claim about itself, or all of them at once:
@@ -137,16 +137,16 @@ mesh simplified to 34k triangles. The terms are also written into the file's
 This replaces "Low Poly Soldier -Free" by manoeldarochadeoliveira (CC-BY-4.0),
 which is no longer used anywhere in the game.
 
-## Weapon — `assets/weapons/rifle.glb`
+## Weapon — built in code, `client/src/rifle.js`
 
-**Licence unconfirmed.** "Assault Rifle" by Zsky, downloaded from Sketchfab. The
-file carries no `asset.extras` and shipped with no licence text, so we currently
-have no written grant for it. Its material colours were lifted out of near-black
-by `scripts/prepare-assets.py`; geometry is unchanged.
-
-This must be resolved before launch: either confirm the terms on the model's
-Sketchfab page and record them here, or replace the model. Until then it is fine
-for development and must not ship.
+**Solatel's own work; no third-party asset.** The rifle is an M4-pattern
+carbine made of extruded side profiles and turned sections in code, the way
+the vehicles in `props.js` are. It replaced "Assault Rifle" by Zsky from
+Sketchfab, which shipped with no licence text and for which no written grant
+was ever found; that file has been deleted from the repository and nothing
+loads it. It was built in the old model's frame and units so that everything
+measured against it - the sights, the grip, the magazine, the ejection port -
+still lines up, but none of its geometry was copied.
 
 ## Photographs, sky and foliage — `assets/photo/`, `assets/sky/`
 

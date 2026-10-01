@@ -168,7 +168,7 @@ async function boot() {
   await link.firstWelcome;
 
   say('loading the weapon…');
-  const rifle = await viewmodel.load('assets/weapons/rifle.glb');
+  const rifle = await viewmodel.load();
   say('loading the soldier…');
   // The same rifle, handed on rather than fetched again.
   const soldier = await remotes.load('assets/characters/soldier.glb', rifle);
