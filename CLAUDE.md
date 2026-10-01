@@ -1368,6 +1368,16 @@ snapshot: snapshots are twenty a second and already the bulk of the traffic,
 and a name plus six counters per player in every one of them would be most of
 a kilobyte a second per client to say nothing had changed.
 
+**A death is seen happening** (`death.js`). Being killed is the most
+expensive thing in the game and used to be a cut straight to the menu. Now
+the last frame of the match is held for 3.6 s: the view drops to the floor
+and rolls, colour drains, the sound goes dull behind a ring and a heartbeat
+(`audio.dying`, a low-pass every sound already passes through), and the view
+turns to where the killer was last drawn, under a card - who, how, how far,
+where the stake went, what the life won. A click skips it after the fall.
+Nothing in it is asked of the server: the match has stopped sending to this
+player, and the killer's position is the last snapshot's.
+
 **A kill that pays is seen paying.** `hud.payout` punches the table's reward
 in under the crosshair (`+$0.90`, tagged HEADSHOT, GRENADE, DOUBLE KILL),
 holds it, and flies it up into the winnings counter, which ticks over as it

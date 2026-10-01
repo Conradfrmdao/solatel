@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { buildPost } from './post.js';
 import { Quality } from './quality.js';
 import { Impacts } from './impacts.js';
+import { DEATH_TIME_SCALE, Death } from './death.js';
 import { setNatureDetail } from './nature.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
@@ -180,6 +181,10 @@ async function boot() {
   const menu = new Menu(document.getElementById('menu'));
   const hud = new Hud(hudRoot);
   const audio = new Audio();
+  const death = new Death();
+  /** Where the death sequence puts the camera, reused frame to frame. */
+  const deathPose = { position: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, t: 0 };
+  let wasDying = false;
   hud.bindSensitivity(input);
   hud.bindRawMouse(input);
   hud.bindVolume(audio.volume, (value) => audio.setVolume(value));
@@ -302,7 +307,7 @@ async function boot() {
   if (options.has('debug')) {
     window.solatel = {
       link, local, input, world, remotes, viewmodel, scene, camera, SIM,
-      renderer, audio, hud, impacts,
+      renderer, audio, hud, impacts, death,
       get composer() {
         return composer;
       },
@@ -491,6 +496,9 @@ async function boot() {
         audio.boom(message.at, eye, forward);
       } else if (message.t === 'killed') {
         hud.addKill(message);
+        // This player's own death: kept, with where the killer was as last
+        // drawn, for the few seconds of it that are played out.
+        if (message.victim === local.id) death.noteKilled(message, remotes.positionOf(message.killer));
         if (message.killer === local.id) {
           // A kill is the only thing in this game that pays, so it gets the
           // only sound that means money and the reward on screen. The hit
@@ -565,7 +573,29 @@ async function boot() {
         entering = null;
       });
     }
-    if ((!local.matchId || link.parked) && enteredMatch) {
+    // A life that has just ended is played out before the menu: see death.js.
+    let dying = death.playing ? death.frame(now, deathPose) : null;
+    if (!dying && wasDying) {
+      wasDying = false;
+      audio.recover();
+    }
+    if ((!local.matchId || link.parked) && enteredMatch && !dying) {
+      if (link.parked) {
+        death.end();
+      } else if (
+        local.eliminated &&
+        death.begin(now, eye, input.yaw, input.pitch, {
+          stake: local.tier?.entry_fee_micro_usd ?? 0,
+          winnings: local.winningsMicroUsd ?? 0,
+          eyeHeight: SIM.halfExtentY + (local.eyeOffset ?? SIM.eyeOffset),
+        })
+      ) {
+        wasDying = true;
+        audio.dying();
+        dying = death.frame(now, deathPose);
+      }
+    }
+    if ((!local.matchId || link.parked) && enteredMatch && !dying) {
       // Out of it: killed, or the whistle went, or another tab has taken
       // this player. Back to the menu, and the world stops being drawn
       // rather than being left standing behind it.
@@ -643,6 +673,28 @@ async function boot() {
       local.reloadMs > 0 ? 1 - local.reloadMs / (SIM.reloadSeconds * 1000) : null,
     );
     viewmodel.setEyeOffset(local.eyeOffset ?? SIM.eyeOffset);
+    if (dying) {
+      // The world held and slowed, seen from the floor. Nothing here is
+      // predicted or sent: the match is over for this player.
+      const slow = dt * DEATH_TIME_SCALE;
+      world.update(slow);
+      impacts.update(slow);
+      world.followWithShadows(dying.position);
+      world.positionSky(dying.position, camera.far);
+      remotes.update(now, slow, local.id, dying.position);
+      camera.position.copy(dying.position);
+      camera.rotation.set(dying.pitch, dying.yaw, dying.roll, 'YXZ');
+      const fov = verticalFov(horizontalFov, camera.aspect, 1);
+      if (Math.abs(fov - camera.fov) > 1e-4) {
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+      }
+      renderer.info.reset();
+      renderer.clear();
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+      return;
+    }
     if (!playing) {
       menu.update(local, link);
       renderer.clear();

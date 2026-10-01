@@ -372,6 +372,11 @@ export class Remotes {
     }
   }
 
+  /** Where a player's feet were as last drawn, or null if they are not. */
+  positionOf(id) {
+    return this.players.get(id)?.root.position ?? null;
+  }
+
   _spawn(id) {
     // The root turns with the player's aim. The body inside it turns a
     // little further for the legs.

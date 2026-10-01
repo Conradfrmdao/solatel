@@ -82,7 +82,13 @@ export class Audio {
         this.context = new Ctor();
         this.master = this.context.createGain();
         this.master.gain.value = MASTER_GAIN * this.volume;
-        this.master.connect(this.context.destination);
+        // Everything passes a low-pass that is wide open, so a death can
+        // close it: the world going dull is most of how it sounds.
+        this.muffle = this.context.createBiquadFilter();
+        this.muffle.type = 'lowpass';
+        this.muffle.frequency.value = 20000;
+        this.muffle.Q.value = 0.5;
+        this.master.connect(this.muffle).connect(this.context.destination);
         this.noise = whiteNoise(this.context);
       }
       if (this.context.state === 'suspended') this.context.resume();
@@ -91,6 +97,54 @@ export class Audio {
       // entirely playable without it, so this is not worth failing over.
       this.failed = true;
     }
+  }
+
+  /**
+   * Killed: the world goes dull and far off, a ring rises in the ears, and
+   * one slow heartbeat. `recover` opens it all again.
+   */
+  dying() {
+    if (!this.ready) return;
+    const { context } = this;
+    const now = context.currentTime;
+    this.muffle.frequency.cancelScheduledValues(now);
+    this.muffle.frequency.setValueAtTime(this.muffle.frequency.value, now);
+    this.muffle.frequency.exponentialRampToValueAtTime(520, now + 0.35);
+    // The ring: a pure tone, high, faint, fading over the whole of it.
+    const ring = context.createOscillator();
+    ring.type = 'sine';
+    ring.frequency.value = 3150;
+    const ringGain = context.createGain();
+    ringGain.gain.setValueAtTime(0.0001, now);
+    ringGain.gain.exponentialRampToValueAtTime(0.035 * this.volume, now + 0.25);
+    ringGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.2);
+    // Straight to the output: it is in the ears, not in the world, so the
+    // muffle does not touch it.
+    ring.connect(ringGain).connect(context.destination);
+    ring.start(now);
+    ring.stop(now + 3.3);
+    // Two thumps, the second softer, low enough to be felt more than heard.
+    for (const [at, level] of [[0.5, 0.5], [0.78, 0.32]]) {
+      const thump = context.createOscillator();
+      thump.type = 'sine';
+      thump.frequency.setValueAtTime(62, now + at);
+      thump.frequency.exponentialRampToValueAtTime(38, now + at + 0.16);
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, now + at);
+      gain.gain.exponentialRampToValueAtTime(level * MASTER_GAIN * this.volume, now + at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.22);
+      thump.connect(gain).connect(context.destination);
+      thump.start(now + at);
+      thump.stop(now + at + 0.25);
+    }
+  }
+
+  recover() {
+    if (!this.ready || !this.muffle) return;
+    const now = this.context.currentTime;
+    this.muffle.frequency.cancelScheduledValues(now);
+    this.muffle.frequency.setValueAtTime(Math.max(this.muffle.frequency.value, 1), now);
+    this.muffle.frequency.exponentialRampToValueAtTime(20000, now + 0.6);
   }
 
   get ready() {
