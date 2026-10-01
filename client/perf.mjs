@@ -1,11 +1,23 @@
 // Measures frame rate in a real, GPU-accelerated Chrome.
 //
-//   node client/perf.mjs [--seconds 8] [--map facility]
+//   node client/perf.mjs [--seconds 8] [--map facility] [--crowd 25]
 //
 // It queues for the cheapest table on the map and measures once the match is
 // live, so the server wants `SOLATEL_MATCH_FLOOR=1` and a short
 // `SOLATEL_QUEUE_WAIT`. Each row is one graphics level (quality.js), plus the
 // cost of shadows altogether.
+//
+// `--crowd N` fills the match first: N players over the wire queue for the
+// same table and, once it is live, run in wide circles, jump now and then and
+// fire short bursts at the sky - so everything a full match costs to draw is
+// drawn (bodies, animation, flashes, tracers) and nobody is hurt. Run the
+// server in free play for it (`SOLATEL_FREE_PLAY=1`), which costs the crowd
+// nothing, and keep N under the map's seats.
+//
+// Besides frames a second, each row has the milliseconds the main thread
+// spends on a frame before drawing it (network, simulation, everybody's
+// animation) and on drawing it (three.js handing the scene to the GPU): a
+// frame rate held down by those is the CPU's, not the graphics card's.
 //
 // The smoke test runs headless, where WebGL falls back to a software rasteriser
 // and a frame takes half a second. That is fine for asking "did it load", and
@@ -23,6 +35,8 @@ const at = process.argv.indexOf('--seconds');
 const seconds = at === -1 ? 8 : Number(process.argv[at + 1]);
 const mapAt = process.argv.indexOf('--map');
 const mapName = mapAt === -1 ? null : process.argv[mapAt + 1];
+const crowdAt = process.argv.indexOf('--crowd');
+const crowdSize = crowdAt === -1 ? 0 : Number(process.argv[crowdAt + 1]);
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -60,9 +74,11 @@ const renderer = await page.evaluate(() => {
 });
 console.log(`GPU: ${renderer}`);
 
-// Nothing is drawn in the menu, so get into a match first.
+// Nothing is drawn in the menu, so get into a match first - behind the
+// crowd, if there is one, so they are all in the same line.
 await page.waitForSelector('#menu-tables .table', { timeout: 60000 });
 if (mapName) await page.click(`#menu-maps [data-map="${mapName}"]`);
+const crowd = crowdSize > 0 ? await gather(crowdSize) : [];
 await page.click('#menu-tables .table');
 await page.waitForFunction(
   () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
@@ -72,6 +88,82 @@ console.log(
   `map: ${await page.evaluate(() => window.solatel.local.mapName)}, ` +
     `auto picked: ${await page.evaluate(() => window.solatel.quality)}\n`,
 );
+
+/**
+ * The crowd: `n` players over the wire, in line for the table the page is
+ * about to click - the cheapest on its map - before it clicks.
+ */
+async function gather(n) {
+  // Whatever the page is about to click: the chosen map's first table.
+  const { map, dollars } = await page.evaluate(() => ({
+    map: document.querySelector('#menu-maps .map.on')?.dataset.map,
+    dollars: Number(document.querySelector('#menu-tables .table')?.dataset.stake),
+  }));
+  if (!map || !Number.isFinite(dollars)) throw new Error('could not tell which table the page will click');
+  const ws = URL.replace(/^http/, 'ws').replace(/\/(\?.*)?$/, '') + '/ws';
+  const health = await fetch(ws.replace(/^ws/, 'http').replace(/\/ws$/, '/health')).then((r) => r.json());
+  const bots = [];
+  for (let i = 0; i < n; i += 1) bots.push(new Bot(`Crowd ${i + 1}`, ws, health.protocol_version));
+  await Promise.all(bots.map((b) => b.ready));
+  for (const bot of bots) bot.queue(map, dollars);
+  console.log(`crowd: ${n} in line for $${dollars} on ${map}`);
+  return bots;
+}
+
+/** One of the crowd. Runs once its match is live; never aims at anybody. */
+class Bot {
+  constructor(name, url, protocolVersion) {
+    this.seq = 0;
+    this.phase = Math.random() * Math.PI * 2;
+    this.ws = new WebSocket(url);
+    this.ready = new Promise((resolve, reject) => {
+      this.ws.addEventListener('error', () => reject(new Error(`${name}: cannot connect`)), { once: true });
+      this.ws.addEventListener('message', (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.t === 'welcome') resolve();
+        if (msg.t === 'match_started') this.matchId = msg.match_id;
+        if (msg.t === 'snapshot' && msg.match_id === this.matchId && (msg.starts_in_ms ?? 0) === 0) this.live = true;
+      });
+      this.ws.addEventListener('open', () => {
+        this.send({ t: 'hello', protocol_version: protocolVersion, client_build: 'perf.mjs', name, resume: null });
+      }, { once: true });
+    });
+    this.timer = setInterval(() => this.tick(), 1000 / 64);
+  }
+
+  send(msg) {
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  }
+
+  queue(map, dollars) {
+    this.send({ t: 'queue', map, tier_dollars: dollars });
+  }
+
+  tick() {
+    if (!this.live) return;
+    this.seq += 1;
+    const t = this.seq / 64;
+    // A burst of three every couple of seconds, at the sky.
+    const firing = (t + this.phase) % 2.3 < 0.3;
+    const jumping = (t + this.phase) % 3.7 < 1 / 64;
+    this.send({
+      t: 'inputs',
+      commands: [{
+        seq: this.seq,
+        forward: 1,
+        right: Math.sin(t * 0.9 + this.phase) * 0.6,
+        yaw: this.phase + t * 0.35,
+        pitch: firing ? 1.25 : 0,
+        buttons: (firing ? 2 : 0) | (jumping ? 1 : 0),
+      }],
+    });
+  }
+
+  close() {
+    clearInterval(this.timer);
+    this.ws.close();
+  }
+}
 
 /** Runs for a while and reports the frame rate the client itself measured. */
 async function sample(label, setup, arg) {
@@ -99,6 +191,10 @@ async function sample(label, setup, arg) {
   const fps = samples.map((s) => s.fps).filter((f) => f > 0);
   fps.sort((a, b) => a - b);
   const median = fps.length ? fps[Math.floor(fps.length / 2)] : 0;
+  const middle = (key) => {
+    const values = samples.map((s) => s[key]).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    return values.length ? values[Math.floor(values.length / 2)] : NaN;
+  };
   const worst = fps.length ? fps[0] : 0;
   // The heaviest view the spin passed through, not whichever one it stopped
   // on. What costs frames is the worst direction, not the average one.
@@ -109,7 +205,9 @@ async function sample(label, setup, arg) {
     `${label.padEnd(30)} ${median.toFixed(0).padStart(4)} fps median, ` +
       `${worst.toFixed(0).padStart(4)} worst   ` +
       `${String(last.drawCalls ?? '?').padStart(5)} draws  ` +
-      `${String(last.triangles ?? '?').padStart(7)} tris`,
+      `${String(last.triangles ?? '?').padStart(7)} tris   ` +
+      `cpu ${middle('updateMs').toFixed(1).padStart(5)} + ${middle('drawMs').toFixed(1).padStart(5)} ms   ` +
+      `${String(Math.max(0, ...samples.map((s) => s.players ?? 0))).padStart(2)} others drawn`,
   );
   return median;
 }
@@ -131,6 +229,7 @@ await sample('high, without shadows', () => {
   });
 });
 
+for (const bot of crowd) bot.close();
 if (errors.length) {
   console.log('\nerrors:');
   for (const e of errors.slice(0, 8)) console.log(`  ${e}`);

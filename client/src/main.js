@@ -400,6 +400,9 @@ async function boot() {
           programs: info.programs ? info.programs.length : null,
           geometries: info.memory.geometries,
           textures: info.memory.textures,
+          updateMs: cpu.update,
+          drawMs: cpu.draw,
+          players: remotes.players.size,
         };
       },
     };
@@ -494,8 +497,15 @@ async function boot() {
   let accumulator = 0;
   let previous = performance.now();
 
+  /** Main-thread milliseconds a drawn frame spends before drawing (the
+   *  network, the simulation, everybody's animation) and on drawing (three's
+   *  own work handing the scene to the GPU), smoothed - for perf.mjs, which
+   *  reads them to tell a frame the CPU is holding up from one the GPU is. */
+  const cpu = { update: 0, draw: 0 };
+
   function frame(now) {
     requestAnimationFrame(frame);
+    const frameStart = performance.now();
 
     const dt = Math.min((now - previous) / 1000, 0.25);
     previous = now;
@@ -847,6 +857,7 @@ async function boot() {
     // ever counted, and a map of a thousand meshes reported three draw calls.
     // A diagnostic that cannot see the expensive half of the frame is worse
     // than none, because it is believed.
+    const drawStart = performance.now();
     renderer.info.reset();
     renderer.clear();
     if (composer) composer.render();
@@ -860,6 +871,9 @@ async function boot() {
     renderer.render(viewmodel.scene, viewmodel.camera);
     // While the canvas still holds the frame.
     clips.capture(renderer.domElement, now);
+    const frameEnd = performance.now();
+    cpu.update += (drawStart - frameStart - cpu.update) * 0.1;
+    cpu.draw += (frameEnd - drawStart - cpu.draw) * 0.1;
 
     // Only frames of a match being drawn say anything about the machine.
     quality.sample(now, dt * 1000);

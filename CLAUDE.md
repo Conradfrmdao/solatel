@@ -891,7 +891,13 @@ the same test.
 
 `node client/perf.mjs` queues into a match and measures each level in turn on
 a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
-since a software rasteriser's frame rate means nothing.
+since a software rasteriser's frame rate means nothing. `--crowd N` fills the
+match first with N players over the wire who run, jump and fire at the sky -
+everything a full match costs to draw, with nobody hurt; run the server in
+free play for it. Each row also has the main thread's milliseconds before a
+frame is drawn and while drawing it (`stats().updateMs`, `drawMs`), which
+tell a frame rate the CPU holds down from one the graphics card does - and
+those, unlike the frame rate, mean something on the software renderer too.
 
 `node client/tour.mjs --map yard` takes the same pictures of a map every
 time - from its spawns at eye height, from above, and through the player's
