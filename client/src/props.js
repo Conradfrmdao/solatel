@@ -374,21 +374,27 @@ async function materials() {
   };
   const kit = {
     // Factory paint, gone matt with dust, with a thin clear coat still
-    // catching the sky on the curves.
+    // catching the sky on the curves - dusty, and barely metallic, so the sun
+    // is a sheen on a white car rather than a highlight that blooms over it.
     paint: new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       roughness: 0.45,
-      metalness: 0.3,
+      metalness: 0.1,
       clearcoat: 0.75,
-      clearcoatRoughness: 0.14,
+      clearcoatRoughness: 0.3,
     }),
     plates: new THREE.MeshStandardMaterial({ color: 0xd9d6c8, roughness: 0.5, metalness: 0.3 }),
+    // Dusty glass, not a mirror. With its coat perfectly smooth the sun's
+    // glint off a windscreen was thousands of times brighter than the car
+    // round it, and the bloom spread that one line of pixels into a flare
+    // across half the car - under the yard's overcast as much as anywhere.
     glass: new THREE.MeshPhysicalMaterial({
       color: 0x10161b,
-      roughness: 0.05,
+      roughness: 0.12,
       metalness: 0.0,
       clearcoat: 1.0,
-      envMapIntensity: 1.3,
+      clearcoatRoughness: 0.2,
+      envMapIntensity: 0.8,
     }),
     dark: new THREE.MeshStandardMaterial({ color: 0x1e1f20, roughness: 0.75, metalness: 0.2 }),
     // Weathered, not new: a tyre left out goes grey at the shoulders.

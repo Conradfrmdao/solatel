@@ -16,6 +16,7 @@
 import { asset } from './assets.js';
 import { photoFiles } from './photo.js';
 import { lightFiles } from './light.js';
+import { scatterFiles } from './scatter.js';
 import { natureFiles } from './nature.js';
 import { PROP_SETS } from './props.js';
 import { skyFiles } from './world.js';
@@ -63,8 +64,10 @@ class Prefetch {
     const urls = [
       ...skyFiles(mapName),
       ...lightFiles(mapName),
+      ...scatterFiles(mapName),
       ...photoFiles(materials),
       ...PROP_SETS.flatMap((set) => photoFiles([], [set])),
+      ...photoFiles([], ['concrete_wall', 'brick']),
       ...natureFiles(extras),
     ];
     await Promise.all([...new Set(urls)].map((url) => this._get(url, false)));

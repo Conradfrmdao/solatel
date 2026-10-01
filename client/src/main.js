@@ -349,7 +349,7 @@ async function boot() {
   // build has no reason to hand a scraper a tidy API onto the world.
   if (options.has('debug')) {
     window.solatel = {
-      link, local, input, world, remotes, viewmodel, scene, camera, SIM,
+      THREE, link, local, input, world, remotes, viewmodel, scene, camera, SIM,
       renderer, audio, hud, impacts, death, clips,
       get composer() {
         return composer;

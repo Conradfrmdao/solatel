@@ -40,6 +40,7 @@ import { PHOTO_SETS } from './photo-sets.js';
 export const PHOTO = {
   concrete: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_light: ['concrete_wall', 3.0, 0.45, 1.0, 1],
+  concrete_grey: ['concrete_wall', 3.0, 0.75, 1.0, 1],
   concrete_dark: ['concrete_floor', 3.5, 0.5, 0.8, 1],
   silo: ['concrete_wall', 3.0, 0.4, 1.0, 1],
   asphalt: ['asphalt', 4.0, 0.25, 0.8, 1],

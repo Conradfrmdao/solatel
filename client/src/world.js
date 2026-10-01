@@ -23,6 +23,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { SIM } from './sim.js';
 import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
+import { scatterRubbish } from './scatter.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { asset } from './assets.js';
@@ -166,6 +167,9 @@ const GROUND = 2;
  * - `chips`: paint knocked off edges and faces, showing bare metal.
  * - `ribs`: corrugation, metres between ribs, across roofs and containers.
  * - `planks`: board width in metres, for anything made of timber.
+ * - `wet`: how readily it holds water, where it is level and open to the
+ *   sky: damp darkens it and puddles stand on it, as much as the map's
+ *   weather (`wet` in `SKIES`) says.
  *
  * A surface not listed here - everything in the yard - gets the grain alone,
  * exactly as before.
@@ -176,10 +180,11 @@ const PAINTED = { kind: WEATHERED, blotch: 0.12, streak: 0.15, foot: 0.2, chips:
 const TIMBER = { kind: WEATHERED, blotch: 0.12, foot: 0.2, planks: 0.2 };
 const SURFACES = {
   concrete: { ...CONCRETE, seams: [3.0, 3.066] },
-  concrete_dark: CONCRETE,
+  concrete_dark: { ...CONCRETE, wet: 0.8 },
   concrete_light: { ...CONCRETE, streak: 0.3 },
+  concrete_grey: { ...CONCRETE, seams: [3.0, 3.066] },
   silo: { ...CONCRETE, seams: [0, 1.53], rust: 0.3 },
-  asphalt: { kind: GROUND, blotch: 0.2 },
+  asphalt: { kind: GROUND, blotch: 0.2, wet: 1 },
   plaster_tan: PLASTER,
   plaster_olive: PLASTER,
   plaster_maroon: PLASTER,
@@ -215,8 +220,8 @@ const SURFACES = {
   cardboard: { kind: WEATHERED, blotch: 0.25, streak: 0.1 },
   cladding_blue: { ...PAINTED, rust: 0.15, ribs: 0.2 },
   shore: { kind: WEATHERED, blotch: 0.3 },
-  dirt: { kind: WEATHERED, blotch: 0.35 },
-  gravel: { kind: WEATHERED, blotch: 0.25 },
+  dirt: { kind: WEATHERED, blotch: 0.35, wet: 0.7 },
+  gravel: { kind: WEATHERED, blotch: 0.25, wet: 0.4 },
   rock: { kind: WEATHERED, blotch: 0.3, streak: 0.35, foot: 0.15 },
   rock_dark: { kind: WEATHERED, blotch: 0.3, streak: 0.35, foot: 0.15 },
   foliage: { kind: WEATHERED, blotch: 0.25 },
@@ -287,6 +292,8 @@ function addSurfaceDetail(material, photo = null) {
       shader.uniforms.surfaceChips = { value: photo ? 0 : surface.chips ?? 0 };
       shader.uniforms.surfaceRibs = { value: photo ? 0 : surface.ribs ?? 0 };
       shader.uniforms.surfacePlanks = { value: photo ? 0 : surface.planks ?? 0 };
+      shader.uniforms.surfaceWet = { value: surface.wet ?? 0 };
+      shader.uniforms.mapWetness = WETNESS;
       if (photo) {
         shader.uniforms.surfaceBlotch.value *= 0.45;
         Object.assign(shader.uniforms, photoUniforms(photo, material.color));
@@ -368,8 +375,14 @@ function addSurfaceDetail(material, photo = null) {
         uniform float surfaceChips;
         uniform float surfaceRibs;
         uniform float surfacePlanks;
+        uniform float surfaceWet;
+        uniform float mapWetness;
         uniform vec3 rustColour;
         uniform vec3 bareColour;
+        // Damp and standing water, from the colour pass for the roughness
+        // and normal passes after it.
+        float surfaceDamp = 0.0;
+        float surfacePuddle = 0.0;
 
         // The same noise in two dimensions, for patterns that live on a face:
         // half the hashes, and every pattern below is laid out on a plane.
@@ -516,15 +529,53 @@ function addSurfaceDetail(material, photo = null) {
           }
           #endif
 
+          // Rain: damp patches and puddles on whatever is level, facing up
+          // and open to the sky - never under a roof, which the baked light
+          // knows (how much sky a cell sees). Both darker, and glossier.
+          if (surfaceWet > 0.0 && mapWetness > 0.0) {
+            vec3 up = normalize(cross(dFdx(P), dFdy(P)));
+            if (dot(up, cameraPosition - P) < 0.0) up = -up;
+            if (up.y > 0.9) {
+              float open = textureLod(lightVolumeB,
+                (P + vec3(0.0, lightVolumeCell * 1.5, 0.0) - lightVolumeMin) / lightVolumeSize, 0.0).w;
+              float rain = mapWetness * surfaceWet * smoothstep(0.35, 0.75, open);
+              float pool = surfaceNoise(P.xz / 5.0 + 71.0) * 0.65 + surfaceNoise(P.xz / 1.6 + 13.0) * 0.35;
+              float edge = 1.0 - 0.3 * rain;
+              surfacePuddle = smoothstep(edge, edge + 0.02, pool) * step(0.05, rain);
+              surfaceDamp = max(smoothstep(edge - 0.14, edge, pool) * rain,
+                                smoothstep(0.5, 0.75, surfaceNoise(P.xz / 9.0 + 7.0)) * rain * 0.6);
+              colour *= 1.0 - 0.35 * surfaceDamp;
+              colour *= 1.0 - 0.3 * surfacePuddle;
+            }
+          }
+
           diffuseColor.rgb = colour;
           #endif
         }`,
       )
-      .replace('#include <roughnessmap_fragment>', photo ? PHOTO_ROUGHNESS : '#include <roughnessmap_fragment>')
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `${photo ? PHOTO_ROUGHNESS : '#include <roughnessmap_fragment>'}
+        #ifdef SURFACE_KIND
+        // Wet is glossier, never a mirror: a mirror here could only show the
+        // sky - the environment map knows nothing of the walls round it - and
+        // a puddle that reflects open sky in a walled yard reads as a white
+        // hole in the ground.
+        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.45), surfaceDamp);
+        roughnessFactor = mix(roughnessFactor, 0.22, surfacePuddle);
+        #endif`,
+      )
       .replace('#include <lights_fragment_begin>', LIGHT_BEFORE_LIGHTS + LIGHTS_FRAGMENT_BEGIN)
       .replace('#include <lights_fragment_maps>', LIGHT_INDIRECT)
       .replace('#include <aomap_fragment>', LIGHT_OCCLUSION)
-      .replace('#include <normal_fragment_maps>', photo ? PHOTO_NORMAL : '#include <normal_fragment_maps>')
+      .replace(
+        '#include <normal_fragment_maps>',
+        `${photo ? PHOTO_NORMAL : '#include <normal_fragment_maps>'}
+        #ifdef SURFACE_KIND
+        // Standing water smooths over what is under it.
+        normal = normalize(mix(normal, nonPerturbedNormal, surfacePuddle * 0.75));
+        #endif`,
+      )
       .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
       .replace('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
   };
@@ -569,17 +620,23 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
 
 /**
  * Each map's sky, and the light it gives: a photographed panorama
- * (`assets/sky/<file>`), how strong and what colour its sun, and how much
- * the sky itself lights. The yard is under cloud, so its sun is weak and its
+ * (`assets/sky/<file>`), how strong and what colour its sun, how much the
+ * sky itself lights, and how wet it has left the ground (puddles and damp,
+ * from 0 to 1, in the open only). The sun and sky strengths are baked into
+ * the map's light: change them and run `scripts/bake-light.py`. The yard is under cloud, so its sun is weak and its
  * shadows soft; the arena has a late sun, low and warm. Weather is the same
  * for everybody on a map, which is all the fairness it needs - a darker sky
  * is a harder map for every player on it alike.
  */
 const SKIES = {
-  facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5 },
-  yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25 },
-  arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5 },
+  facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5, wet: 0.5 },
+  yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25, wet: 0.9 },
+  arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
+
+/** How wet the open ground is - from the map's sky, `wet` in `SKIES` - as a
+ *  uniform every ground material shares. */
+const WETNESS = { value: 0 };
 
 /** The sky for anything not in `SKIES`. */
 const DEFAULT_SKY = 'facility';
@@ -845,6 +902,7 @@ export class World {
     if (this._wantSky !== spec.file) return;
     this.scene.environment = sky.environment;
     this.scene.environmentIntensity = spec.sky;
+    WETNESS.value = spec.wet ?? 0;
     this.scene.background = sky.background;
     this.scene.backgroundIntensity = 1.0;
     this.scene.fog.color.copy(sky.horizon);
@@ -1358,8 +1416,9 @@ export class World {
     // Trees and grass, grown from what the map's extras say is there. After
     // the loop above, which is for the model's own flat-coloured materials.
     arena.userData.nature = await growNature(arena);
-    // Vehicles, drums and crates, drawn properly over their stand-ins.
-    await dressProps(arena);
+    // Vehicles, drums and crates, drawn properly over their stand-ins, and
+    // the rubbish that gathers at the foot of the walls.
+    await Promise.all([dressProps(arena), scatterRubbish(mapName, arena)]);
     batchStatic(arena);
 
     this._maps = this._maps ?? new Map();
