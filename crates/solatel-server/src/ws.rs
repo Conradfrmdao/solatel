@@ -83,7 +83,7 @@ async fn run_session(
     session_id: SessionId,
     domain: &str,
 ) -> Result<()> {
-    let hello = read_hello(&mut socket, session_id).await?;
+    let hello = read_hello(&mut socket, session_id, &state.served).await?;
 
     // Who this is, before the lobby hears of them. A database round trip,
     // which is why it happens here in the connection's own task and not in
@@ -458,7 +458,11 @@ struct Hello {
 /// Does not reply. The `Welcome` cannot be written yet: it has to carry the
 /// player id and the next resume token, and only the world knows whether this
 /// connection is a new player or an old one coming back for their body.
-async fn read_hello(socket: &mut WebSocket, session_id: SessionId) -> Result<Hello> {
+async fn read_hello(
+    socket: &mut WebSocket,
+    session_id: SessionId,
+    served: &crate::served::ServedBuild,
+) -> Result<Hello> {
     let frame = tokio::time::timeout(HANDSHAKE_TIMEOUT, socket.recv())
         .await
         .map_err(|_| anyhow!("handshake timed out"))?
@@ -482,6 +486,22 @@ async fn read_hello(socket: &mut WebSocket, session_id: SessionId) -> Result<Hel
             if protocol_version != PROTOCOL_VERSION {
                 let reason = format!(
                     "protocol version mismatch: server speaks {PROTOCOL_VERSION}, client sent {protocol_version}. Reload the page to pick up the current client."
+                );
+                reject(socket, &reason).await;
+                bail!("{reason}");
+            }
+
+            // A page from another build of the client names files this
+            // server no longer has - every one is named by its contents - so
+            // it would fail at its next map. Refused, it reloads itself onto
+            // the current page, as for a protocol change. Only a browser
+            // page says which build it is; the drivers load no files.
+            if client_build.starts_with(crate::served::BUILD_PREFIX)
+                && let Some(current) = served.current().await
+                && current != client_build
+            {
+                let reason = format!(
+                    "client build mismatch: server serves {current}. Reload the page to pick up the current client."
                 );
                 reject(socket, &reason).await;
                 bail!("{reason}");

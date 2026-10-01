@@ -24,8 +24,8 @@ const TAKEN_OVER = 'this player was taken over';
 
 /**
  * After a deploy, a tab still running the last build is refused - its
- * protocol or its maps are not the server's - and the only cure is the new
- * page. So it reloads itself, once per version of the server it was refused
+ * protocol, its maps or its files are not the server's - and the only cure
+ * is the new page. So it reloads itself, once per version of the server it was refused
  * by: the resume token is in session storage, so a player taken out of a
  * match by the deploy comes back into it. Once, because a server *older* than
  * this page would refuse the reloaded one too, and a page that reloaded
@@ -388,6 +388,9 @@ export class Link {
         console.warn('server rejected this client:', message.reason);
         const speaks = /^protocol version mismatch: server speaks (\d+)/.exec(message.reason ?? '');
         if (speaks && reloadForNewBuild(`protocol ${speaks[1]}`)) return;
+        // A page from another build names files the server no longer has.
+        const serves = /^client build mismatch: server serves ([\w/]+)/.exec(message.reason ?? '');
+        if (serves && reloadForNewBuild(`build ${serves[1]}`)) return;
         this.dropLink(`rejected: ${message.reason}`, now);
         if (message.reason && message.reason.startsWith(TAKEN_OVER)) {
           this.parked = true;

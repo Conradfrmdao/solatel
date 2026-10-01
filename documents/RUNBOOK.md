@@ -88,11 +88,16 @@ because it charges players the rake for our restart. Until there is a drain
 - stop forming matches, let the running ones finish, then exit - deploy when
 `/health` shows `escrow_micro_usd` at 0, or close to it.
 
-Every response is sent `no-store`, so a new client is picked up on the next
-page load. A tab left open on the old one is refused at the handshake if the
-protocol changed (`PROTOCOL_VERSION`) or the maps did (`MAP_VERSION`), and
-reloads itself - once per server version, so a server older than the page
-cannot make it loop - and its resume token brings the player back.
+The page itself is sent `no-store` and every file it loads is named after
+its contents and kept by browsers for good, so a new client is picked up on
+the next page load and players download only what changed. A tab left open
+on the old one is refused at the handshake if the protocol changed
+(`PROTOCOL_VERSION`), the maps did (`MAP_VERSION`) or the client did (its
+build, against `build.json` in the web directory), and reloads itself - once
+per version, so a server older than the page cannot make it loop - and its
+resume token brings the player back. Put no cache of your own in front of
+the page: a CDN that keeps `index.html` despite `no-store` serves a page
+whose files a deploy has deleted.
 `node client/stale.mjs` checks that without a server.
 
 ## Watching it

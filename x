@@ -97,7 +97,6 @@ cmd_client() {
     # HOSTDIR: npm is the Windows one, and MSYS_NO_PATHCONV leaves a POSIX
     # path unconverted, which it reads as "C:\c\projects\...".
     npm --prefix "${HOSTDIR}/client" run build
-    docker_run "$IMAGE" bash scripts/copy-assets.sh
     echo ">> client built into web/dist"
 }
 

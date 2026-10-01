@@ -18,6 +18,7 @@
 // Nothing here decides anything; it is paint.
 
 import * as THREE from 'three';
+import { asset } from './assets.js';
 
 /**
  * Surface name -> [photo set, metres per repeat, how far towards the
@@ -117,8 +118,8 @@ export function photoSet(name) {
     cache.set(
       name,
       Promise.all([
-        loadTexture(`assets/photo/${name}_albedo.webp`, true),
-        loadTexture(`assets/photo/${name}_normal.webp`, false),
+        loadTexture(asset(`assets/photo/${name}_albedo.webp`), true),
+        loadTexture(asset(`assets/photo/${name}_normal.webp`), false),
       ]).then(([albedo, normal]) => ({ albedo, normal, average: averageColour(albedo.image) })),
     );
   }
@@ -132,8 +133,8 @@ export function foliageSet(name) {
     cache.set(
       key,
       Promise.all([
-        loadTexture(`assets/photo/${name}_albedo.webp`, true),
-        loadTexture(`assets/photo/${name}_alpha.webp`, false),
+        loadTexture(asset(`assets/photo/${name}_albedo.webp`), true),
+        loadTexture(asset(`assets/photo/${name}_alpha.webp`), false),
       ]).then(([albedo, alpha]) => ({ albedo, alpha })),
     );
   }

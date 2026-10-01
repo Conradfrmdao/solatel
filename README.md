@@ -153,7 +153,7 @@ npm packages, a local Postgres). Run the tools directly:
 ```
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-bash scripts/build-sim.sh && npm --prefix client run build && bash scripts/copy-assets.sh
+bash scripts/build-sim.sh && npm --prefix client run build
 cargo run -p solatel-server
 ```
 

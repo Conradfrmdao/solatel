@@ -25,6 +25,7 @@ import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { asset } from './assets.js';
 import { PHOTO_DECLARATIONS, PHOTO_NORMAL, loadPhotos, photoUniforms } from './photo.js';
 
 /** How long a tracer stays on screen. */
@@ -822,7 +823,7 @@ export class World {
    * behind it rather than into a grey of its own.
    */
   async _loadSky(file) {
-    const hdr = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(`assets/sky/${file}_1k.hdr`);
+    const hdr = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(asset(`assets/sky/${file}_1k.hdr`));
     hdr.mapping = THREE.EquirectangularReflectionMapping;
     const { data, width, height } = hdr.image;
     let best = -1;
@@ -851,7 +852,7 @@ export class World {
     pmrem.dispose();
     hdr.dispose();
 
-    const background = await new THREE.TextureLoader().loadAsync(`assets/sky/${file}.webp`);
+    const background = await new THREE.TextureLoader().loadAsync(asset(`assets/sky/${file}.webp`));
     background.mapping = THREE.EquirectangularReflectionMapping;
     background.colorSpace = THREE.SRGBColorSpace;
 
@@ -1204,11 +1205,11 @@ export class World {
    * that again every time somebody plays two matches on it would be a loading
    * screen for something already in memory.
    */
-  async load(url) {
+  async load(mapName) {
     // The map's own sky, read alongside the map rather than after it.
-    const sky = this.renderer ? this.useSky(/([a-z]+)\.glb$/.exec(url)?.[1]) : null;
+    const sky = this.renderer ? this.useSky(mapName) : null;
     try {
-      return await this._loadMap(url);
+      return await this._loadMap(asset(`assets/maps/${mapName}.glb`));
     } finally {
       await sky;
     }
