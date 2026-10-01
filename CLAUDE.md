@@ -399,9 +399,13 @@ route a stake can take:
   puts two in one place and they can see each other by construction. Six
   clients on six spawns fired 3,930 shots without one landing, which is the
   spawns being well chosen rather than anything broken.
-- `node client/survive.mjs` - a client buys in, stands still for the whole
-  match, and gets its stake back at the whistle. It takes `MATCH_DURATION` to
-  run and there is no way to hurry it from a client, which is correct.
+- `node client/survive.mjs` - a client buys in, survives the whole match,
+  and gets its stake back at the whistle. It takes `MATCH_DURATION` to run
+  and there is no way to hurry it from a client, which is correct. Nobody
+  shoots, but the circle burns: each survivor walks into the final circle
+  by a route found with the real simulation (the wasm, loaded in Node) and
+  stands there. Heading blind for the middle left one stuck behind a wall,
+  burned to death in a match nobody shot in.
 
 **Solana stays on devnet** until Conrad explicitly says otherwise. Nothing in
 this repo should be able to move mainnet funds by accident.
@@ -773,6 +777,13 @@ the same test.
 `node client/perf.mjs` queues into a match and measures each level in turn on
 a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
 since a software rasteriser's frame rate means nothing.
+
+`node client/tour.mjs --map yard` takes the same pictures of a map every
+time - from its spawns at eye height, from above, and through the player's
+own eyes - which is how a visual change is judged against the last one. It
+wants a free-play server with a long `SOLATEL_WARMUP`: on a software
+renderer a tour takes minutes, and once a match is live the circle burns a
+player who never moves and puts the page back on the menu.
 
 ### Trees, grass, smoke and birds
 

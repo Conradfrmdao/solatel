@@ -13,12 +13,24 @@
 // client would sit in the queue forever. They all stand still, nobody shoots
 // anybody, and at the whistle every one of them should have their stake back.
 //
-// Still, but not stupid: the circle burns anybody outside it, so a survivor
-// the zone closes past walks back towards the middle.
+// Still, but not stupid: the circle burns anybody outside it and closes on
+// the middle, so once the match is live each survivor walks into the final
+// circle and stands there. The way in is found by stepping the real movement
+// simulation - the wasm the browser predicts with, so the server's own -
+// across a metre grid; heading straight for the middle runs into walls, and
+// a survivor stuck behind one burned to death in a match nobody shot in.
 //
 // It waits for the match to run its length, which is `MATCH_DURATION`. There
 // is no way to hurry that from a client, and a client that could would be a
 // client that could end everybody else's match too.
+
+import { readFile } from 'node:fs/promises';
+import init, { Predictor, constant_names, constants, select_map } from './generated/solatel_sim.js';
+
+await init({ module_or_path: await readFile(new URL('./generated/solatel_sim_bg.wasm', import.meta.url)) });
+const names = constant_names();
+const values = constants();
+const SIM = Object.fromEntries(names.map((name, i) => [name, values[i]]));
 
 const args = process.argv.slice(2);
 const url = args.find((a) => a.startsWith('ws')) ?? 'ws://localhost:8080/ws';
@@ -110,43 +122,92 @@ class Client {
     this.ws.send(JSON.stringify(msg));
   }
 
-  /** Stand still - doing nothing is the whole point of this test - unless
-   *  the circle is closing on this spot, then walk towards the middle. */
+  /** Walk the route into the final circle, then stand still - doing nothing
+   *  is the whole point of this test. A tick's worth of commands each time,
+   *  so the server walks the body as smoothly as it would a real client's. */
   idle() {
-    this.seq += 1;
-    let forward = 0;
-    let right = 0;
-    let yaw = 0;
-    let buttons = 0;
+    if (!this.at || (this.startsInMs ?? 0) > 0) return this.command(0, 0);
     const now = Date.now();
-    if (this.at && Number.isFinite(this.zone)) {
-      const [x, , z] = this.at;
-      if (Math.hypot(x, z) > this.zone * 0.7 - 2) {
-        forward = 1;
-        yaw = Math.atan2(x, z); // facing is (-sin yaw, -cos yaw)
-        // Straight at the middle runs into walls. Stuck for a second means
-        // a sidestep along the wall for a couple, with a hop, then try again.
-        if (!this.checkAt || now - this.checkAt > 1000) {
-          const moved = this.checkPos ? Math.hypot(x - this.checkPos[0], z - this.checkPos[2]) : 1;
-          if (moved < 0.4 && !(this.sidestepUntil > now)) {
-            this.sidestepUntil = now + 2500;
-            this.side = Math.random() < 0.5 ? -1 : 1;
-          }
-          this.checkAt = now;
-          this.checkPos = [...this.at];
-        }
-        if (this.sidestepUntil > now) {
-          forward = 0.3;
-          right = this.side;
-          buttons = this.seq % 20 === 0 ? 1 : 0;
-        }
-      }
+    const [x, y, z] = this.at;
+    if (!this.route) this.route = routeToMiddle([x, y, z]);
+    while (this.route.length > 0 && Math.hypot(this.route[0][0] - x, this.route[0][1] - z) < 0.35) {
+      this.route.shift();
     }
-    this.send({
-      t: 'inputs',
-      commands: [{ seq: this.seq, forward, right, yaw, pitch: 0, buttons }],
-    });
+    if (this.route.length === 0) return this.command(0, 0);
+    // No progress for two seconds: knocked off the route, so plan again from here.
+    if (!this.checkAt || now - this.checkAt > 2000) {
+      if (this.checkPos && Math.hypot(x - this.checkPos[0], z - this.checkPos[2]) < 0.3) {
+        this.route = routeToMiddle([x, y, z]);
+      }
+      this.checkAt = now;
+      this.checkPos = [x, y, z];
+    }
+    const [tx, tz, jump] = this.route[0];
+    return this.command(0.6, Math.atan2(x - tx, z - tz), jump ? 1 : 0);
   }
+
+  /** One command for every tick since the last send, so the server is never
+   *  short of input to walk with and never queues a backlog of it. */
+  command(forward, yaw, buttons = 0) {
+    const now = performance.now();
+    const due = Math.round(((now - (this.sentAt ?? now - 200)) * SIM.tickHz) / 1000);
+    this.sentAt = now;
+    const commands = [];
+    for (let i = 0; i < Math.min(Math.max(due, 1), 16); i += 1) {
+      this.seq += 1;
+      commands.push({ seq: this.seq, forward, right: 0, yaw, pitch: 0, buttons });
+    }
+    this.send({ t: 'inputs', commands });
+  }
+}
+
+/**
+ * The way from `from` into the final circle, as points to head for, or none
+ * when already in it.
+ *
+ * Breadth first over a metre grid, each step tried by running the real
+ * simulation from where the last one actually landed: a staircase, a gap a
+ * body fits through and a wall it does not are all the simulation's answer,
+ * not this function's guess. Keyed by storey as well as by cell, so a
+ * walkway is not mistaken for the floor under it. The map's own test proves
+ * a way exists from every spawn (`the_final_circle_is_ground_everybody_can_walk_to`).
+ */
+function routeToMiddle(from) {
+  const inside = SIM.zoneFinalRadius - 3;
+  const sim = new Predictor();
+  const key = (x, y, z) => `${Math.round(x)},${Math.round(z)},${Math.round(y / 2)}`;
+  const start = { x: from[0], y: from[1], z: from[2], back: null };
+  const seen = new Set([key(start.x, start.y, start.z)]);
+  const queue = [start];
+  for (let head = 0; head < queue.length && head < 60000; head += 1) {
+    const node = queue[head];
+    if (Math.hypot(node.x, node.z) <= inside) {
+      const points = [];
+      for (let at = node; at.back; at = at.back) points.unshift([at.x, at.z, at.jump]);
+      return points;
+    }
+    for (let d = 0; d < 8; d += 1) {
+      const tx = Math.round(node.x) + Math.round(Math.cos((d * Math.PI) / 4));
+      const tz = Math.round(node.z) + Math.round(Math.sin((d * Math.PI) / 4));
+      // Walked, and failing that jumped: some ledges are a hop.
+      let jump = 0;
+      for (; jump < 2; jump += 1) {
+        sim.adopt(node.x, node.y, node.z, 0, 0, 0, 0, 0, true, SIM.maxHealth, false);
+        for (let t = 0; t < 60; t += 1) {
+          if (t > 0 && sim.on_ground && Math.hypot(sim.x - tx, sim.z - tz) < 0.1) break;
+          sim.step(0.6, 0, Math.atan2(sim.x - tx, sim.z - tz), 0, jump && t === 0 ? 1 : 0);
+        }
+        // Judged where it arrives: momentum would carry it on past the cell.
+        if (Math.hypot(sim.x - tx, sim.z - tz) <= 0.3 && sim.on_ground) break;
+      }
+      if (jump === 2) continue;
+      const k = key(sim.x, sim.y, sim.z);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      queue.push({ x: sim.x, y: sim.y, z: sim.z, jump: jump === 1, back: node });
+    }
+  }
+  return [];
 }
 
 const health = await fetch(url.replace(/^ws/, 'http').replace(/\/ws$/, '/health'));
@@ -165,6 +226,7 @@ if (!table) fail('the server named no tables');
 // undecodable. Which map does not matter to a client that stands still.
 const map = clients[0].maps?.[0]?.name;
 if (!map) fail('the server named no maps');
+if (!select_map(map)) fail(`this build has no map called ${map}`);
 const ENTRY_FEE = table.entry_fee_micro_usd;
 console.log(`>> ${clients.length} clients queueing for the $${table.dollars} table on ${map}`);
 for (const client of clients) client.send({ t: 'queue', map, tier_dollars: table.dollars });

@@ -35,6 +35,7 @@ use solatel_protocol::{
         Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
         InputCommand, MAGAZINE, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
         REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, WEAPON_FIRE_INTERVAL, WEAPON_RANGE,
+        ZONE_FINAL_RADIUS,
         map::{self, MAP_VERSION},
         step_tick,
     },
@@ -264,6 +265,7 @@ pub fn constants() -> Vec<f32> {
         map::active().half_x,
         map::active().half_z,
         WEAPON_RANGE,
+        ZONE_FINAL_RADIUS,
     ]
 }
 
@@ -297,6 +299,7 @@ pub fn constant_names() -> Vec<String> {
         "arenaHalfX",
         "arenaHalfZ",
         "weaponRange",
+        "zoneFinalRadius",
     ]
     .iter()
     .map(|s| (*s).to_string())

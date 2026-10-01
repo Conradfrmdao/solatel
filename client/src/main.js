@@ -358,6 +358,10 @@ async function boot() {
       get brushes() {
         return BRUSHES;
       },
+      /** The current map's spawns, x, y, z and yaw in fours - for tour.mjs. */
+      get spawns() {
+        return SPAWNS;
+      },
       setComposer(on) {
         composer = on ? builtComposer : null;
       },
