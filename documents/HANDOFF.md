@@ -9,7 +9,8 @@ session's brief* directly below.
 Conrad's goal, in his words: make the game *perfect* - "so this can happen in
 a browser?" - with graphics pushed much further and gameplay that is smooth:
 movement, aiming, shooting, kills, death. He has said maps may be **20 to 50
-MB each** if every byte goes into how the game looks and plays.
+MB each** if every byte goes into how the game looks and plays, and later
+that 51 is fine.
 
 **How Conrad works.** He does not want to review before a push: commit, push,
 open a PR, merge it, and tell him afterwards. Develop on
@@ -92,7 +93,17 @@ speed, only that things draw. Ask Conrad for a test pass on his machine.
   `high` preset; find the draw-call and triangle hot spots.
 - Netcode feel: interpolation delay, prediction error under real latency,
   hit registration as players experience it. `load.mjs` and `duel.mjs`
-  exist; a test through a latency relay was done once (see below).
+  exist; a test through a latency relay was done once (see below). *Done
+  2026-10-01:* measured with a new driver, `client/lag.mjs`, through a proxy
+  adding latency, jitter and stalls. A late command is now run over the
+  guess made in its place rather than on top of it (no correction for its
+  owner, no queue left deeper), the server's ticks keep the wall's time,
+  shots are rewound by the whole round trip and the wait, corrections glide,
+  everybody else is drawn by the server's clock, and a player faces their own
+  spawn's way. Corrections went from 7-55 a minute to none on all three
+  links tried, input lag down by 80-90 ms; see *Late commands, corrections,
+  and drawing everybody else* in CLAUDE.md. Still wants Conrad's playtest
+  on a real connection.
 - Kill feedback: the payout pop, hit markers, death sequence (`death.js`)
   and damage arcs exist - polish them with Conrad's playtest notes.
 - Recoil patterns, spread and sprint are **not built on purpose**: each

@@ -82,6 +82,33 @@ function readTables() {
   SPAWNS = spawns();
 }
 
+/** How near a spawn point a player has to be to be standing on it. They are
+ *  tens of metres apart; this is only room for settling onto the floor. */
+const SPAWN_REACH = 1.5;
+
+/**
+ * Which way the spawn point at `position` faces, or null if there is none
+ * within reach - a player taken back mid-match, say.
+ *
+ * Spawns are dealt out afresh every match (`Map::scatter`), so which one a
+ * player was given is told by where the server put them, and each faces the
+ * way the map generator chose for it: into the middle, never at a wall.
+ */
+export function spawnFacing(position) {
+  let best = null;
+  let nearest = SPAWN_REACH * SPAWN_REACH;
+  for (let i = 0; i + 3 < SPAWNS.length; i += 4) {
+    const dx = SPAWNS[i] - position.x;
+    const dz = SPAWNS[i + 2] - position.z;
+    const d = dx * dx + dz * dz;
+    if (d < nearest) {
+      nearest = d;
+      best = SPAWNS[i + 3];
+    }
+  }
+  return best;
+}
+
 /** Wraps an angle into -PI..PI, matching `sim::wrap_angle`. */
 export function wrapAngle(angle) {
   const TAU = Math.PI * 2;

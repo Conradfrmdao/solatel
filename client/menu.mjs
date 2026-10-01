@@ -246,6 +246,29 @@ const drawn = await page.evaluate(() => window.solatel.stats().triangles);
 console.log(`>> drawing ${drawn.toLocaleString()} triangles`);
 if (drawn < 1000) fail('the world is not being drawn');
 
+// Facing the way their own spawn does. Spawns are dealt out afresh every
+// match and each faces into the map; the view was once turned to the
+// table's first spawn, somebody else's, and could start a match at a wall.
+const facing = await page.evaluate(() => {
+  const { local, input, spawns } = window.solatel;
+  let yaw = null;
+  let nearest = Infinity;
+  for (let i = 0; i + 3 < spawns.length; i += 4) {
+    const d = Math.hypot(spawns[i] - local.serverPosition.x, spawns[i + 2] - local.serverPosition.z);
+    if (d < nearest) {
+      nearest = d;
+      yaw = spawns[i + 3];
+    }
+  }
+  const turn = Math.atan2(Math.sin(input.yaw - yaw), Math.cos(input.yaw - yaw));
+  return { nearest, turn, pending: local.faceSpawn };
+});
+if (facing.nearest > 1.5) fail(`the player started ${facing.nearest.toFixed(1)} m from any spawn`);
+if (facing.pending || Math.abs(facing.turn) > 1e-3) {
+  fail(`the view faces ${facing.turn.toFixed(2)} rad off the way the spawn does`);
+}
+console.log('>> facing the way the spawn does');
+
 // The map's files were fetched while the line formed, into the cache, and
 // loading the map then found every one there: nothing it asked for was
 // missing from the list, and nothing came over the network twice.

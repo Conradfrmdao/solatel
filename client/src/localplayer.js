@@ -62,6 +62,22 @@ const EYE_MAX_LAG = 0.5;
  *  the server moving the player - and is followed exactly. */
 const EYE_SNAP = 1.5;
 
+/**
+ * How fast the view catches up with a correction, as a time constant.
+ *
+ * When the server's answer differs from the prediction - a stall outlasted
+ * its patience, or commands of this player's were dropped - the feet move
+ * to the server's answer at once and the view follows over this long: two thirds of the way
+ * in a tenth of a second and all of it in a third, which is under what an eye
+ * reads as a jump and over what it reads as a cut. Source's `cl_smoothtime`
+ * is the same number for the same job.
+ */
+const CORRECTION_SMOOTH_TIME = 0.1;
+
+/** A correction bigger than this is a teleport, not an error, and is seen as
+ *  one. */
+const CORRECTION_SNAP = 2.0;
+
 export class LocalPlayer {
   constructor(link, input) {
     this.link = link;
@@ -78,6 +94,24 @@ export class LocalPlayer {
     this.current = { x: 0, y: 0, z: 0 };
 
     this.predictionError = 0;
+    /**
+     * How far the view is from the prediction, fading to nothing.
+     *
+     * A correction moves the feet - the simulation's position, and so the
+     * next command's starting point - to the server's answer at once. The
+     * view keeps showing where it was and closes the gap over
+     * `CORRECTION_SMOOTH_TIME`, so a correction is a glide rather than a
+     * jump. Nothing but the camera reads it.
+     */
+    this.correction = { x: 0, y: 0, z: 0 };
+    /** Set when a match starts, until the first snapshot of it has said
+     *  which spawn this player was given and the view has turned to face
+     *  the way it does. */
+    this.faceSpawn = false;
+    /** Whether a snapshot of the current match has been reconciled yet. */
+    this.seenSnapshot = false;
+    /** Where the last snapshot put this player, before any replay. */
+    this.serverPosition = { x: 0, y: 0, z: 0 };
     this.health = SIM.maxHealth;
     this.onGround = false;
     this.speed = 0;
@@ -380,6 +414,7 @@ export class LocalPlayer {
         // backlog against the first snapshot would teleport the player.
         this.unacked.length = 0;
         this.predictionError = 0;
+        this.clearCorrection();
         this.name = message.name ?? this.name;
         return true;
 
@@ -488,6 +523,10 @@ export class LocalPlayer {
         // In, and paid for. Everything from the last match goes now rather
         // than lingering behind the new one.
         this.matchId = message.match_id;
+        // Spawns are dealt out per match, so which way to face is told by
+        // where the server put this player - see `spawnFacing`.
+        this.faceSpawn = true;
+        this.seenSnapshot = false;
         this.mapName = message.map_name ?? null;
         this.tier = message.tier ?? null;
         this.matchPlayers = message.players ?? 0;
@@ -507,6 +546,7 @@ export class LocalPlayer {
         this.place = 0;
         this.unacked.length = 0;
         this.predictionError = 0;
+        this.clearCorrection();
         this.ammo = SIM.magazine;
         this.reloadMs = 0;
         this.grenades = SIM.grenadesPerLife;
@@ -595,16 +635,35 @@ export class LocalPlayer {
     }
     this._readPredictor();
 
-    this.predictionError = Math.hypot(
-      this.current.x - before.x,
-      this.current.y - before.y,
-      this.current.z - before.z,
-    );
-    // Keep the render interpolation from lurching when a correction lands; the
-    // next fixed step sets it properly.
-    this.previous.x = this.current.x;
-    this.previous.y = this.current.y;
-    this.previous.z = this.current.z;
+    this.seenSnapshot = true;
+    this.serverPosition.x = state.position[0];
+    this.serverPosition.y = state.position[1];
+    this.serverPosition.z = state.position[2];
+    const dx = this.current.x - before.x;
+    const dy = this.current.y - before.y;
+    const dz = this.current.z - before.z;
+    this.predictionError = Math.hypot(dx, dy, dz);
+    // The tick before moves with this one, so drawing between the two
+    // carries on smoothly from where it was; and the view keeps showing the
+    // old answer, fading it out (see `correction`). Almost always this is
+    // nothing at all - the server ran the same commands through the same
+    // simulation - and when it is something, it is a glide.
+    this.previous.x += dx;
+    this.previous.y += dy;
+    this.previous.z += dz;
+    if (this.predictionError > CORRECTION_SNAP) {
+      this.clearCorrection();
+    } else {
+      this.correction.x -= dx;
+      this.correction.y -= dy;
+      this.correction.z -= dz;
+    }
+  }
+
+  clearCorrection() {
+    this.correction.x = 0;
+    this.correction.y = 0;
+    this.correction.z = 0;
   }
 
   /** Copy the simulation's answer out into the fields the renderer reads. */
@@ -667,8 +726,15 @@ export class LocalPlayer {
 
   /** Eye position for this frame, interpolated between the last two ticks. */
   eyePosition(alpha, out, dt) {
+    const fade = Math.exp(-dt / CORRECTION_SMOOTH_TIME);
+    this.correction.x *= fade;
+    this.correction.y *= fade;
+    this.correction.z *= fade;
     const raw =
-      this.previous.y + (this.current.y - this.previous.y) * alpha + (this.eyeOffset ?? SIM.eyeOffset);
+      this.previous.y +
+      (this.current.y - this.previous.y) * alpha +
+      (this.eyeOffset ?? SIM.eyeOffset) +
+      this.correction.y;
 
     if (this.eyeY === null || !this.onGround || Math.abs(raw - this.eyeY) > EYE_SNAP) {
       // Airborne, just spawned, or moved by something that was not a step.
@@ -682,9 +748,9 @@ export class LocalPlayer {
     }
 
     out.set(
-      this.previous.x + (this.current.x - this.previous.x) * alpha,
+      this.previous.x + (this.current.x - this.previous.x) * alpha + this.correction.x,
       this.eyeY,
-      this.previous.z + (this.current.z - this.previous.z) * alpha,
+      this.previous.z + (this.current.z - this.previous.z) * alpha + this.correction.z,
     );
     return out;
   }

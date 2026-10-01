@@ -2904,3 +2904,362 @@ fn a_match_found_is_said_the_moment_it_forms_before_any_money_moves() {
         );
     }
 }
+
+// ---- late inputs, and what a shot is judged against -----------------------
+
+/// One player alone in a match, standing on their spawn.
+struct Walker {
+    lobby: Lobby,
+    match_id: MatchId,
+    id: PlayerId,
+    session: SessionId,
+    _rx: mpsc::Receiver<ServerMsg>,
+}
+
+impl Walker {
+    fn new() -> Self {
+        let mut lobby = free_play();
+        let (tx, rx) = mpsc::channel(4096);
+        let (joined, session) = join(&mut lobby, "Walker", None, tx);
+        queue(&mut lobby, joined.player_id, session, 1);
+        run_matchmaker(&mut lobby);
+        let match_id = *lobby
+            .matches
+            .iter()
+            .find(|(_, m)| m.running())
+            .expect("a match of one")
+            .0;
+        let mut walker = Self {
+            lobby,
+            match_id,
+            id: joined.player_id,
+            session,
+            _rx: rx,
+        };
+        // Settled on the floor before anything is sent.
+        for _ in 0..40 {
+            walker.lobby.step();
+        }
+        walker
+    }
+
+    fn body(&self) -> &Body {
+        &self.lobby.matches[&self.match_id].bodies[&self.id]
+    }
+
+    fn ground(&self) -> &'static map::Map {
+        self.lobby.matches[&self.match_id].map
+    }
+
+    /// Sends these commands as a client would, as many to a message as the
+    /// wire allows.
+    fn send(&mut self, commands: &[InputCommand]) {
+        for chunk in commands.chunks(MAX_INPUTS_PER_MESSAGE) {
+            self.lobby.handle(GameCommand::Inputs {
+                player_id: self.id,
+                session_id: self.session,
+                commands: chunk.to_vec(),
+            });
+        }
+    }
+
+    /// One command a tick, on time.
+    fn on_time(&mut self, commands: &[InputCommand]) {
+        for command in commands {
+            self.send(&[*command]);
+            self.lobby.step();
+        }
+    }
+}
+
+/// Running, swerving and turning: a guess of the last command gets this
+/// wrong every tick, so putting it right shows.
+fn swerving(from: u32, count: u32) -> Vec<InputCommand> {
+    (from..from + count)
+        .map(|seq| InputCommand {
+            seq,
+            forward: 1.0,
+            right: if seq % 12 < 6 { 0.7 } else { -0.7 },
+            yaw: seq as f32 * 0.03,
+            pitch: 0.0,
+            buttons: Buttons(0),
+        })
+        .collect()
+}
+
+/// Where these commands take a body, stepped by hand: what its owner's
+/// client predicts.
+fn predicted(mut state: PlayerState, commands: &[InputCommand], ground: &map::Map) -> PlayerState {
+    for command in commands {
+        solatel_protocol::sim::step_tick(&mut state, command, ground);
+    }
+    state
+}
+
+#[test]
+fn late_commands_cost_their_owner_nothing() {
+    let mut walker = Walker::new();
+    let start = walker.body().state;
+    let ground = walker.ground();
+    let commands = swerving(1, 30);
+
+    walker.on_time(&commands[..10]);
+    // Six ticks with nothing arriving: the body carries on on a guess.
+    for _ in 0..6 {
+        walker.lobby.step();
+    }
+    let own = predicted(start, &commands[..10], ground);
+    assert!(
+        walker.body().guess.is_some(),
+        "a tick with nothing to run is guessed"
+    );
+    assert_ne!(
+        walker.body().state.position,
+        own.position,
+        "everybody else should see the body carry on"
+    );
+    assert_eq!(
+        walker.body().reported_state().position,
+        own.position,
+        "and its owner where their own commands left it"
+    );
+
+    // The six late ones arrive with this tick's, and all seven run now.
+    walker.send(&commands[10..17]);
+    walker.lobby.step();
+    let own = predicted(start, &commands[..17], ground);
+    assert_eq!(walker.body().last_applied_seq, 17);
+    assert!(walker.body().guess.is_none());
+    assert_eq!(
+        walker.body().state.position,
+        own.position,
+        "the body should be exactly where its owner's prediction put it"
+    );
+    assert_eq!(walker.body().state.velocity, own.velocity);
+
+    // And no further behind for it: the next command runs on the next tick.
+    walker.on_time(&commands[17..18]);
+    assert_eq!(walker.body().last_applied_seq, 18);
+    assert!(walker.body().pending.is_empty());
+}
+
+#[test]
+fn holding_commands_back_does_not_move_a_body_any_faster() {
+    let mut walker = Walker::new();
+    let start = walker.body().state;
+    let ground = walker.ground();
+    let commands = swerving(1, 30);
+
+    walker.on_time(&commands[..1]);
+    for _ in 0..8 {
+        walker.lobby.step();
+    }
+    // Everything at once: twenty commands after nine ticks.
+    walker.send(&commands[1..21]);
+    walker.lobby.step();
+    assert_eq!(
+        walker.body().last_applied_seq,
+        10,
+        "one command for every tick and not one more: eight guessed, and this"
+    );
+    assert_eq!(
+        walker.body().state.position,
+        predicted(start, &commands[..10], ground).position
+    );
+
+    // The rest were sent early, and waiting is lag: the backlog goes.
+    walker.lobby.step();
+    assert!(walker.body().pending.len() < BACKLOG_LIMIT);
+}
+
+#[test]
+fn a_guess_too_old_to_put_right_stands() {
+    let mut walker = Walker::new();
+    let ground = walker.ground();
+    let commands = swerving(1, 40);
+
+    walker.on_time(&commands[..5]);
+    for _ in 0..GUESS_WINDOW_TICKS + 10 {
+        walker.lobby.step();
+    }
+    let guessed = walker.body().state;
+    assert_eq!(
+        walker.body().reported_state().position,
+        guessed.position,
+        "past the window, its owner is told the guess stands"
+    );
+
+    walker.send(&commands[5..30]);
+    walker.lobby.step();
+    assert_eq!(
+        walker.body().last_applied_seq,
+        30,
+        "only the newest runs: the rest were for ticks long gone"
+    );
+    assert!(walker.body().pending.is_empty());
+    assert_eq!(
+        walker.body().state.position,
+        predicted(guessed, &commands[29..30], ground).position
+    );
+}
+
+#[test]
+fn a_throw_held_across_a_late_packet_is_one_throw() {
+    let mut walker = Walker::new();
+    let throwing = |seq: u32| InputCommand {
+        seq,
+        forward: 0.0,
+        right: 0.0,
+        yaw: 0.0,
+        pitch: 0.3,
+        buttons: Buttons(Buttons::THROW),
+    };
+    walker.on_time(&[throwing(1)]);
+    for _ in 0..3 {
+        walker.lobby.step();
+    }
+    walker.send(&[throwing(2), throwing(3), throwing(4), throwing(5)]);
+    walker.lobby.step();
+    assert_eq!(walker.body().last_applied_seq, 5);
+    assert_eq!(
+        walker.body().grenades,
+        GRENADES_PER_LIFE - 1,
+        "the button never came up, so there was only ever one throw"
+    );
+}
+
+/// A duel with the victim written into their own history running sideways
+/// at `metres` a tick, the shooter `rtt_ms` away. Returns where the victim
+/// was `ticks` ago as of the tick the next shot is resolved on.
+///
+/// The run is put somewhere the shooter can see all of, square enough to
+/// the line of fire that a shot at one place in it cannot clip the box at
+/// another: the duel's three metres would make every shot at the run so
+/// oblique that it passes through the front of several.
+fn running_target(duel: &mut Duel, rtt_ms: f32, metres: f32) -> impl Fn(f32) -> Vec3 + use<> {
+    duel.lobby
+        .connections
+        .get_mut(&duel.shooter)
+        .unwrap()
+        .rtt_ms = rtt_ms;
+    let spawn = map::active().spawn(0);
+    let ahead = look_direction(spawn.yaw, 0.0);
+    let across = look_direction(spawn.yaw + std::f32::consts::FRAC_PI_2, 0.0);
+    let eye = duel.body(duel.shooter).state.eye_position();
+    let ground = duel.lobby.matches[&duel.match_id].map;
+    let (base, side) = [6.0f32, 8.0, 10.0, 12.0]
+        .into_iter()
+        .flat_map(|off| [(off, across), (off, -across)])
+        .map(|(off, side)| (duel.position(duel.shooter) + ahead * off, side))
+        .find(|&(base, side)| {
+            (0..=24).all(|k| {
+                let at = base + side * (k as f32 * metres);
+                let to = at - eye;
+                hitscan::trace_world(eye, to.normalize(), to.length(), ground).is_none()
+            })
+        })
+        .expect("somewhere in front of the first spawn the shooter can see a run across");
+    let resolved_on = duel.lobby.tick.wrapping_add(1);
+    let body = duel
+        .lobby
+        .matches
+        .get_mut(&duel.match_id)
+        .unwrap()
+        .bodies
+        .get_mut(&duel.victim)
+        .unwrap();
+    body.state.position = base;
+    for (tick, state) in body.history.iter_mut() {
+        state.position = base + side * (resolved_on.wrapping_sub(*tick) as f32 * metres);
+    }
+    move |ticks: f32| base + side * (ticks * metres)
+}
+
+#[test]
+fn a_shot_is_judged_against_what_its_shooter_could_see() {
+    let mut duel = Duel::new();
+    let was = running_target(&mut duel, 100.0, 0.2);
+    // The whole round trip, the tick the command waited, and the buffer the
+    // shooter renders everybody else behind by.
+    let rewind = 100.0 + waited_ms(1) + INTERPOLATION_DELAY_MS;
+    duel.fire_at(was((rewind / (TICK_DT * 1000.0)).round()));
+    assert!(
+        duel.health(duel.victim) < MAX_HEALTH,
+        "a shot at where the victim was on the shooter's screen should land"
+    );
+}
+
+#[test]
+fn a_shot_is_not_judged_against_where_the_target_got_to_since() {
+    let mut duel = Duel::new();
+    let was = running_target(&mut duel, 100.0, 0.2);
+    // Half the round trip, which is what the rewind used to be: the target a
+    // few ticks further on than the shooter ever saw them.
+    let rewind = 50.0 + INTERPOLATION_DELAY_MS;
+    duel.fire_at(was((rewind / (TICK_DT * 1000.0)).round()));
+    assert_eq!(
+        duel.health(duel.victim),
+        MAX_HEALTH,
+        "nobody was standing there on the shooter's screen"
+    );
+}
+
+#[test]
+fn a_late_tick_is_made_up_so_game_time_keeps_the_walls() {
+    let period = std::time::Duration::from_secs_f32(TICK_DT);
+    let start = tokio::time::Instant::now();
+    let mut clock = TickClock::new(start, period);
+    // Ten ticks, the third a whole 40 ms late: the ones after it run at once
+    // until the schedule is back where it was.
+    let mut now = start;
+    for n in 1..=10u32 {
+        now = now.max(clock.due());
+        if n == 3 {
+            now += std::time::Duration::from_millis(40);
+        }
+        clock.advance(now);
+    }
+    assert_eq!(
+        clock.due(),
+        start + period * 11,
+        "the eleventh tick is due when it always was"
+    );
+}
+
+#[test]
+fn a_stall_is_not_fast_forwarded() {
+    let period = std::time::Duration::from_secs_f32(TICK_DT);
+    let start = tokio::time::Instant::now();
+    let mut clock = TickClock::new(start, period);
+    // A paused container: two seconds between one tick and the next.
+    let woke = clock.due() + std::time::Duration::from_secs(2);
+    clock.advance(woke);
+    assert_eq!(
+        clock.due(),
+        woke + period,
+        "the clock starts again from when it woke, rather than running two seconds of ticks"
+    );
+}
+
+#[test]
+fn a_body_whose_owner_leaves_mid_guess_stands_where_they_left_it() {
+    let mut walker = Walker::new();
+    let start = walker.body().state;
+    let ground = walker.ground();
+    let commands = swerving(1, 10);
+    walker.on_time(&commands);
+    for _ in 0..8 {
+        walker.lobby.step();
+    }
+    assert!(walker.body().guess.is_some());
+    walker.lobby.handle(GameCommand::Leave {
+        player_id: walker.id,
+        session_id: walker.session,
+    });
+    assert!(walker.body().guess.is_none());
+    assert_eq!(
+        walker.body().state.position,
+        predicted(start, &commands, ground).position,
+        "the guess carried them on after their last command, and is taken back"
+    );
+}

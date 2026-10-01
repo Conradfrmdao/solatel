@@ -57,6 +57,7 @@ import { SIM, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
 import { HAND, holdMatrix, palms } from './grip.js';
 import { lightMaterial } from './light.js';
+import { SnapshotClock } from './snapclock.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -81,8 +82,9 @@ const MAX_PLAYBACK = 1.8;
 const BLEND_SECONDS = 0.18;
 const BLEND_AIR_SECONDS = 0.08;
 
-/** How much snapshot history to keep - comfortably more than the interpolation
- *  delay, so a burst of late packets still has something to work from. */
+/** How much snapshot history to keep, in the server's milliseconds -
+ *  comfortably more than the interpolation delay, so a burst of late packets
+ *  still has something to work from. */
 const HISTORY_MS = 2000;
 
 /** The model faces +Z; yaw 0 in this game looks down -Z. Without this the
@@ -244,7 +246,10 @@ export class Remotes {
     this.template = null;
     this.weapon = null;
     this.players = new Map();
+    /** Snapshots by the server time they were taken at, oldest first. */
     this.history = [];
+    /** Which moment of the server's clock to draw. */
+    this.clock = new SnapshotClock(SIM.interpolationDelayMs);
     /** Grenades in the last snapshot, to tell a new one from one in flight. */
     this._grenades = null;
     /** Who has just thrown one, by id, waiting to be posed. */
@@ -319,9 +324,15 @@ export class Remotes {
     return this.template;
   }
 
-  /** Records a snapshot for later interpolation. */
+  /**
+   * Records a snapshot for later interpolation, by when the server took it
+   * rather than when it arrived (see `snapclock.js`).
+   */
   record(snapshot, nowMs) {
-    this.history.push({ at: nowMs, players: snapshot.players });
+    // The server restarted: what was kept is on a clock that no longer runs.
+    if (this.clock.note(snapshot.server_time_ms, nowMs)) this.history.length = 0;
+    const at = snapshot.server_time_ms;
+    this.history.push({ at, players: snapshot.players });
     // A grenade that was not there last time has just left somebody's hand,
     // and the nearest pair of eyes is whose.
     const live = snapshot.live_grenades ?? [];
@@ -333,10 +344,7 @@ export class Remotes {
       }
     }
     this._grenades = new Set(live.map((g) => g.id));
-    while (
-      this.history.length > 0 &&
-      nowMs - this.history[0].at > HISTORY_MS
-    ) {
+    while (this.history.length > 0 && at - this.history[0].at > HISTORY_MS) {
       this.history.shift();
     }
   }
@@ -361,7 +369,8 @@ export class Remotes {
     this.selfId = selfId;
     if (!this.template) return;
 
-    const renderAt = nowMs - SIM.interpolationDelayMs;
+    const renderAt = this.clock.drawAt(nowMs, dt * 1000);
+    if (renderAt === null) return;
     const posed = this._sample(renderAt);
     if (!posed) return;
 
@@ -388,6 +397,20 @@ export class Remotes {
   /** Where a player's feet were as last drawn, or null if they are not. */
   positionOf(id) {
     return this.players.get(id)?.root.position ?? null;
+  }
+
+  /**
+   * Where a player's muzzle was as last drawn, into `out`, or null if they
+   * are not drawn. Everybody else is drawn an interpolation delay behind the
+   * server, and a shot arrives the moment the server fires it, so a tracer
+   * from the server's own `from` would leave a strafing shooter's rifle from
+   * most of a metre away. Only the tracer is moved: where the round went is
+   * the server's.
+   */
+  muzzleOf(id, out) {
+    const player = this.players.get(id);
+    if (!player || player.diedAt !== null || !player.root.visible) return null;
+    return player.flashSprite.parent.getWorldPosition(out);
   }
 
   _spawn(id) {

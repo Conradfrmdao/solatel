@@ -1144,12 +1144,12 @@ under content-hashed names by `./x client` (see *What a browser keeps*).
 They are downloaded by every player, so size is a gameplay number - once
 per player and build, now that a browser keeps them, and compressed. A player fetches only the map being played, so the budget is per map,
 not for the folder, and Conrad's is **20 to 50 MB a map** if every byte goes
-into how it looks and plays. Over the wire today, everything a map needs:
+into how it looks and plays - and he has since said 51 is fine. Over the wire today, everything a map needs:
 the arena 34.4 MB, the yard 31.9 and the facility 49.6, almost all of it
 photographs (see *Photographs, sky and light*); the baked light is 1.8,
 2.0 and 2.5 MB of that, and the models themselves 0.06, 0.23 and 0.64 MB as
-brotli. The facility is the one at the limit: anything added to it has to
-be paid for there. The soldier is 1.5 MB on top, once, and the rifle
+brotli. The facility is the one nearest the limit: anything added to it has
+to be paid for there. The soldier is 1.5 MB on top, once, and the rifle
 nothing - it is built in code.
 
 `prepare-assets.py` strips normals and texture coordinates from the maps, which
@@ -1579,6 +1579,107 @@ match, walks, reloads, and asserts the same player came back into the same
 match on the same map, within a metre or two of where it left — the tolerance
 is not zero because gravity still applies to the body while the page is
 loading.
+
+## Late commands, corrections, and drawing everybody else
+
+`game.rs` (`Body::advance`), `localplayer.js`, `snapclock.js`. What decides
+whether movement feels smooth on a real connection rather than on
+localhost, all of it measured with `client/lag.mjs` (below).
+
+**A command that is late costs its owner nothing.** The server runs one
+command a tick. When the next has not arrived, the body is moved on a
+**guess** - the last command again, without anything it fired, threw or
+reloaded, and without its movement after `MAX_CARRY_FORWARD_TICKS` - so
+everybody else sees it carry on. When the late commands come, the guess is
+undone - position, motion, aim and crouch put back to where the owner's own
+last command left them, health left as it is, because a guessed body takes
+real damage - and every one of them is run in that tick: one for each tick
+guessed, one for this. The owner's prediction was made from exactly those
+commands, so it is then exactly right, and while a guess stands the owner's
+own entry in their snapshot (`reported_state`) is where their commands left
+them, not the guess, or replaying their unacknowledged commands would count
+the guessed ticks twice. It used to run the late commands *on top of* the
+guess: every late packet put the body a step ahead of its owner (a
+correction on their screen) and left the queue a command deeper for good,
+which after one stall on a lossy link meant a correction on most snapshots
+and an eighth of a second of lag for the rest of the match.
+
+- **Never more commands than ticks.** Each tick runs one or guesses and owes
+  one, so holding commands back and sending them together moves nobody
+  faster. A queue that builds with nothing owed - a client sending faster
+  than the server steps - is lag, and past `BACKLOG_LIMIT` the oldest go.
+- **Half a second** (`GUESS_WINDOW_TICKS`): a lost TCP packet is the
+  retransmission timer plus a round trip, and with a frame hitching while it
+  waits three eighths of a second was measured too short. A guess older than
+  this stands; only the newest command is run on it, the rest are history.
+  That bounds what a lag switch buys - its body seen on the guess for half
+  a second, then where it really went - which is what carrying the last
+  command forward always allowed.
+- **Shots in a batch** leave from where their own command left the shooter,
+  but the fire rate is still judged in server time, so commands held back
+  cannot deliver three rounds in one tick.
+
+**A shot is judged against what its shooter could see**: everybody else
+rewound by the whole round trip, the time the command waited on the server
+(`waited_ms`), and the interpolation delay. The snapshot the shooter was
+looking at took half the round trip to reach them, and the command the
+other half to come back. It was half the round trip and no wait, which
+judged a running target a third of a metre past where it was drawn;
+`a_shot_is_judged_against_what_its_shooter_could_see` and its pair fail
+against the old sum. The round trip is still the server's measurement,
+never the client's word.
+
+**The tick clock keeps the wall's time** (`TickClock`). Clients make a
+command every tick of their own clock, so a server whose ticks run slow
+takes commands slower than they come and its queues only grow. tokio's
+`Delay` moved the whole schedule on by every tick more than 5 ms late, and
+on this container that was 0.3% - a dropped command, and a correction,
+every five seconds per player. Lateness up to `MAX_CATCH_UP` is made up by
+running the next tick at once; a real stall - a paused container - still
+starts the clock again rather than fast-forwarding the match. And the
+client keeps its clock too: a frame that hitched owes ticks, and it makes
+them up over the next few frames (`CATCH_UP_TICKS`) instead of letting the
+time go, which left its commands behind the server's clock for good.
+
+**A correction is a glide, not a jump.** When the server's answer does
+differ - a stall outlasted the window, or commands were dropped - the feet
+take it at once and the view closes the gap over
+`CORRECTION_SMOOTH_TIME` (a tenth of a second, Source's `cl_smoothtime`).
+More than two metres is a teleport and is seen as one.
+
+**Everybody else is drawn by the server's clock, not by when snapshots
+arrive.** Two snapshots held up on the way and released together used to
+be drawn as a stop and a lurch; at 5 ms of jitter everybody's speed on
+screen wobbled by 15%. Every snapshot carries `server_time_ms`, and
+`SnapshotClock` puts that clock on the page's by the offset of the
+snapshots that arrived soonest in the last two seconds, easing small
+changes in and taking a stall or a restart at once. Nothing is drawn past
+the newest snapshot: in a stall everybody else stands still, which is true,
+rather than walking on along a guess through a wall, which a player would
+shoot at and miss.
+
+**A player faces the way their spawn does.** Spawns are dealt out afresh
+every match, so which one a player was given is told by the first snapshot's
+position (`spawnFacing`); the view used to be turned to the table's first
+spawn, somebody else's, and a player could start the match facing a wall.
+
+`node client/lag.mjs` is how any of this is judged: two clients through a
+proxy in the process that adds latency, jitter and TCP-style stalls, one
+running, swerving and jumping with the real wasm prediction on a frame
+clock, the other watching. It reports corrections, input lag, and how
+steadily the watcher draws the runner each way. It wants a free-play server
+with the floor at one and no warm-up. Against the old server and the new,
+45 s on the facility, three links (20 ms at 144 fps / 30 ms with 5 ms
+jitter and frame hitches / 40 ms with a 250 ms stall every six seconds):
+
+| | old | new |
+|---|---|---|
+| corrections a minute | 7 / 8 / 55 | 0 / 0 / 0 |
+| input lag, median | 145 / 169 / 214 ms | 66 / 97 / 125 ms |
+| others' speed wobble on screen | 8-15% (by arrival) | 0% (by server clock) |
+
+The watcher's figures are for drawing, not the server: the old server
+drawn by the server's clock steadies too.
 
 ## Shooting, and what it is worth
 
