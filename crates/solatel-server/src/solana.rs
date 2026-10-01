@@ -388,7 +388,10 @@ impl Rpc {
     /// What a token account holds, in base units; zero if it does not exist.
     pub async fn token_balance(&self, account: Address) -> Result<u64> {
         let result = match self
-            .call("getTokenAccountBalance", json!([account.to_string(), {"commitment": "finalized"}]))
+            .call(
+                "getTokenAccountBalance",
+                json!([account.to_string(), {"commitment": "finalized"}]),
+            )
             .await
         {
             Ok(result) => result,
@@ -570,8 +573,7 @@ fn read_incoming(
                             .and_then(|text| text.parse::<u64>().ok())
                             .unwrap_or(0)
                     };
-                    units("/meta/postTokenBalances")
-                        .saturating_sub(units("/meta/preTokenBalances"))
+                    units("/meta/postTokenBalances").saturating_sub(units("/meta/preTokenBalances"))
                 })
                 .unwrap_or(0)
         }
@@ -719,8 +721,14 @@ mod tests {
     fn the_usdc_account_is_the_one_the_chain_uses() {
         let mint = Address::parse(USDC_DEVNET).unwrap();
         for (owner, account) in [
-            ("FTgHbQu5Q1xxyhnXvjXmveJGgXBU7q4etcQnommxifH9", "2cH44wHepo7DdLfPnR7FPCp9yd8KVdpbVXmkX1XSpmoC"),
-            ("7pSTiDZCvmZqJQKPdDwfGW6wvawe4WQKPdyyZDgMYYkk", "833WYu1GF1sEi9GmxoLnWPGLrYiSt8DVqYN9DXRx7BvB"),
+            (
+                "FTgHbQu5Q1xxyhnXvjXmveJGgXBU7q4etcQnommxifH9",
+                "2cH44wHepo7DdLfPnR7FPCp9yd8KVdpbVXmkX1XSpmoC",
+            ),
+            (
+                "7pSTiDZCvmZqJQKPdDwfGW6wvawe4WQKPdyyZDgMYYkk",
+                "833WYu1GF1sEi9GmxoLnWPGLrYiSt8DVqYN9DXRx7BvB",
+            ),
         ] {
             let derived = associated_token_address(Address::parse(owner).unwrap(), mint).unwrap();
             assert_eq!(derived.to_string(), account, "for {owner}");

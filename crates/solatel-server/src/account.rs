@@ -137,7 +137,11 @@ pub fn challenge(domain: &str, player_id: PlayerId) -> Result<String> {
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'))
         .take(100)
         .collect();
-    let domain = if domain.is_empty() { "Solatel".to_string() } else { domain };
+    let domain = if domain.is_empty() {
+        "Solatel".to_string()
+    } else {
+        domain
+    };
     Ok(format!(
         "{domain} asks you to sign in to Solatel with this wallet.\n\n\
          Signing proves the wallet is yours. It is not a transaction: it \
@@ -163,10 +167,13 @@ pub fn verify(message: &str, public_key: &str, signature: &str) -> Result<String
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or("that is not a signature")?;
-    let verifying =
-        ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| "that is not a Solana public key")?;
+    let verifying = ed25519_dalek::VerifyingKey::from_bytes(&key)
+        .map_err(|_| "that is not a Solana public key")?;
     verifying
-        .verify_strict(message.as_bytes(), &ed25519_dalek::Signature::from_bytes(&signature))
+        .verify_strict(
+            message.as_bytes(),
+            &ed25519_dalek::Signature::from_bytes(&signature),
+        )
         .map_err(|_| "the signature does not match the message; sign it exactly as it was sent")?;
     Ok(bs58::encode(key).into_string())
 }
@@ -191,7 +198,11 @@ pub enum WalletOutcome {
 /// this browser in as that account, with a new key - unless this one holds
 /// money and no wallet, because leaving it would leave the money with a key
 /// the browser is about to forget.
-pub async fn wallet_sign_in(pool: &PgPool, me: PlayerId, public_key: &str) -> Result<WalletOutcome> {
+pub async fn wallet_sign_in(
+    pool: &PgPool,
+    me: PlayerId,
+    public_key: &str,
+) -> Result<WalletOutcome> {
     let owner: Option<Uuid> = sqlx::query_scalar("SELECT id FROM players WHERE solana_pubkey = $1")
         .bind(public_key)
         .fetch_optional(pool)
@@ -327,7 +338,11 @@ mod tests {
         assert!(one.starts_with("evil.examplescript asks you"), "{one}");
         assert!(one.contains(&player.to_string()));
         assert_ne!(one, two, "two challenges alike");
-        assert!(challenge("", player).unwrap().starts_with("Solatel asks you"));
+        assert!(
+            challenge("", player)
+                .unwrap()
+                .starts_with("Solatel asks you")
+        );
     }
 
     #[test]
@@ -362,12 +377,16 @@ mod tests {
         let first = sign_in(&pool, None).await.unwrap();
         let wallet = wallet_key(1);
         assert!(matches!(
-            wallet_sign_in(&pool, first.player_id, &wallet).await.unwrap(),
+            wallet_sign_in(&pool, first.player_id, &wallet)
+                .await
+                .unwrap(),
             WalletOutcome::Linked
         ));
         // Again: still linked, nothing new.
         assert!(matches!(
-            wallet_sign_in(&pool, first.player_id, &wallet).await.unwrap(),
+            wallet_sign_in(&pool, first.player_id, &wallet)
+                .await
+                .unwrap(),
             WalletOutcome::Linked
         ));
         // The account carries it when it signs in.
@@ -379,20 +398,30 @@ mod tests {
         // still works too.
         let second = sign_in(&pool, None).await.unwrap();
         let WalletOutcome::SignedInAs { player_id, key } =
-            wallet_sign_in(&pool, second.player_id, &wallet).await.unwrap()
+            wallet_sign_in(&pool, second.player_id, &wallet)
+                .await
+                .unwrap()
         else {
             panic!("a second browser was not signed in as the wallet's account");
         };
         assert_eq!(player_id, first.player_id);
-        assert_eq!(sign_in(&pool, Some(&key)).await.unwrap().player_id, first.player_id);
         assert_eq!(
-            sign_in(&pool, first.new_key.as_deref()).await.unwrap().player_id,
+            sign_in(&pool, Some(&key)).await.unwrap().player_id,
+            first.player_id
+        );
+        assert_eq!(
+            sign_in(&pool, first.new_key.as_deref())
+                .await
+                .unwrap()
+                .player_id,
             first.player_id
         );
 
         // One wallet to an account.
         assert!(matches!(
-            wallet_sign_in(&pool, first.player_id, &wallet_key(2)).await.unwrap(),
+            wallet_sign_in(&pool, first.player_id, &wallet_key(2))
+                .await
+                .unwrap(),
             WalletOutcome::Refused(_)
         ));
 
@@ -402,7 +431,9 @@ mod tests {
         crate::ledger::test_deposit(&pool, &mut accounts, holder.player_id, 2_000_000)
             .await
             .unwrap();
-        let refused = wallet_sign_in(&pool, holder.player_id, &wallet).await.unwrap();
+        let refused = wallet_sign_in(&pool, holder.player_id, &wallet)
+            .await
+            .unwrap();
         assert!(
             matches!(&refused, WalletOutcome::Refused(reason) if reason.contains("$2.00")),
             "{refused:?}"

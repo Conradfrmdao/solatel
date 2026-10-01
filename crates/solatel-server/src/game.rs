@@ -300,6 +300,12 @@ struct Stats {
     /// Hits that landed at the end of a flick. Never shown to anybody; it is
     /// one of the things `records` judges a player's record on.
     snap_hits: u32,
+    /// First hits of an engagement whose target had come into sight within
+    /// [`REACTION_WINDOW_MS`](crate::records::REACTION_WINDOW_MS) - and of
+    /// those, how many landed under
+    /// [`REACTION_QUICK_MS`](crate::records::REACTION_QUICK_MS) of it.
+    reactions: u32,
+    quick_reactions: u32,
 }
 
 /// Where a connected player is.
@@ -403,6 +409,10 @@ struct Body {
     /// regeneration both work in health per second and health is whole.
     zone_carry: f32,
     regen_carry: f32,
+    /// The last engagement a reaction was measured for: who, and the tick
+    /// they came into sight. Every shot of a burst would otherwise measure
+    /// the same exposure again, a little later each time.
+    last_reaction: Option<(PlayerId, u32)>,
 }
 
 impl Body {
@@ -426,6 +436,7 @@ impl Body {
             last_attacker: None,
             zone_carry: 0.0,
             regen_carry: 0.0,
+            last_reaction: None,
         }
     }
 
@@ -749,6 +760,8 @@ impl Lobby {
                 headshots: stats.headshots,
                 damage_dealt: stats.damage_dealt,
                 snap_hits: stats.snap_hits,
+                reactions: stats.reactions,
+                quick_reactions: stats.quick_reactions,
             },
             winnings: solatel_protocol::MicroUsd(body.winnings_micro_usd),
             alive_ms: (game.elapsed(self.tick) * 1000.0) as u32,
@@ -2036,6 +2049,12 @@ impl Lobby {
             .unwrap_or(origin + direction * WEAPON_RANGE);
         let victim = hit.and_then(|h| h.player);
         let region = hit.and_then(|h| h.region);
+        // How long the target had been in this shooter's sight, judged on
+        // the same rewound world the hit was. Only a hit is ever measured.
+        let sighting = victim.and_then(|id| {
+            let target = game.bodies.get(&id)?;
+            exposure(shooter, target, tick, rewind_ms, game.map).map(|e| (id, e))
+        });
 
         if let Some(shooter) = self
             .matches
@@ -2128,6 +2147,22 @@ impl Lobby {
             }
             if flicked {
                 shooter.stats.snap_hits = shooter.stats.snap_hits.saturating_add(1);
+            }
+            if let Some((target, Exposure { since_tick, ms })) = sighting {
+                // One measurement an engagement: the first hit after the
+                // target came into sight. The tick can wobble by one between
+                // shots as the rewind rounds, which is still the same sighting.
+                let measured = shooter
+                    .last_reaction
+                    .is_some_and(|(who, at)| who == target && at.abs_diff(since_tick) <= 2);
+                if !measured {
+                    shooter.last_reaction = Some((target, since_tick));
+                    shooter.stats.reactions = shooter.stats.reactions.saturating_add(1);
+                    if ms < crate::records::REACTION_QUICK_MS {
+                        shooter.stats.quick_reactions =
+                            shooter.stats.quick_reactions.saturating_add(1);
+                    }
+                }
             }
             if killed {
                 shooter.stats.kills = shooter.stats.kills.saturating_add(1);
@@ -2525,3 +2560,64 @@ pub fn spawn(
 #[cfg(test)]
 #[path = "game_tests.rs"]
 mod tests;
+
+/// When a target came into a shooter's sight, as the shooter saw it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Exposure {
+    /// The first tick it was in sight.
+    since_tick: u32,
+    /// How long before the shot that was.
+    ms: f32,
+}
+
+/// How long `target` had been in `shooter`'s line of sight at `tick`, or
+/// `None` if it had been there for the whole window - a target held in view
+/// is tracking, and how quickly somebody reacts to what they have been
+/// watching for a second says nothing.
+///
+/// Walked back through both histories a tick at a time: the shooter's own eye
+/// as it was, against the target as the shooter was seeing it then - rewound
+/// by the same lag compensation the shot itself was, so the sighting and the
+/// hit are measured in one frame of reference. Sight is a clear line from the
+/// eye to the middle of the body or of the head; either is enough, because
+/// either is something a player could react to. It is computed only when a
+/// shot has already hit, so it costs a few dozen rays a hit, not a sweep of
+/// every pair of players every tick.
+fn exposure(
+    shooter: &Body,
+    target: &Body,
+    tick: u32,
+    rewind_ms: f32,
+    map: &map::Map,
+) -> Option<Exposure> {
+    let step_ms = TICK_DT * 1000.0;
+    let window = (crate::records::REACTION_WINDOW_MS / step_ms).round() as u32;
+    for back in 1..=window.min(tick) {
+        let ago = back as f32 * step_ms;
+        let eye = shooter.state_at(tick, ago).eye_position();
+        let seen = target.state_at(tick, rewind_ms + ago);
+        if !in_sight(eye, &seen, map) {
+            // In sight from the tick after this one. Counted as the whole
+            // of this tick, which errs on the side of the slower reaction.
+            return Some(Exposure {
+                since_tick: tick - back + 1,
+                ms: ago,
+            });
+        }
+    }
+    None
+}
+
+/// Whether anything solid stands between an eye and a body.
+fn in_sight(eye: solatel_protocol::glam::Vec3, target: &PlayerState, map: &map::Map) -> bool {
+    let (body_min, body_max) = hitscan::player_hitbox(target);
+    let (head_min, head_max) = hitscan::player_headbox(target);
+    [(body_min + body_max) * 0.5, (head_min + head_max) * 0.5]
+        .into_iter()
+        .any(|point| {
+            let to = point - eye;
+            let distance = to.length();
+            distance < 1e-3
+                || hitscan::trace_world(eye, to / distance, distance - 0.05, map).is_none()
+        })
+}

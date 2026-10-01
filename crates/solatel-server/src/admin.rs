@@ -319,12 +319,15 @@ async fn player(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response
                            'shots_hit', coalesce(sum(shots_hit), 0),
                            'headshots', coalesce(sum(headshots), 0),
                            'snap_hits', coalesce(sum(snap_hits), 0),
+                           'reactions', coalesce(sum(reactions), 0),
+                           'quick_reactions', coalesce(sum(quick_reactions), 0),
                            'winnings_micro_usd', coalesce(sum(winnings_micro_usd), 0))
                          FROM match_lives WHERE player_id = pl.id),
             'lives', (SELECT coalesce(json_agg(l ORDER BY l.ended_at DESC), '[]') FROM (
                         SELECT match_id, map, stake_micro_usd, outcome::text AS outcome,
                                killer_id, kills, shots_fired, shots_hit, headshots,
-                               damage_dealt, snap_hits, winnings_micro_usd, alive_ms, ended_at
+                               damage_dealt, snap_hits, reactions, quick_reactions,
+                               winnings_micro_usd, alive_ms, ended_at
                           FROM match_lives WHERE player_id = pl.id
                          ORDER BY ended_at DESC LIMIT 100) l),
             'ledger', (SELECT coalesce(json_agg(e ORDER BY e.id DESC), '[]') FROM (
@@ -389,7 +392,8 @@ async fn one_match(State(state): State<AppState>, Path(id): Path<Uuid>) -> Respo
             'lives', (SELECT coalesce(json_agg(l ORDER BY l.ended_at), '[]') FROM (
                         SELECT player_id, map, stake_micro_usd, outcome::text AS outcome,
                                killer_id, kills, shots_fired, shots_hit, headshots,
-                               damage_dealt, snap_hits, winnings_micro_usd, alive_ms, ended_at
+                               damage_dealt, snap_hits, reactions, quick_reactions,
+                               winnings_micro_usd, alive_ms, ended_at
                           FROM match_lives WHERE match_id = $1) l),
             'ledger', (SELECT coalesce(json_agg(t ORDER BY t.created_at), '[]') FROM (
                         SELECT tx.kind::text AS kind, tx.idempotency_key AS key, tx.created_at,

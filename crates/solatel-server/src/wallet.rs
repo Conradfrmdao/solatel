@@ -521,7 +521,11 @@ impl Chain<'_> {
             return Ok(());
         }
         let usdc = Some((self.wallet.terms.usdc_account, self.wallet.terms.usdc_mint));
-        let Some(incoming) = self.rpc.incoming(&seen.signature, self.treasury(), usdc).await? else {
+        let Some(incoming) = self
+            .rpc
+            .incoming(&seen.signature, self.treasury(), usdc)
+            .await?
+        else {
             // It touched the treasury and paid it nothing - usually one of
             // our own withdrawals going out.
             ledger::record_receipt(self.pool, accounts, &nothing(&seen.signature)).await?;
@@ -750,7 +754,10 @@ impl Chain<'_> {
 
     async fn solvency(&self) -> Result<Solvency> {
         let lamports = self.rpc.balance(self.treasury()).await?;
-        let usdc = self.rpc.token_balance(self.wallet.terms.usdc_account).await?;
+        let usdc = self
+            .rpc
+            .token_balance(self.wallet.terms.usdc_account)
+            .await?;
         let owed = ledger::owed(self.pool).await?;
         let rate = self.wallet.terms.rate;
         Ok(Solvency {

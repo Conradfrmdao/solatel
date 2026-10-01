@@ -256,12 +256,13 @@ Two limits exist purely because this game pays money:
 2. ~~Movement and shooting, server-authoritative, with client prediction.~~
 3. ~~Match lifecycle, the lobby and the live ledger.~~
 4. **Deposits and withdrawals — devnet only.** *(current)* Built; waiting on an
-   end-to-end run with real devnet SOL. Then Plisio, and signing in with a
-   Solana wallet in place of account keys.
+   end-to-end run with real devnet SOL. Deposits take SOL or USDC, and an
+   account can be signed into with a Solana wallet. Then Plisio.
 5. **Anti-cheat foundations.** *(started)* Every life is recorded with the
    server's own counts; implausible records (accuracy, headshots, hits at the
-   end of a flick) open a review that holds withdrawals until a person decides
-   it in the admin view at `/admin`. Still to do: an adversarial client run
+   end of a flick, fights opened faster than a person reacts) open a review
+   that holds withdrawals until a person decides it in the admin view at
+   `/admin`. Still to do: an adversarial client run
    against a live server, and tuning the lines against real records.
 6. Polish and launch prep.
 
