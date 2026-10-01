@@ -8,6 +8,7 @@
 //                                    refuse a page from another one
 //   solatel.<hash>.js (and .map)     the bundled client
 //   sim/solatel_sim_bg.<hash>.wasm   the shared movement simulation
+//   basis/basis_transcoder.<hash>.*  the decoder for the KTX2 photographs
 //   assets/**/<name>.<hash>.<ext>    models, photographs and skies
 //   favicon.<hash>.png
 //   <any of those>.br and .gz        compressed ahead of time, where it pays
@@ -180,6 +181,12 @@ async function publishFiles() {
   }
   add('sim/solatel_sim_bg.wasm', await readFile(wasm));
   add('favicon.png', await readFile(resolve(here, 'favicon.png')));
+  // The decoder for the photographs, which run as KTX2 (`photo.js`): three's
+  // own, fetched at runtime by the loader rather than bundled.
+  const basis = resolve(here, 'node_modules', 'three', 'examples', 'jsm', 'libs', 'basis');
+  for (const file of ['basis_transcoder.js', 'basis_transcoder.wasm']) {
+    add(`basis/${file}`, await readFile(join(basis, file)));
+  }
 
   // Every model, photograph and sky. Creating an empty table would be worse
   // than failing: the build would succeed and the client would die at load

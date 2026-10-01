@@ -24,7 +24,8 @@
 // never jumps when the patch is rebuilt.
 
 import * as THREE from 'three';
-import { foliageSet, photoSet } from './photo.js';
+import { foliageSet, photoFiles, photoSet } from './photo.js';
+import { asset } from './assets.js';
 
 /** Seconds of wind, shared by every swaying material. */
 const wind = { value: 0 };
@@ -871,6 +872,18 @@ class Birds {
 }
 
 // ---- putting it in a map --------------------------------------------------
+
+/** The files growing a map's nature will ask for, from its scene extras -
+ *  to be fetched ahead of time (`prefetch.js`). */
+export function natureFiles(extras) {
+  const trees = Array.isArray(extras.trees) && extras.trees.length > 0;
+  if (!trees && !extras.ground) return [];
+  const atlases = ['leaves', 'needles', 'grass_blades'];
+  return [
+    ...atlases.flatMap((name) => [asset(`assets/photo/${name}_albedo.webp`), asset(`assets/photo/${name}_alpha.webp`)]),
+    ...photoFiles([], ['bark']),
+  ];
+}
 
 /**
  * Grow what `map`'s extras describe, as children of the map. Returns an

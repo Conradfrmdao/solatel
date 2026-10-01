@@ -40,6 +40,13 @@ fi
 # Chromium at /opt/pw-browsers.
 npm --prefix client install --no-audit --no-fund
 
+# ---- pdftotext, for reading documents/Solatel_PRD.pdf -------------------------
+# Not fatal: a mirror that is down should not stop a session starting.
+if ! command -v pdftotext >/dev/null 2>&1; then
+    (apt-get update -q && apt-get install -y -q poppler-utils) >/dev/null 2>&1 \
+        || echo ">> could not install poppler-utils; the PRD will not be readable"
+fi
+
 # ---- the map scripts' Python dependencies -----------------------------------
 # scripts/derive-maps.py, extend-arena.py and the check-*.py scripts.
 if ! python3 -c "import numpy, scipy" 2>/dev/null; then

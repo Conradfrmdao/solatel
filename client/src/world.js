@@ -26,7 +26,7 @@ import { dressProps } from './props.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { asset } from './assets.js';
-import { PHOTO_DECLARATIONS, PHOTO_NORMAL, loadPhotos, photoUniforms } from './photo.js';
+import { PHOTO_DECLARATIONS, PHOTO_NORMAL, PHOTO_ROUGHNESS, loadPhotos, photoUniforms } from './photo.js';
 
 /** How long a tracer stays on screen. */
 const TRACER_SECONDS = 0.06;
@@ -405,7 +405,8 @@ function addSurfaceDetail(material, photo = null) {
           vec3 P = vGrainPosition;
           vec3 colour = diffuseColor.rgb;
           #ifdef PHOTO
-          colour = photoColour(P, photoFaceNormal(P));
+          photoTriplanar(P, photoFaceNormal(P));
+          colour = photoColourOut;
           #endif
           // Which way this face points, from how position changes across the
           // pixel. Only its axis is wanted, so the sign does not matter.
@@ -504,6 +505,7 @@ function addSurfaceDetail(material, photo = null) {
           #endif
         }`,
       )
+      .replace('#include <roughnessmap_fragment>', photo ? PHOTO_ROUGHNESS : '#include <roughnessmap_fragment>')
       .replace('#include <normal_fragment_maps>', photo ? PHOTO_NORMAL : '#include <normal_fragment_maps>')
       .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
       .replace('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
@@ -563,6 +565,12 @@ const SKIES = {
 
 /** The sky for anything not in `SKIES`. */
 const DEFAULT_SKY = 'facility';
+
+/** The files a map's sky is read from, to be fetched ahead of time. */
+export function skyFiles(mapName) {
+  const { file } = SKIES[mapName] ?? SKIES[DEFAULT_SKY];
+  return [asset(`assets/sky/${file}_1k.hdr`), asset(`assets/sky/${file}.webp`)];
+}
 
 /**
  * A soft round glow, for the sun.

@@ -762,8 +762,8 @@ const TEMPLATE = `
   <div id="hurt-flash"></div>
   <div id="damage-dirs"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
-  <div id="balance"><span class="amount">$0.00</span><span class="caption">yours</span></div>
-  <div id="winnings" class="hidden"><span class="amount">$0.00</span><span class="caption">won</span></div>
+  <div id="balance"><span class="amount">$0.00</span><span class="caption">your wallet</span></div>
+  <div id="winnings" class="hidden"><span class="amount">$0.00</span><span class="caption">won this match</span></div>
   <div id="matchclock"></div>
   <div id="crosshair"></div>
   <div id="hitmarker"></div>

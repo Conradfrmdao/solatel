@@ -353,12 +353,11 @@ async function tryPhoto(name) {
   }
 }
 
+/** The photo sets every map's props wear, whichever map it is. */
+export const PROP_SETS = ['painted_metal', 'planks', 'rusty_metal'];
+
 async function materials() {
-  const [painted, planks, rusty] = await Promise.all([
-    tryPhoto('painted_metal'),
-    tryPhoto('planks'),
-    tryPhoto('rusty_metal'),
-  ]);
+  const [painted, planks, rusty] = await Promise.all(PROP_SETS.map(tryPhoto));
   const withPhoto = (material, set, repeat = 1) => {
     if (!set) return material;
     const map = set.albedo.clone();

@@ -174,6 +174,12 @@ they all do it, and what each step is here:
    splash is held for at least 1.6 s so it is seen even when the database
    answers in milliseconds - which costs nothing, because of step 4.
 3. **Loading** - the same card, saying which map, until the world is drawn.
+   A map is tens of megabytes, so its files are fetched into the browser's
+   cache the moment its table is picked (`prefetch.js`), while the player
+   waits in line, and the card counts them in megabytes - in line as a
+   footnote, on the loading card as the bar. Which files a map needs is
+   read from its glTF's JSON: the material names say which photographs,
+   the scene extras whether it grows trees and grass.
 4. **Warm-up** - `WARMUP`, fifteen seconds (Counter-Strike's freeze time),
    `SOLATEL_WARMUP` to change it. Everybody is on their spawn and may look
    round and nothing else: the server zeroes movement and every button for
@@ -703,11 +709,52 @@ not flat colours. **The maps have no texture coordinates**, so each surface
 is textured by triplanar projection in world metres, normal map included
 (whiteout blend). `PHOTO` maps a surface name - the same names `SURFACES`
 keys its weathering on - to a photo set, metres per repeat, how far it is
-tinted towards the palette colour, and bump strength. The tint is what keeps
-the maroon barn maroon: the photograph brings the grain, the map keeps its
-colours. A surface with a photograph drops its drawn seams, ribs, planks and
-chips - the photograph has its own - and keeps the streaks, grime and rust.
-A surface not in `PHOTO` (the whole yard) draws exactly as before.
+tinted towards the palette colour, bump strength, and whether its tiling is
+broken up. The tint is what keeps the maroon barn maroon: the photograph
+brings the grain, the map keeps its colours. A surface with a photograph
+drops its drawn seams, ribs, planks and chips - the photograph has its own -
+and keeps the streaks, grime and rust. A surface not in `PHOTO` draws as
+before.
+
+**A set is two KTX2 files the GPU keeps compressed** (Basis UASTC, zstd,
+every mip): the colour, and the normal map with the scan's roughness in its
+alpha. Compressed is what makes 2k affordable - a 2k photograph is 5 MB of
+video memory against 22 for the WebP it replaced - and UASTC rather than the
+smaller ETC1S because ETC1S shows its blocks on a wall a player stands at.
+Colour is 2k for what a player stands next to and every normal map 1k;
+grainy ground, rock and planks are 1k throughout. Those sizes were measured
+against what each map downloads (`scripts/fetch-photo-assets.mjs` says
+why), and keep the arena at 33 MB, the yard 30 and the facility 47, every
+byte of it cached for good. `scripts/build-basisu.sh` builds the encoder
+from the upstream source on crates.io; the fetch script writes each set's
+mean colour and roughness to `client/src/photo-sets.js`.
+
+Things about the files that are not obvious:
+
+- **They are stored upside down** (`basisu -y_flip`). WebGL flips a texture
+  as it uploads it and cannot flip a compressed one, so without this every
+  photograph lies the other way up from the WebP it replaced, and a normal
+  map upside down lights every bump as a dent - on the props and trees that
+  use UVs as much as on the triplanar maps.
+- **The scan's roughness is variation, not level.** The palette says how
+  glossy a surface is; the scan moves it up and down around the set's own
+  mean. Taken whole, the steel stairs, measured as polished plate, caught
+  the low sun as a line of glare, and the asphalt went grey with sky.
+- **Most pixels sample one projection, not three.** The maps are flat-shaded
+  and square to the world almost everywhere, so a projection whose weight is
+  under 1% is skipped. The samples are therefore in branches, where a GPU's
+  own derivatives are undefined, so every coordinate's rate of change is
+  taken from the position's beforehand and passed to `textureGrad` - taken
+  from the coordinates themselves it jumps where a face's sign flips, and
+  that pixel reads the blurriest mip there is.
+- **Tiling is broken up on patternless surfaces** (Quilez's technique 3: a
+  slow noise picks one of eight shifts per patch, blended across a patch's
+  edge), and never on bricks, planks or sheet metal, where a shift puts the
+  courses out of line.
+- **Up close there is a grain finer than any photograph**: a millimetre of
+  grit a few millimetres across, bump-mapped from screen-space derivatives
+  within six metres on patternless surfaces, so a wall a player is pressed
+  against still has tooth.
 
 **The sky is a photographed HDR panorama** (`assets/sky`), **one per map**
 (`SKIES` in `world.js`): partly cloudy over the facility, a heavy overcast
@@ -997,11 +1044,12 @@ Runtime models live in `assets/` and are published into `web/dist/assets`
 under content-hashed names by `./x client` (see *What a browser keeps*).
 They are downloaded by every player, so size is a gameplay number - once
 per player and build, now that a browser keeps them, and compressed. A player fetches only the map being played, so the budget is per map,
-not for the folder: arena is 3.3 MB, yard 11 MB and facility 3.7 MB, against 2.5 MB of soldier
-and no rifle at all - it is built in code - plus the photographs a map's surfaces use
-(7.4 MB for all of them) and the map's own sky (1.1 to 1.6 MB). The arena's second half cost 40 KB of that —
-it is a few thousand triangles of boxes, against a model whose bytes are all
-in the original's detail.
+not for the folder, and Conrad's is **20 to 50 MB a map** if every byte goes
+into how it looks and plays. Over the wire today, everything a map needs:
+the arena 33 MB, the yard 30 and the facility 47, almost all of it
+photographs (see *Photographs, sky and light*); the models themselves are
+0.06, 0.23 and 0.64 MB as brotli. The soldier is 1.5 MB on top, once, and
+the rifle nothing - it is built in code.
 
 `prepare-assets.py` strips normals and texture coordinates from the maps, which
 is most of that 11 MB. Neither is ever read — there are no textures in either

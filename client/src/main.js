@@ -35,6 +35,8 @@ import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
+import { initPhotos } from './photo.js';
+import { prefetchMap } from './prefetch.js';
 import { asset, clientBuild } from './assets.js';
 
 /**
@@ -126,6 +128,9 @@ async function boot() {
   // material colour and the whole scene reads as a diagram.
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.9;
+  // The photographs' transcoder needs to know which compressed formats this
+  // GPU takes before the first one is loaded.
+  initPhotos(renderer);
 
   const scene = new THREE.Scene();
   let horizontalFov = storedFov();
@@ -250,6 +255,8 @@ async function boot() {
       // somebody who has not clicked the world yet.
       audio.resume();
       local.queue(mapName, dollars);
+      // The map's files, into the cache while the line forms.
+      prefetchMap(mapName);
     },
     () => local.leaveQueue(),
   );
@@ -361,6 +368,11 @@ async function boot() {
       /** The current map's spawns, x, y, z and yaw in fours - for tour.mjs. */
       get spawns() {
         return SPAWNS;
+      },
+      /** Every file fetched ahead for a map - for menu.mjs to check against
+       *  what loading it then asked for. */
+      prefetched(name) {
+        return [...(prefetchMap(name)?.files.keys() ?? [])];
       },
       setComposer(on) {
         composer = on ? builtComposer : null;
@@ -664,6 +676,8 @@ async function boot() {
     });
     const tierOf = (dollars) => (link.tiers ?? []).find((t) => t.dollars === dollars);
     let view = { phase: null };
+    /** How far the map's files have come; starts the download if it had not. */
+    const fetching = (name) => prefetchMap(name)?.progress() ?? null;
     if (!link.parked) {
       if (local.searching) {
         const dollars = local.queuedFor ?? local.queueRequested?.dollars;
@@ -682,6 +696,7 @@ async function boot() {
           place: local.place,
           entry: tier ? formatDollars(tier.entry_fee_micro_usd) : null,
           reward: tier ? formatDollars(tier.kill_reward_micro_usd) : null,
+          download: fetching(mapName),
         };
       } else if (local.found && !local.matchId) {
         const tier = local.found.tier;
@@ -692,6 +707,7 @@ async function boot() {
           dollars: tier?.dollars,
           players: local.found.players,
           entry: tier ? formatDollars(tier.entry_fee_micro_usd) : null,
+          download: fetching(local.found.map),
         };
       } else if (local.matchId && !playing) {
         view = {
@@ -699,6 +715,7 @@ async function boot() {
           map: local.mapName,
           dollars: local.tier?.dollars,
           players: local.matchPlayers,
+          download: fetching(local.mapName),
         };
       }
       view.inMatch = Boolean(local.matchId);
