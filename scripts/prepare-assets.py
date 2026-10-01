@@ -16,9 +16,10 @@ Four things happen here rather than at runtime:
   of requests the browser makes and removes a class of failure where the .gltf
   loads and its buffer 404s. The larger yard map already ships as one .glb and
   is only copied, with the same near-black pass applied.
-* Near-black materials are lifted so they take light. Both the rifle and the
-  arena's ground plane ship at a base colour of about 0.02, which draws as a
-  silhouette with no form in it rather than as a surface.
+* Near-black materials are lifted so they take light. The arena's ground plane
+  ships at a base colour of about 0.02, which draws as a silhouette with no
+  form in it rather than as a surface. (The rifle this used to brighten is
+  gone: the rifle is built in code now, in `client/src/rifle.js`.)
 * Normals and texture coordinates are stripped from the maps. Neither is
   ever read - there are no textures in either file, and the client flat-shades
   every map material - and between them they are more than half the larger
@@ -140,32 +141,6 @@ def lift_black_materials(js):
             min(channel * scale, 1.0) if peak > 1e-6 else DARK_FLOOR_TARGET
             for channel in colour[:3]
         ] + [colour[3] if len(colour) > 3 else 1]
-        changed.append(material.get('name', '<unnamed>'))
-    return changed
-
-
-def brighten_materials(js):
-    """Make the rifle legible as a held object rather than a silhouette.
-
-    It arrives from an OBJ conversion with a base colour of 0.014 - all but
-    pure black - and no metallic response at all. Held up close against a dark
-    arena that reads as a hole in the screen with a sharp outline and no form
-    inside it. Lifting the base colour and giving it the metallic response a
-    gun actually has is what made the placeholder weapon legible under this
-    scene's lighting, and these are the placeholder's values.
-
-    Done here rather than at runtime so the client has no material-patching
-    code, and so what the file contains is what gets drawn.
-    """
-    changed = []
-    for material in js.get('materials', []):
-        pbr = material.setdefault('pbrMetallicRoughness', {})
-        colour = pbr.get('baseColorFactor', [1, 1, 1, 1])
-        pbr['baseColorFactor'] = [
-            min(max(channel * 3.0, 0.05), 1.0) for channel in colour[:3]
-        ] + [colour[3] if len(colour) > 3 else 1]
-        pbr['metallicFactor'] = 0.8
-        pbr['roughnessFactor'] = 0.42
         changed.append(material.get('name', '<unnamed>'))
     return changed
 
@@ -333,12 +308,6 @@ def main(source):
     for name in strip_unused_attributes(js):
         print(f'    dropped {name}: nothing reads it')
     write_glb(js, compact_buffer(js, blob), 'assets/maps/yard.glb')
-
-    print('rifle')
-    js, blob = read_glb(os.path.join(source, 'Assault Rifle by Zsky - MdbcTe6hH3.glb'))
-    for name in brighten_materials(js):
-        print(f'    lifted {name} out of near-black')
-    write_glb(js, blob, 'assets/weapons/rifle.glb')
 
 
 if __name__ == '__main__':

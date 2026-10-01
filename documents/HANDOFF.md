@@ -64,9 +64,9 @@ before building.
 - **Protocol changes bump `PROTOCOL_VERSION`** (currently 10) in the same
   commit.
 - **Never commit secrets.** `.env` is gitignored and never in the repo.
-- The rifle model (`assets/weapons/rifle.glb`) and the yard map have
-  unconfirmed licences. `scripts/asset-licence.py` flags the rifle. They must
-  not ship until the terms are confirmed.
+- The yard map's licence is Conrad's word, still to be found in writing. The
+  rifle model, which had no licence, was replaced by one built in code
+  (`client/src/rifle.js`) and deleted.
 
 ## The game as Conrad has decided it
 

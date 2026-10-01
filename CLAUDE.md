@@ -763,6 +763,16 @@ and a stray blade-end and read, across a field, as fallen leaves.
 
 ### The weapon in your hands
 
+**The rifle is ours** (`rifle.js`). The downloaded model had no licence and
+was deleted; this one is an M4-pattern carbine built from extruded side
+profiles and turned sections with bevelled edges, in three materials
+(anodised, steel, polymer, plus a near-black for recesses) and merged to one
+mesh per material, since every player carries one. It is built in the old
+model's frame and units on purpose: the muzzle face at z -2.306, the bore at
+0.065, the carry handle's top at 0.49 under the red dot, the grip at `GRIP`,
+the magazine where `remotes.js` reaches, the ejection port where the cases
+leave. Move a landmark and those numbers have to move with it.
+
 `viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
 in it, nothing hard-coded in the controller. The pose each frame is layers
 added together: hip-to-sights, sway from turning, a breath when still, a
@@ -897,7 +907,7 @@ Runtime models live in `assets/` and are copied into `web/dist/assets` by
 `./x client`. They are downloaded by every player, so size is a gameplay
 number. A player fetches only the map being played, so the budget is per map,
 not for the folder: arena is 3.3 MB, yard 11 MB and facility 3.7 MB, against 2.5 MB of soldier
-and 0.1 MB of rifle either way, plus the photographs a map's surfaces use
+and no rifle at all - it is built in code - plus the photographs a map's surfaces use
 (7.4 MB for all of them) and the map's own sky (1.1 to 1.6 MB). The arena's second half cost 40 KB of that —
 it is a few thousand triangles of boxes, against a model whose bytes are all
 in the original's detail.
@@ -911,8 +921,8 @@ The files are committed, but they are outputs. `scripts/prepare-assets.py`
 rebuilds them from the raw downloads and records what was done to each one,
 which CC-BY-4.0 requires us to state; `ATTRIBUTION.md` is the licence record.
 `scripts/asset-licence.py` prints what a `.glb` claims about itself, and exits
-non-zero for a file with no embedded licence — the rifle is currently that file
-and must not ship until its terms are confirmed.
+non-zero for a file with no embedded licence. The rifle was that file; it is
+deleted, and the rifle is built in code (see *The weapon in your hands*).
 
 **`scripts/extend-arena.py` is the one place geometry is authored**, and it is
 separate from `prepare-assets.py` precisely so that "the download is untouched"

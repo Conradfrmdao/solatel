@@ -44,8 +44,8 @@ per kill. Rendering, input, assets and everything else are ordinary JavaScript.
 ## The maps and the models
 
 The client draws three models from `assets/`: a soldier for other players - a
-Mixamo special-forces character with rifle animations - a rifle for your own
-hands, with a red-dot sight built in code, and the map itself.
+Mixamo special-forces character with rifle animations - and the map itself.
+The rifle, red-dot sight and all, is built in code (`client/src/rifle.js`).
 `ATTRIBUTION.md` records where each came from and under what licence;
 `scripts/prepare-assets.py` and `scripts/build-soldier.sh` record what was done
 to them.
@@ -277,8 +277,9 @@ Two limits exist purely because this game pays money:
 
 ## Open decisions
 
-- The rifle model and the yard map have unconfirmed licences
-  (`scripts/asset-licence.py`) and must not ship until they are settled.
+- The yard map's licence is Conrad's word and is still worth finding in
+  writing (`scripts/asset-licence.py`). The rifle, which had no licence, is
+  now built in code.
 - Referral bonus mechanics.
 - No geo-gating or KYC is currently planned. That is a deliberate product stance
   in the PRD rather than an oversight, but it is the project's largest
