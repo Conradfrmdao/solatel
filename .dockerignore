@@ -1,0 +1,13 @@
+# Everything the image builds itself, and everything it must never carry.
+target
+**/target
+web/dist
+client/node_modules
+client/generated
+.env
+*.env
+*.log
+.git
+.claude
+documents
+**/__pycache__

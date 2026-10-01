@@ -1663,6 +1663,19 @@ which does every match's tick and every client's snapshot on one task.
 Deployed against a database half a second away, the join numbers are
 dominated by round trips instead; see *Money events are round trips*.
 
+## Deploying
+
+`Dockerfile` builds one image - Rust for the server and the wasm, Node for
+the bundle, a slim Debian to run it - and `documents/RUNBOOK.md` is how to
+run it. The two rules that are easy to get wrong: **stop the old server
+before starting the new one** (the new one takes the escrow lease before it
+listens, so blue-green deadlocks for ninety seconds and then gives up), and
+**deploy when escrow is empty**, because a restart settles live stakes as
+abandons and that charges players the rake for our deploy. The server shuts
+down on SIGTERM as well as Ctrl-C and releases the lease on the way out. A
+tab left on the old client reloads itself once per server version
+(`reloadForNewBuild` in `net.js`).
+
 ## Phase 2 note
 
 Movement and shooting feel cannot be tuned by guessing at numbers. Build a

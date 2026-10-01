@@ -22,6 +22,27 @@ const PING_TIMEOUT_MS = 10000;
  *  `TAKEN_OVER` in `game.rs`. */
 const TAKEN_OVER = 'this player was taken over';
 
+/**
+ * After a deploy, a tab still running the last build is refused - its
+ * protocol or its maps are not the server's - and the only cure is the new
+ * page. So it reloads itself, once per version of the server it was refused
+ * by: the resume token is in session storage, so a player taken out of a
+ * match by the deploy comes back into it. Once, because a server *older* than
+ * this page would refuse the reloaded one too, and a page that reloaded
+ * every time would never let anybody read why.
+ */
+const RELOADED_FOR = 'solatel.reloadedFor';
+function reloadForNewBuild(what) {
+  try {
+    if (window.sessionStorage.getItem(RELOADED_FOR) === what) return false;
+    window.sessionStorage.setItem(RELOADED_FOR, what);
+  } catch {
+    return false; // no storage, so no way to tell a loop from a first try
+  }
+  window.location.reload();
+  return true;
+}
+
 export const LinkState = Object.freeze({
   Connecting: 'connecting',
   Handshaking: 'handshaking',
@@ -269,6 +290,7 @@ export class Link {
           // Predicting against different geometry from the server is worse
           // than not playing at all: it means being shot through cover that
           // only one side believes in.
+          if (reloadForNewBuild(`map ${message.map_version}`)) return;
           this.dropLink(
             `map mismatch: server has version ${message.map_version}, ` +
               `this client has ${SIM.mapVersion}. Reload the page.`,
@@ -321,6 +343,8 @@ export class Link {
       }
       case 'rejected': {
         console.warn('server rejected this client:', message.reason);
+        const speaks = /^protocol version mismatch: server speaks (\d+)/.exec(message.reason ?? '');
+        if (speaks && reloadForNewBuild(`protocol ${speaks[1]}`)) return;
         this.dropLink(`rejected: ${message.reason}`, now);
         if (message.reason && message.reason.startsWith(TAKEN_OVER)) {
           this.parked = true;
