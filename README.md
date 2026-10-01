@@ -160,6 +160,14 @@ The end-to-end drivers `client/duel.mjs`, `client/survive.mjs` and
 `client/menu.mjs` run against a live server started with the two variables
 above.
 
+## Deploying
+
+`docker build -t solatel .` makes one image with the server and the client
+it serves; configuration is the environment, as `.env.example` describes.
+`documents/RUNBOOK.md` covers running it: one process per database, stop the
+old server before starting the new one, deploy with escrow empty, and what
+to watch on `/health`.
+
 ## How the money works
 
 Every amount in the system is an `i64` count of **micro-USD**. No floats touch

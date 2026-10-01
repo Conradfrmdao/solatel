@@ -537,10 +537,37 @@ async fn dev_pay(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Ctrl-C at a terminal, or SIGTERM from whatever runs the container.
+///
+/// The second is the one that matters in production: `docker stop` and every
+/// orchestrator send SIGTERM and wait a grace period before killing. Shutting
+/// down on it is what releases the escrow lease, so the next server takes over
+/// at once instead of waiting out the lease - and a deploy is not a minute and
+/// a half of nobody being able to buy in.
 async fn shutdown_signal() {
-    if let Err(err) = tokio::signal::ctrl_c().await {
-        tracing::error!(%err, "failed to listen for shutdown signal");
-        return;
+    let interrupt = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::error!(%err, "failed to listen for ctrl-c");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                tracing::error!(%err, "failed to listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
     }
     tracing::info!("shutdown signal received");
 }
