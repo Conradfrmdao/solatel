@@ -280,7 +280,9 @@ async fn main() -> Result<()> {
 
     let proof = proof::Proof::new(terms.is_some(), free_play || ledger::dev_grant().is_some());
     let chain = if terms.is_some() {
-        Some(chain::Chain::new(solana::Rpc::new(solana::Cluster::devnet())?))
+        Some(chain::Chain::new(solana::Rpc::new(
+            solana::Cluster::devnet(),
+        )?))
     } else {
         None
     };

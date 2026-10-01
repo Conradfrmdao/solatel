@@ -153,6 +153,7 @@ const lifeColumns = (withPlayer) => [
   ['acc', (l) => pct(l.shots_hit, l.shots_fired), 'n'],
   ['head', (l) => pct(l.headshots, l.shots_hit), 'n'],
   ['flick', (l) => pct(l.snap_hits, l.shots_hit), 'n'],
+  ['quick', (l) => (l.reactions ? `${l.quick_reactions}/${l.reactions}` : ''), 'n'],
   ['won', (l) => usd(l.winnings_micro_usd), 'n'],
   ['alive', (l) => `${Math.round(l.alive_ms / 1000)}s`, 'n'],
   ['ended', (l) => when(l.ended_at)],
@@ -187,6 +188,8 @@ function evidenceView(e) {
   return el('div', { class: 'dim' },
     `${e.lives} lives, ${e.shots_fired} shots: accuracy ${pct(e.shots_hit, e.shots_fired)}, `
     + `headshots ${pct(e.headshots, e.shots_hit)} of hits, flicks ${pct(e.snap_hits, e.shots_hit)} of hits, `
+    + (e.reactions != null ? `quicker than a person in ${pct(e.quick_reactions, e.reactions)} of ${e.reactions} fights, ` : '')
+    + `
     + `${e.kills} kills`);
 }
 
@@ -263,6 +266,7 @@ async function player(id) {
       el('div', { class: 'card' }, el('small', {}, 'accuracy'), el('b', {}, pct(r.shots_hit, r.shots_fired)), el('small', {}, `${r.shots_hit} of ${r.shots_fired}`)),
       el('div', { class: 'card' }, el('small', {}, 'headshots of hits'), el('b', {}, pct(r.headshots, r.shots_hit))),
       el('div', { class: 'card' }, el('small', {}, 'flicks of hits'), el('b', {}, pct(r.snap_hits, r.shots_hit))),
+      el('div', { class: 'card' }, el('small', {}, 'fights opened too quickly'), el('b', {}, pct(r.quick_reactions, r.reactions)), el('small', {}, `${r.quick_reactions} of ${r.reactions}`)),
       el('div', { class: 'card' }, el('small', {}, 'won from kills'), el('b', {}, usd(r.winnings_micro_usd)))),
     el('h2', {}, 'Lives'), table(lifeColumns(false), p.lives),
     el('h2', {}, 'Ledger, on their balance'), table([

@@ -2317,6 +2317,124 @@ fn a_hit_after_tracking_the_target_is_not_a_flick() {
     );
 }
 
+// ---- reaction times ----------------------------------------------------------
+//
+// The victim's live body stays where the duel put it, in plain view. What
+// changes is its history: rewritten so that, as the shooter was seeing it, it
+// stood behind a wall until a chosen number of ticks before the shot. That is
+// exactly what the measurement reads, and it keeps the test off whatever
+// stepping out from cover would do to a body's position on any given map.
+
+impl Duel {
+    /// Somewhere behind a wall from where the shooter stands.
+    fn hiding_place(&self) -> Vec3 {
+        let shooter = self.body(self.shooter).state;
+        let eye = shooter.eye_position();
+        let map = self.lobby.matches[&self.match_id].map;
+        (0..64)
+            .filter_map(|i| {
+                let direction = look_direction(i as f32 * std::f32::consts::TAU / 64.0, 0.0);
+                let wall = hitscan::trace_world(eye, direction, 60.0, map)?;
+                let mut behind = shooter;
+                behind.position = eye + direction * (wall + 1.0);
+                behind.position.y = shooter.position.y;
+                (!in_sight(eye, &behind, map)).then_some(behind.position)
+            })
+            .next()
+            .expect("somewhere on this map is out of sight of this spawn")
+    }
+
+    /// Rewrites the victim's history so that, to the shooter, it came out
+    /// from behind a wall `ticks` before the next shot.
+    fn sighted(&mut self, ticks: u32) {
+        let hidden = self.hiding_place();
+        let rewind = (INTERPOLATION_DELAY_MS / (TICK_DT * 1000.0)).round() as u32;
+        // The shot is resolved on the tick the next step runs.
+        let shot_at = self.lobby.tick + 1;
+        let victim = self.victim;
+        let body = self
+            .lobby
+            .matches
+            .get_mut(&self.match_id)
+            .unwrap()
+            .bodies
+            .get_mut(&victim)
+            .unwrap();
+        for (tick, state) in body.history.iter_mut() {
+            if *tick + rewind + ticks < shot_at {
+                state.position = hidden;
+            }
+        }
+    }
+}
+
+#[test]
+fn a_hit_the_moment_a_target_appears_is_quicker_than_a_person() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    duel.look_at(target, 20);
+    duel.sighted(2);
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_hit, 1);
+    assert_eq!(
+        stats.reactions, 1,
+        "the first hit after a sighting is measured"
+    );
+    assert_eq!(
+        stats.quick_reactions, 1,
+        "two ticks is faster than anybody sees"
+    );
+}
+
+#[test]
+fn a_hit_at_human_speed_after_a_sighting_is_measured_and_not_quick() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    duel.look_at(target, 20);
+    // A third of a second: a fast human's reaction, aim and shot.
+    duel.sighted((0.33 / TICK_DT) as u32);
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.reactions, 1);
+    assert_eq!(stats.quick_reactions, 0);
+}
+
+#[test]
+fn a_target_watched_for_the_whole_window_is_not_a_reaction() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    duel.look_at(target, 20);
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_hit, 1);
+    assert_eq!(
+        stats.reactions, 0,
+        "in sight all along is tracking, not reacting"
+    );
+}
+
+#[test]
+fn a_burst_at_one_sighting_is_one_reaction() {
+    let mut duel = Duel::new();
+    let target = duel.position(duel.victim);
+    duel.look_at(target, 20);
+    duel.sighted(2);
+    duel.fire_at(target);
+    duel.reload();
+    duel.fire_at(target);
+
+    let stats = duel.stats(duel.shooter);
+    assert_eq!(stats.shots_hit, 2);
+    assert_eq!(
+        stats.reactions, 1,
+        "the second round of a burst is not a second fight"
+    );
+}
+
 // ---- the zone, health coming back, the magazine and grenades ---------------
 
 impl Duel {

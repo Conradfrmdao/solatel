@@ -1457,16 +1457,31 @@ payout at half a second a round trip. The one place the two meet is a
 withdrawal, and that reads the reviews table in the statement it already
 makes (`balance_and_review`).
 
-**Judging is over a player's last twenty lives**, against three lines, each
+**Judging is over a player's last twenty lives**, against four lines, each
 with a minimum sample under which it says nothing: accuracy (70% over 60
-shots), headshots as a share of hits (65% over 25), and hits that ended a
-flick (45% over 15). A **flick** is the aim having swung more than 30 degrees
+shots), headshots as a share of hits (65% over 25), hits that ended a
+flick (45% over 15), and fights opened quicker than a person reacts (50%
+over 12). A **flick** is the aim having swung more than 30 degrees
 in the tenth of a second before the shot, measured from the shooter's own
 history, which lag compensation already keeps. People flick; what people do
 not do is land most of their hits that way. The lines are generous on
 purpose and are starting points to tune against real records, not facts
 about human aim - `judge` is a pure function and its tests say where each
 line sits.
+
+**A reaction** is measured at the first hit of an engagement: how long the
+target had been in the shooter's line of sight when the round landed,
+walked back a tick at a time through both histories (`exposure` in
+`game.rs`) - the shooter's eye as it was, against the target rewound by the
+same lag compensation the shot was, so the sighting and the hit share one
+frame of reference. Sight is a clear ray to the middle of the body or the
+head. Under 120 ms is quicker than a person (`REACTION_QUICK_MS`); a target
+in sight for the whole 600 ms window was being watched and is not measured;
+the rest of a burst at one sighting is the same fight. It costs a few dozen
+rays a *hit*, not a sweep of every pair every tick. Pre-aiming a corner
+beats the line honestly now and then, which is why the line is half of all
+fights rather than any of them. Migration 0010 adds `reactions` and
+`quick_reactions` to `match_lives`.
 
 **A review holds withdrawals and nothing else.** Crossing a line opens one
 (one open per player, which the database enforces), and while it is open or

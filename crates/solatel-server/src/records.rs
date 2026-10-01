@@ -7,10 +7,11 @@
 //!
 //! # What is judged, and what is done about it
 //!
-//! A player's last [`RECENT_LIVES`] lives are summed and held against three
-//! lines - accuracy, the share of hits that were headshots, and the share
-//! that landed at the end of a flick - each with a minimum sample under which
-//! it says nothing at all. Cross any line and a review is opened.
+//! A player's last [`RECENT_LIVES`] lives are summed and held against four
+//! lines - accuracy, the share of hits that were headshots, the share that
+//! landed at the end of a flick, and the share of engagements opened faster
+//! than a person reacts - each with a minimum sample under which it says
+//! nothing at all. Cross any line and a review is opened.
 //!
 //! A review decides nothing. It is a question for a person, and until one
 //! answers it the player cannot withdraw: what they have won stays in their
@@ -78,6 +79,41 @@ pub const SNAP_MIN_HITS: i64 = 15;
 pub const SNAP_DEGREES: f32 = 30.0;
 pub const SNAP_WINDOW_SECONDS: f32 = 0.1;
 
+/// Engagements opened quicker than [`REACTION_QUICK_MS`], over engagements
+/// measured, over at least this many.
+///
+/// An engagement is measured at its first hit: how long the target had been
+/// in the shooter's line of sight, as the shooter saw it, when the round
+/// landed. A person needs about a fifth of a second to see something and
+/// begin to respond, and then has to put the sights on it and wait for the
+/// rifle; a few of their hits beat that, because they were already aimed
+/// at a corner when somebody walked round it. What a person does not do is
+/// open half of their fights that way. Software that reads positions does
+/// it every time, and a wallhack's player does it whenever they have
+/// pre-aimed what they could see coming through the wall.
+pub const REACTION_LINE: f64 = 0.50;
+pub const REACTION_MIN_SAMPLES: i64 = 12;
+
+/// What counts as quicker than a person: from first sight to the round
+/// landing, a little under the fastest simple reaction to a light, with no
+/// time allowed for aiming at all.
+pub const REACTION_QUICK_MS: f32 = 120.0;
+
+/// How far back a sighting is looked for. A target in sight for longer has
+/// been watched rather than reacted to, and the hit is not measured. With the
+/// most lag compensation allowed it has to fit in the second of history the
+/// server keeps.
+pub const REACTION_WINDOW_MS: f32 = 600.0;
+
+// The furthest a sighting is looked for, on top of the most the world is ever
+// rewound, has to be inside the one second of history every body carries, or
+// the oldest part of the window would read the live state and see the target
+// standing there.
+const _: () = assert!(
+    REACTION_WINDOW_MS + solatel_protocol::net::MAX_LAG_COMPENSATION_MS < 1000.0,
+    "the reaction window runs off the end of the history"
+);
+
 /// How a life ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -112,6 +148,8 @@ pub struct Counts {
     pub headshots: u32,
     pub damage_dealt: u32,
     pub snap_hits: u32,
+    pub reactions: u32,
+    pub quick_reactions: u32,
 }
 
 /// One life, over.
@@ -136,6 +174,8 @@ pub struct Record {
     pub shots_hit: i64,
     pub headshots: i64,
     pub snap_hits: i64,
+    pub reactions: i64,
+    pub quick_reactions: i64,
 }
 
 impl Record {
@@ -158,6 +198,10 @@ impl Record {
     pub fn snap_share(&self) -> f64 {
         Self::ratio(self.snap_hits, self.shots_hit)
     }
+
+    pub fn quick_share(&self) -> f64 {
+        Self::ratio(self.quick_reactions, self.reactions)
+    }
 }
 
 /// Which lines a record crosses. Empty is the answer almost every time.
@@ -175,6 +219,9 @@ pub fn judge(record: &Record) -> Vec<&'static str> {
     }
     if record.shots_hit >= SNAP_MIN_HITS && record.snap_share() >= SNAP_LINE {
         reasons.push("snaps");
+    }
+    if record.reactions >= REACTION_MIN_SAMPLES && record.quick_share() >= REACTION_LINE {
+        reasons.push("reactions");
     }
     reasons
 }
@@ -242,9 +289,9 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
          INSERT INTO match_lives
              (match_id, player_id, map, stake_micro_usd, outcome, killer_id,
               kills, shots_fired, shots_hit, headshots, damage_dealt, snap_hits,
-              winnings_micro_usd, alive_ms)
+              winnings_micro_usd, alive_ms, reactions, quick_reactions)
          VALUES ($1, $2, $3, $4, $5::life_outcome, $6,
-                 $7, $8, $9, $10, $11, $12, $13, $14)
+                 $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          ON CONFLICT (match_id, player_id) DO NOTHING",
     )
     .bind(life.match_id.as_uuid())
@@ -261,6 +308,8 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
     .bind(c.snap_hits.min(c.shots_hit) as i32)
     .bind(life.winnings.micros().max(0))
     .bind(life.alive_ms as i32)
+    .bind(c.reactions as i32)
+    .bind(c.quick_reactions.min(c.reactions) as i32)
     .execute(pool)
     .await
     .context("writing a life")?;
@@ -285,6 +334,9 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
         "accuracy": record.accuracy(),
         "headshot_share": record.headshot_share(),
         "snap_share": record.snap_share(),
+        "reactions": record.reactions,
+        "quick_reactions": record.quick_reactions,
+        "quick_share": record.quick_share(),
         "lines": {
             "accuracy": { "at_least": ACCURACY_LINE, "over_shots": ACCURACY_MIN_SHOTS },
             "headshots": { "at_least": HEADSHOT_LINE, "over_hits": HEADSHOT_MIN_HITS },
@@ -293,6 +345,12 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
                 "over_hits": SNAP_MIN_HITS,
                 "degrees": SNAP_DEGREES,
                 "within_seconds": SNAP_WINDOW_SECONDS,
+            },
+            "reactions": {
+                "at_least": REACTION_LINE,
+                "over_engagements": REACTION_MIN_SAMPLES,
+                "under_ms": REACTION_QUICK_MS,
+                "within_ms": REACTION_WINDOW_MS,
             },
         },
     });
@@ -313,13 +371,15 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
 
 /// A player's last [`RECENT_LIVES`] lives, summed.
 pub async fn recent_record(pool: &PgPool, player_id: PlayerId) -> Result<Record> {
-    let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+    let row: (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
         "SELECT count(*),
                 coalesce(sum(kills), 0)::bigint,
                 coalesce(sum(shots_fired), 0)::bigint,
                 coalesce(sum(shots_hit), 0)::bigint,
                 coalesce(sum(headshots), 0)::bigint,
-                coalesce(sum(snap_hits), 0)::bigint
+                coalesce(sum(snap_hits), 0)::bigint,
+                coalesce(sum(reactions), 0)::bigint,
+                coalesce(sum(quick_reactions), 0)::bigint
            FROM (SELECT * FROM match_lives
                   WHERE player_id = $1
                   ORDER BY ended_at DESC
@@ -337,6 +397,8 @@ pub async fn recent_record(pool: &PgPool, player_id: PlayerId) -> Result<Record>
         shots_hit: row.3,
         headshots: row.4,
         snap_hits: row.5,
+        reactions: row.6,
+        quick_reactions: row.7,
     })
 }
 
@@ -352,7 +414,32 @@ mod tests {
             shots_hit,
             headshots,
             snap_hits,
+            ..Record::default()
         }
+    }
+
+    fn reacting(reactions: i64, quick_reactions: i64) -> Record {
+        Record {
+            reactions,
+            quick_reactions,
+            ..record(300, 100, 20, 10)
+        }
+    }
+
+    #[test]
+    fn opening_most_fights_faster_than_a_person_reacts_is_flagged() {
+        // A good player beats the line now and then, pre-aimed at a corner.
+        assert!(judge(&reacting(40, 8)).is_empty());
+        // Half of every engagement under it is not that.
+        assert_eq!(judge(&reacting(40, 20)), vec!["reactions"]);
+        // And a handful of fights is too few to say, however quick.
+        assert!(
+            judge(&reacting(
+                REACTION_MIN_SAMPLES - 1,
+                REACTION_MIN_SAMPLES - 1
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -433,6 +520,8 @@ mod tests {
             headshots: 45,
             damage_dealt: 1500,
             snap_hits: 45,
+            reactions: 9,
+            quick_reactions: 9,
         };
         let ordinary = Counts {
             kills: 1,
@@ -441,6 +530,8 @@ mod tests {
             headshots: 2,
             damage_dealt: 300,
             snap_hits: 1,
+            reactions: 4,
+            quick_reactions: 0,
         };
 
         // A short life, perfect but under every minimum sample: nothing yet.
@@ -451,12 +542,14 @@ mod tests {
             headshots: 4,
             damage_dealt: 150,
             snap_hits: 4,
+            reactions: 4,
+            quick_reactions: 4,
         };
         assert_eq!(write(&pool, &life(cheat, lucky)).await.unwrap(), None);
         // A long one on top of it is not, and all three lines are crossed.
         assert_eq!(
             write(&pool, &life(cheat, aimbot)).await.unwrap(),
-            Some(vec!["accuracy", "headshots", "snaps"])
+            Some(vec!["accuracy", "headshots", "snaps", "reactions"])
         );
         // A third while that review is open opens no second one.
         assert_eq!(write(&pool, &life(cheat, aimbot)).await.unwrap(), None);
@@ -494,6 +587,7 @@ mod tests {
         assert_eq!(empty.accuracy(), 0.0);
         assert_eq!(empty.headshot_share(), 0.0);
         assert_eq!(empty.snap_share(), 0.0);
+        assert_eq!(empty.quick_share(), 0.0);
         assert!(judge(&empty).is_empty());
     }
 }
