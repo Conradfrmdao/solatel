@@ -263,6 +263,11 @@ check(
 const fired = cheat.shots - shotsBefore;
 
 // ---- aim nobody could hold ------------------------------------------------------
+// Every button bit but the grenade's. A grenade thrown here can bounce back
+// off a wall and kill the cheat itself, which the server rightly settles
+// as walking away - stake back less the rake - and every balance checked
+// after this would then be off by $0.90 through nothing the server did
+// wrong. Grenades have checks of their own below.
 const weird = setInterval(() => {
   const commands = [];
   for (let k = 0; k < 16; k += 1) {
@@ -273,7 +278,7 @@ const weird = setInterval(() => {
       right: cheat.seq % 3 ? -1e30 : 1e30,
       yaw: cheat.seq % 2 ? 3e38 : 1e308,
       pitch: cheat.seq % 2 ? -3e38 : -1e308,
-      buttons: 0xff,
+      buttons: 0xff & ~THROW,
     });
   }
   cheat.send({ t: 'inputs', commands });
@@ -283,7 +288,7 @@ clearInterval(weird);
 await sleep(300);
 check(
   cheat.me.at.every(Number.isFinite),
-  'aim of 3e38 and 1e308 and every button bit set leave the player somewhere real',
+  'aim of 3e38 and 1e308 and every other button bit set leave the player somewhere real',
   `at ${cheat.me.at.map((n) => n.toFixed(1)).join(', ')}`,
 );
 

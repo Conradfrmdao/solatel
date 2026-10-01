@@ -168,7 +168,7 @@ def client_tables():
                 re.findall(r"^\s+(\w+): \{ average: \[(\d+), (\d+), (\d+)\]", read('photo-sets.js'), re.M)}
     skies = {}
     for name, file, sun, colour, sky in re.findall(
-            r"^\s+(\w+): \{ file: '(\w+)', sun: ([\d.]+), sunColour: 0x([0-9a-fA-F]{6}), sky: ([\d.]+) \}",
+            r"^\s+(\w+): \{ file: '(\w+)', sun: ([\d.]+), sunColour: 0x([0-9a-fA-F]{6}), sky: ([\d.]+)[^}]*\}",
             read('world.js'), re.M):
         skies[name] = {'file': file, 'sun': float(sun), 'colour': int(colour, 16), 'sky': float(sky)}
     if not photo or not averages or not skies:

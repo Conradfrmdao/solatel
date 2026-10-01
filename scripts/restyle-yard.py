@@ -54,6 +54,10 @@ EXTRA = {
     'asphalt':         ('#4a4a48', 0.95),
     'concrete':        ('#8a877f', 0.92),
     'concrete_light':  ('#a3a098', 0.9),
+    # The yard's walls: cool, so the warm photograph laid on them comes out
+    # grey, as concrete is under an overcast sky (`concrete_grey` in
+    # `photo.js` is tinted three quarters of the way to this).
+    'concrete_grey':   ('#6f757a', 0.92),
     'brick':           ('#6d4a3d', 0.92),
     'roof_metal':      ('#4a4c4e', 0.75),
     'plaster_sand':    ('#9a8f78', 0.95),
@@ -74,11 +78,11 @@ BARREL_BODY = ('barrel_rust', 'barrel_olive', 'barrel_blue', 'barrel_olive', 'ba
 RULES = {
     # kind: {colour index: surface, or a tuple to pick from per object}
     'PLANE': {0: 'asphalt'},
-    'Cube': {1: 'concrete', 2: 'concrete_light', 3: 'steel', 5: 'crate_rust', 6: 'wood',
-             7: 'steel', 8: 'brick', 9: 'concrete', None: 'concrete'},
+    'Cube': {1: 'concrete_grey', 2: 'concrete_light', 3: 'steel', 5: 'crate_rust', 6: 'wood',
+             7: 'steel', 8: 'brick', 9: 'concrete_grey', None: 'concrete_grey'},
     'Cylinder': {2: 'steel', 3: 'rubber', 7: 'rubber', 4: BARREL_BODY, 5: BARREL_BODY,
                  8: BARREL_BODY},
-    'barricade': {9: 'concrete', 5: 'steel'},
+    'barricade': {9: 'concrete_grey', 5: 'steel'},
     'TrafficBarrier_01_Cube': {5: 'stripe_red', 2: 'concrete_light', 3: 'steel'},
     'Wood': {5: BARREL_BODY, 2: 'steel'},
     'Big_Container_Long': {3: 'steel', 4: CONTAINER_BODY, 5: CONTAINER_BODY, 8: CONTAINER_BODY},
@@ -98,8 +102,8 @@ RULES = {
     'tent': {6: 'sandbag'},
     'wood': {6: 'wood'},
 }
-FALLBACK = {0: 'asphalt', 1: 'concrete', 2: 'concrete_light', 3: 'steel', 4: 'container_blue',
-            5: 'container_rust', 6: 'wood', 7: 'steel', 8: 'wood_dark', 9: 'concrete'}
+FALLBACK = {0: 'asphalt', 1: 'concrete_grey', 2: 'concrete_light', 3: 'steel', 4: 'container_blue',
+            5: 'container_rust', 6: 'wood', 7: 'steel', 8: 'wood_dark', 9: 'concrete_grey'}
 
 
 def pick(choice, name):
@@ -149,7 +153,7 @@ def main():
             if 'yard_colour' not in extras:
                 extras['yard_colour'] = prim.get('material')
             original = extras['yard_colour']
-            choice = rules.get(original, FALLBACK.get(original, 'concrete'))
+            choice = rules.get(original, FALLBACK.get(original, 'concrete_grey'))
             surface = pick(choice, name)
             prim['material'] = material(surface)
             counts[surface] = counts.get(surface, 0) + 1

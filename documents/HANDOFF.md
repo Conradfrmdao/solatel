@@ -64,9 +64,17 @@ it is the ceiling. In rough order of what a player will notice:
 - **Detail.** Decals (grime, cracks, puddles, painted markings), edge wear,
   more props of the quality of `props.js` and `rifle.js`, ground scatter
   (rubble, litter, leaves), higher-detail trees. LOD for anything instanced.
+  *Done 2026-10-01:* heaps of rubbish at wall bases and in corners, placed
+  offline from the drawn map (`scripts/scatter.py`), and damp and puddles
+  on open ground. Still open: edge wear, leaves under the facility's trees,
+  higher-detail trees, LOD.
 - **The yard** is still the weakest map: flat cream concrete and primary-
   coloured downloaded art. Restyle and re-texture it, or rebuild it the way
-  the facility was built (`scripts/build-facility.py`).
+  the facility was built (`scripts/build-facility.py`). *Done 2026-10-01:*
+  its walls repainted the grey of concrete under its overcast sky, rain
+  streaks and all, the wettest ground of the three, rubbish in its corners,
+  and the flare off its white cars gone. Its shapes are still the download's
+  blocks; rebuilding it as the facility was built is the real fix.
 - **The soldier** could use reload and throw clips (Mixamo has them; see
   *Other players* in CLAUDE.md for why they are placed by IK today).
 

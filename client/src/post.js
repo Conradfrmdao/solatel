@@ -78,7 +78,10 @@ export function buildPost(renderer, scene, camera) {
     composer.addPass(ao);
     // Only what is genuinely bright blooms: glints, the flash, the sky round
     // the sun. A soft haze over everything is what makes a game look cheap.
-    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.22, 0.55, 0.92);
+    // Above what any lit paint reaches: at 0.92 the roof of a white car under
+    // the yard's bright overcast came to about 1 and flared across the
+    // screen, and a sunlit wall on the arena was not far behind.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.22, 0.55, 1.6);
     composer.addPass(bloom);
     // Tonemapping and colour space are applied once, here: a composer
     // bypasses the renderer's own output stage.

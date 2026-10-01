@@ -844,7 +844,11 @@ Things about it that are not obvious:
 `post.js` is the chain every frame goes through: a multisampled half-float
 target, GTAO (still a setting, still off by default - it is the expensive
 one), a restrained bloom that only finds real highlights, tonemapping, and a
-light colour grade with a vignette. `scripts/fetch-photo-assets.mjs`
+light colour grade with a vignette. The bloom starts above what any lit
+paint reaches (1.6): at 0.92 a white car's roof under the yard's overcast
+flared. And nothing should be a perfect mirror - a car's windscreen was,
+and the sun's glint off it, one line of pixels thousands of times brighter
+than the paint round it, bloomed across half the car. `scripts/fetch-photo-assets.mjs`
 downloads and transcodes every photograph; `ATTRIBUTION.md` lists them.
 
 ### Clips
@@ -963,6 +967,35 @@ mirrors, a B-pillar and plates.
 boxes measured off the atlas's alpha, three crossed per clump in three
 mixes. A card spanning the atlas's whole bottom strip took in half-cut tufts
 and a stray blade-end and read, across a field, as fallen leaves.
+
+### Rubbish, damp and puddles
+
+`scripts/scatter.py`, `scatter.js`, `assets/scatter/<map>.bin`. Heaps of
+rubble, grit, broken brick, offcuts, litter and cans at the foot of walls
+and in corners, and twigs and stones on the facility's grass.
+
+- **Placed from the drawn map, never the collision**, which has walls
+  nobody can see - the yard's guardrail, pits filled in so nobody is
+  trapped - and rubbish lined up along one would be lying about where a
+  wall is. The floor is every face of the art pointing up, sampled by area;
+  a wall is whatever a ray along the floor runs into.
+- **In heaps, where something stops it.** A heap starts with a chance that
+  falls off with distance from a wall and is two and a half times as likely
+  in a corner, and a third as likely off the ground (stair treads, roofs);
+  every piece must be seen from its heap's middle along the floor, so none
+  lies through or inside a wall.
+- **A few shapes of each kind, built in code**, textured with photo sets
+  every map loads anyway at the photograph's own scale (a chip of brick is
+  part of one brick), instanced, a draw call a shape: 80 to 250 KB a map.
+- **Never a place to hide**: nothing is taller than a crouched player's
+  ankle, nothing collides, and it is the same at every graphics level.
+
+**Damp and puddles** (`wet` in `SURFACES` and in `SKIES`): level ground open
+to the sky - which the baked light knows, so never under a roof - is darker
+and glossier in patches, puddles more so and smoothed over. Never a mirror:
+the environment map is the sky alone and knows nothing of the walls round a
+puddle, and a mirror puddle in a walled yard read as a white hole in the
+ground. The overcast yard is the wettest map, the arena the driest.
 
 ### The weapon in your hands
 
@@ -1149,7 +1182,11 @@ everything from ten primary colours; the script gives each kind of object -
 by node name and original colour - a surface from the shared list, muted
 for combat (weathered concrete, faded containers, rusty drums, dark steel),
 picking per object where a kind comes in several. Materials only, so the
-collision is untouched. It records each primitive's original colour in its
+collision is untouched. Its walls are `concrete_grey`, tinted three quarters
+of the way to a cool grey rather than the arena's halfway, because the
+concrete photograph is warm and halfway left twenty thousand square metres
+of wall cream under a grey sky; they weather like the arena's, rain streaks
+and all. It records each primitive's original colour in its
 `extras.yard_colour`, which keeps it idempotent and which `build-facility.py`
 reads when it borrows the yard's props.
 
