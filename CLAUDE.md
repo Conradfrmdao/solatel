@@ -735,7 +735,17 @@ drum, a boarded crate with battens - and fitted into its stand-in's own box
 Instanced per part, painted in the stand-in's colour. Stand-ins are found by
 node name, without the dot the loader strips (`truck001`, `CAR002`, `Wood003`,
 `crate017`); the yard's two trucks are `Cube.036` and `Cube.051`, matched in
-the yard only because the arena has an unrelated `Cube.036`.
+the yard only because the arena has an unrelated `Cube.036`. The yard's
+other drums and all its tyres are bare `Cylinder`s, told apart by material
+(`cylinderKind`): a barrel colour is a drum, rubber is a tyre - turned on a
+lathe with tread grooves - and rubber taller than it is wide is a stack of
+five. The sedan has arches cut over its wheels, five-spoke steel wheels,
+mirrors, a B-pillar and plates.
+
+**Grass is cut from whole tufts** (`GRASS_TUFTS` in `nature.js`), five
+boxes measured off the atlas's alpha, three crossed per clump in three
+mixes. A card spanning the atlas's whole bottom strip took in half-cut tufts
+and a stray blade-end and read, across a field, as fallen leaves.
 
 ### The weapon in your hands
 
