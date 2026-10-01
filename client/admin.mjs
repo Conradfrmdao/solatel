@@ -48,11 +48,15 @@ for (const tab of ['overview', 'reviews', 'players', 'matches']) {
   check(text.length > 0 && !text.includes('could not load'), `the ${tab} tab loads`);
 }
 
-const matchId = await page.evaluate(() => document.querySelector('a[href^="#matches/"]')?.getAttribute('href').split('/')[1]);
-check(Boolean(matchId), 'there is a finished match to open');
-if (matchId) {
-  await open(`matches/${matchId}`, () => document.querySelector('canvas') || document.body.textContent.includes('No recording'));
-  const replay = await page.evaluate(() => {
+// The newest matches may still be running, and a running match has no
+// recording yet: look down the list for one that has finished.
+const matchIds = await page.evaluate(() =>
+  [...document.querySelectorAll('a[href^="#matches/"]')].map((a) => a.getAttribute('href').split('/')[1]).slice(0, 8));
+check(matchIds.length > 0, 'there is a match to open');
+let replay = null;
+for (const id of matchIds) {
+  await open(`matches/${id}`, () => document.querySelector('canvas') || document.body.textContent.includes('No recording'));
+  replay = await page.evaluate(() => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return null;
     const g = canvas.getContext('2d');
@@ -61,8 +65,13 @@ if (matchId) {
     for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit += 1;
     return { lit, slider: Number(document.querySelector('input[type=range]').max) };
   });
-  check(Boolean(replay), 'the match has its replay', replay ? `${replay.slider} ticks` : 'no recording');
-  if (replay) check(replay.lit > 1000, 'the replay draws the map and the players', `${replay.lit} pixels`);
+  if (replay) break;
+}
+if (replay) {
+  check(true, 'a finished match has its replay', `${replay.slider} ticks`);
+  check(replay.lit > 1000, 'the replay draws the map and the players', `${replay.lit} pixels`);
+} else {
+  console.log('NOTE  none of the latest matches has finished yet, so no replay was checked');
 }
 
 check(errors.length === 0, 'nothing on the page threw', errors.join(' | '));

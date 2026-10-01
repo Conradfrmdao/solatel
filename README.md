@@ -280,7 +280,8 @@ Two limits exist purely because this game pays money:
 - The yard map's licence is Conrad's word and is still worth finding in
   writing (`scripts/asset-licence.py`). The rifle, which had no licence, is
   now built in code.
-- Referral bonus mechanics.
+- Referral bonus mechanics. Invites are recorded (who invited whom), and
+  nothing is paid for one until the amounts are decided.
 - No geo-gating or KYC is currently planned. That is a deliberate product stance
   in the PRD rather than an oversight, but it is the project's largest
   non-technical risk, so the withdrawal path should keep those hooks available.

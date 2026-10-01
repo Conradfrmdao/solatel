@@ -242,9 +242,12 @@ export class Menu {
     });
   }
 
-  /** Who this player is, for the profile pane. */
-  setPlayer(playerId) {
+  /** Who this player is, and the link that invites people, for the
+   *  profile pane. */
+  setPlayer(playerId, inviteCode = null) {
     this.root.querySelector('#account-id').textContent = playerId ?? '';
+    const link = this.root.querySelector('#invite-link');
+    if (link) link.textContent = inviteCode ? `${window.location.origin}/?ref=${inviteCode}` : 'none yet';
   }
 
   /**
@@ -961,6 +964,10 @@ const TEMPLATE = `
         </div>
         <div class="field">
           <span>wallet</span><code id="profile-wallet"></code>
+        </div>
+        <div class="field">
+          <span>invite</span><code id="invite-link"></code>
+          <button type="button" data-copy="invite-link">copy</button>
         </div>
         <div class="field">
           <span>account key</span><code id="account-key" class="secret">hidden</code>

@@ -258,7 +258,9 @@ async function player(id) {
   return [
     el('div', { class: 'box' },
       el('div', { class: 'row' }, el('b', {}, 'player'), el('span', { class: 'mono' }, p.id), open ? reviewTag(open.status) : ''),
-      el('div', { class: 'dim' }, `joined ${when(p.created_at)}${p.solana_pubkey ? `, wallet ${p.solana_pubkey}` : ''}`)),
+      el('div', { class: 'dim' }, `joined ${when(p.created_at)}${p.solana_pubkey ? `, wallet ${p.solana_pubkey}` : ''}`),
+      el('div', { class: 'dim' }, `invite code ${p.invite_code ?? '-'}, invited ${p.invited} `,
+        p.referred_by ? el('span', {}, '· invited by ', playerLink(p.referred_by)) : '')),
     el('div', { class: 'cards' },
       el('div', { class: 'card' }, el('small', {}, 'balance'), el('b', {}, usd(p.balance_micro_usd))),
       el('div', { class: 'card' }, el('small', {}, 'lives'), el('b', {}, r.lives)),

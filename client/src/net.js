@@ -105,6 +105,44 @@ export function readAccountKey() {
   }
 }
 
+/**
+ * The invite code a link brought this browser, kept until an account is
+ * made with it. Only a browser with no account yet keeps one: an existing
+ * player opening somebody's link is not becoming anybody's invitee, and the
+ * server would ignore it anyway.
+ */
+const REFERRAL_KEY = 'solatel.ref';
+
+export function noteReferral() {
+  try {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get('ref');
+    if (!code) return;
+    if (!readAccountKey()) window.localStorage.setItem(REFERRAL_KEY, code.slice(0, 16));
+    // Off the address bar, so it is not passed on by accident.
+    url.searchParams.delete('ref');
+    window.history.replaceState(null, '', url.toString());
+  } catch {
+    /* no storage: the invite is lost, which costs nobody anything */
+  }
+}
+
+function readReferral() {
+  try {
+    return window.localStorage.getItem(REFERRAL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function forgetReferral() {
+  try {
+    window.localStorage.removeItem(REFERRAL_KEY);
+  } catch {
+    /* nothing to forget */
+  }
+}
+
 export function writeAccountKey(key) {
   try {
     if (key) window.localStorage.setItem(ACCOUNT_KEY, key);
@@ -206,6 +244,8 @@ export class Link {
         // Who this is. Absent on the very first visit, and the welcome then
         // carries a new key to keep.
         account: readAccountKey(),
+        // Somebody's invite, sent only by a browser that has no account yet.
+        referral: readAccountKey() ? null : readReferral(),
       });
     });
 
@@ -318,7 +358,10 @@ export class Link {
         if (message.account_key) {
           this.accountReplaced = Boolean(readAccountKey());
           writeAccountKey(message.account_key);
+          forgetReferral();
         }
+        /** This player's own invite code, for the link in the profile. */
+        this.inviteCode = message.invite_code ?? null;
         this.wallet = message.wallet ?? null;
         /** The Solana wallet this account is signed in with, or null. */
         this.solanaPubkey = message.solana_pubkey ?? null;
