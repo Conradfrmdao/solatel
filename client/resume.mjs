@@ -100,25 +100,37 @@ try {
   }
 
   // Walk a little, so "same place" means something more than "both at the
-  // spawn". Held for a second of wall clock, which at walking pace is several
-  // metres.
-  await page.evaluate(() => window.solatel.input._keys.add('KeyW'));
-  await new Promise((done) => setTimeout(done, 1000));
-  await page.evaluate(() => window.solatel.input._keys.delete('KeyW'));
-  // Until the player has come to rest, not for a fixed time. On a slow
-  // renderer - a software GPU draws a frame a second - the client sends its
-  // last few inputs late, and a position read too early is one the server
-  // has not finished walking to, which reads as drift across the reload.
+  // spawn". Until the player has gone two metres rather than for a fixed
+  // time: a software GPU draws about a frame a second, and a second of wall
+  // clock can be no frames - no inputs sent at all.
   const where = () => page.evaluate(() => ({
     x: window.solatel.local.current.x,
     y: window.solatel.local.current.y,
     z: window.solatel.local.current.z,
+    // A command still unanswered that moves the player: the server has not
+    // finished walking them.
+    moving: window.solatel.local.unacked.some((c) => c.forward !== 0 || c.right !== 0),
   }));
+  // Two drawn frames, however long the renderer takes over them.
+  const frames = () => page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+  await page.evaluate(() => window.solatel.input._keys.add('KeyW'));
+  for (let tries = 0; tries < 60; tries += 1) {
+    await frames();
+    const now = await where();
+    if (Math.hypot(now.x - before.x, now.z - before.z) >= 2) break;
+  }
+  await page.evaluate(() => window.solatel.input._keys.delete('KeyW'));
+  // Until the player has come to rest: every step sent has been answered, and
+  // the position holds across real frames. A position read before that is one
+  // the server has not finished walking to, which reads as drift across the
+  // reload.
   let moved = await where();
   for (let tries = 0; tries < 30; tries += 1) {
-    await new Promise((done) => setTimeout(done, 500));
+    await frames();
     const now = await where();
-    const still = Math.hypot(now.x - moved.x, now.z - moved.z) < 0.01;
+    const still = !now.moving && Math.hypot(now.x - moved.x, now.z - moved.z) < 0.01;
     moved = now;
     if (still) break;
   }

@@ -20,7 +20,7 @@ Rust, Node and Postgres installed natively and no Docker daemon, so `./x`
 does not work there and the tools run directly: `cargo test --workspace`,
 `cargo clippy --workspace --all-targets -- -D warnings`,
 `bash scripts/build-sim.sh`, `npm --prefix client run build`,
-`bash scripts/copy-assets.sh`, `cargo run -p solatel-server`.
+`cargo run -p solatel-server`.
 `.claude/hooks/session-start.sh` installs what is missing and starts a local
 Postgres (`postgres://solatel:solatel@localhost:5432/solatel`, exported as
 `DATABASE_URL` unless the environment sets one). It cannot reach Neon: its
@@ -399,9 +399,13 @@ route a stake can take:
   puts two in one place and they can see each other by construction. Six
   clients on six spawns fired 3,930 shots without one landing, which is the
   spawns being well chosen rather than anything broken.
-- `node client/survive.mjs` - a client buys in, stands still for the whole
-  match, and gets its stake back at the whistle. It takes `MATCH_DURATION` to
-  run and there is no way to hurry it from a client, which is correct.
+- `node client/survive.mjs` - a client buys in, survives the whole match,
+  and gets its stake back at the whistle. It takes `MATCH_DURATION` to run
+  and there is no way to hurry it from a client, which is correct. Nobody
+  shoots, but the circle burns: each survivor walks into the final circle
+  by a route found with the real simulation (the wasm, loaded in Node) and
+  stands there. Heading blind for the middle left one stuck behind a wall,
+  burned to death in a match nobody shot in.
 
 **Solana stays on devnet** until Conrad explicitly says otherwise. Nothing in
 this repo should be able to move mainnet funds by accident.
@@ -608,8 +612,8 @@ The wire format is JSON text frames for now, funnelled through `net::encode` /
 
 Three.js, plain JavaScript, bundled by esbuild into `web/dist`. It replaced a
 Bevy/wasm client that was 81 MB and fought us over asset compatibility, visuals
-and mouse look; this one's JavaScript is about 940 KB, before the wasm and
-the assets. `./x client` builds it, `./x
+and mouse look; this one's JavaScript is about 940 KB (210 KB over the
+wire), before the wasm and the assets. `./x client` builds it, `./x
 watch` rebuilds the JavaScript on save.
 
 **Movement is not reimplemented in JavaScript.** `crates/solatel-sim-wasm` wraps
@@ -619,8 +623,8 @@ Do not be tempted to port `step_tick` into JS to save a build step: two
 descriptions of movement drifting apart is the failure this whole design exists
 to prevent, and in a game that pays per kill it pays the wrong player.
 
-The wasm is 1.5 MB, about 440 KB of it over the wire once the server has
-gzipped it, and almost all of that is the three maps' brush tables - 61,000
+The wasm is 1.5 MB, about 260 KB of it over the wire as brotli, and almost
+all of that is the three maps' brush tables - 61,000
 brushes at six floats each is 1.4 MB on its own, against a simulation of about 50 KB.
 That is the price of the client colliding against the server's own table
 rather than a copy, and it is still the right trade, but it is the number to
@@ -645,6 +649,52 @@ WebGL came up and the socket connected.
 
 The viewmodel is rendered in its own scene over a cleared depth buffer, which is
 what stops a wall the player is standing against cutting through the weapon.
+
+### What a browser keeps
+
+`client/build.mjs` and `served.rs`. **Every file the page loads is
+published under a name hashed from its contents** -
+`assets/maps/yard.0581c612a41ee1b5.glb`, `solatel.<hash>.js`, the wasm, the
+icon - and the server tells the browser to keep any such name for a year,
+`immutable`. A name like that cannot be served with other bytes, so keeping
+it can never be wrong, and a map is downloaded once rather than at the
+start of every match - which is what makes maps of tens of megabytes
+affordable at all. The page is the one file that cannot be named that way,
+since it is how the browser learns the other names, so **`index.html` is
+never stored**, and neither is anything without a hash in its name (a
+plain name, every API route, any 404). A new build is picked up on the next
+page load and costs only the files that changed.
+
+The code asks for files by their plain names through `asset()` in
+`assets.js`; the page carries the table from plain to published names
+(`#solatel-manifest`), written by the build. A plain name the build did not
+publish throws, rather than 404ing somewhere later.
+
+**A tab from another build is refused at the handshake.** Its page names
+files the new build deleted, so it would fail at its next map. The page
+says which build it is (`<meta name="solatel-build">`, sent as
+`client_build`); the server reads which build it serves from
+`web/dist/build.json` on every handshake - not once at start, because the
+client is rebuilt under a running server - and refuses a mismatch, and the
+tab reloads itself once for that build, exactly as for a protocol change.
+The build is named from the bundle's name and the table, which between them
+are every file a page can ask for. Only a name starting `solatel/` is
+checked: the drivers name themselves (`duel.mjs`) and load no files.
+
+**Everything worth compressing is compressed once, at build time**: a
+brotli copy at the best setting with the widest window, and a gzip copy
+for anything that does not speak brotli, beside each file, served by
+`ServeDir` by `Accept-Encoding`. The yard is a thousand meshes of which
+many are copies, so 11.1 MB goes over the wire as 0.23; the facility is 0.64
+MB, the arena 0.06. That is a minute of CPU on a cold build, so a content-
+named file's compressed copies are kept by every later build that publishes
+the same bytes. WebP photographs are compressed already and are left alone.
+
+`./x watch` keeps the bundle's plain name (`solatel.js`, never stored) and
+publishes everything else as a full build does. `node client/cache.mjs`
+checks all of it against a running server - headers, compression, a second
+visit fetching only the page, a stale build refused - and `client/stale.mjs`
+the reload, with no server.
 
 ### Photographs, sky and light
 
@@ -727,6 +777,13 @@ the same test.
 `node client/perf.mjs` queues into a match and measures each level in turn on
 a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
 since a software rasteriser's frame rate means nothing.
+
+`node client/tour.mjs --map yard` takes the same pictures of a map every
+time - from its spawns at eye height, from above, and through the player's
+own eyes - which is how a visual change is judged against the last one. It
+wants a free-play server with a long `SOLATEL_WARMUP`: on a software
+renderer a tour takes minutes, and once a match is live the circle burns a
+player who never moves and puts the page back on the menu.
 
 ### Trees, grass, smoke and birds
 
@@ -936,9 +993,10 @@ other player hold a toy.
 
 ## Assets
 
-Runtime models live in `assets/` and are copied into `web/dist/assets` by
-`./x client`. They are downloaded by every player, so size is a gameplay
-number. A player fetches only the map being played, so the budget is per map,
+Runtime models live in `assets/` and are published into `web/dist/assets`
+under content-hashed names by `./x client` (see *What a browser keeps*).
+They are downloaded by every player, so size is a gameplay number - once
+per player and build, now that a browser keeps them, and compressed. A player fetches only the map being played, so the budget is per map,
 not for the folder: arena is 3.3 MB, yard 11 MB and facility 3.7 MB, against 2.5 MB of soldier
 and no rifle at all - it is built in code - plus the photographs a map's surfaces use
 (7.4 MB for all of them) and the map's own sky (1.1 to 1.6 MB). The arena's second half cost 40 KB of that —
@@ -1772,8 +1830,8 @@ listens, so blue-green deadlocks for ninety seconds and then gives up), and
 **deploy when escrow is empty**, because a restart settles live stakes as
 abandons and that charges players the rake for our deploy. The server shuts
 down on SIGTERM as well as Ctrl-C and releases the lease on the way out. A
-tab left on the old client reloads itself once per server version
-(`reloadForNewBuild` in `net.js`).
+tab left on the old client reloads itself once per server version or client
+build (`reloadForNewBuild` in `net.js`).
 
 ## Phase 2 note
 

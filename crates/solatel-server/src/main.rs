@@ -16,19 +16,14 @@ mod proof;
 mod reconcile;
 mod records;
 mod replay;
+mod served;
 mod solana;
 mod tick;
 mod wallet;
 mod ws;
 
 use anyhow::{Context, Result};
-use axum::{
-    Json, Router,
-    extract::State,
-    http::{HeaderValue, StatusCode, header},
-    response::IntoResponse,
-    routing::get,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use config::Config;
 use game::GameHandle;
 use reconcile::LedgerHealthHandle;
@@ -42,7 +37,7 @@ use std::{
     },
     time::Instant,
 };
-use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
+use tower_http::{services::ServeDir, trace::TraceLayer};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -64,6 +59,9 @@ pub struct AppState {
     pub proof: proof::Proof,
     /// The cluster, for a page building a deposit. `None` without a wallet.
     pub chain: Option<chain::Chain>,
+    /// Which build of the client is being served, for the handshake to
+    /// refuse a page from another one.
+    pub served: served::ServedBuild,
 }
 
 impl AppState {
@@ -300,6 +298,7 @@ async fn main() -> Result<()> {
         ledger_health,
         game,
         admin: admin::AdminKey::from_env(),
+        served: served::ServedBuild::new(&config.web_dir),
     };
     if state.admin.is_some() {
         tracing::info!("admin view on at /admin");
@@ -316,16 +315,18 @@ async fn main() -> Result<()> {
         .route("/chain/usdc-account", get(chain::usdc_account))
         .route("/ws", get(ws::handler))
         .merge(admin::router(state.clone()))
-        .fallback_service(ServeDir::new(&config.web_dir).append_index_html_on_directories(true))
-        // The client bundle is tens of megabytes and changes on every build.
-        // Without this the browser happily serves a cached copy after a
-        // rebuild, which turns "did that fix land?" into a guessing game.
-        // Launch will want real cache busting via content-hashed filenames;
-        // until then, correctness beats the round trip.
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store, must-revalidate"),
-        ))
+        // `client/build.mjs` writes a brotli and a gzip copy beside every
+        // file worth compressing, once, at build time: the best setting is
+        // seconds of work for a map, and the same bytes for every player.
+        .fallback_service(
+            ServeDir::new(&config.web_dir)
+                .append_index_html_on_directories(true)
+                .precompressed_br()
+                .precompressed_gzip(),
+        )
+        // Files named by their contents are kept for good; nothing else is
+        // stored at all (see `served`).
+        .layer(axum::middleware::from_fn(served::cache_policy))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

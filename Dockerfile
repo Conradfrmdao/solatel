@@ -42,8 +42,9 @@ RUN npm --prefix client ci --no-audit --no-fund
 COPY client client
 COPY --from=rust /src/client/generated client/generated
 COPY assets assets
-COPY scripts/copy-assets.sh scripts/copy-assets.sh
-RUN npm --prefix client run build && bash scripts/copy-assets.sh
+# Publishes every file under a name hashed from its contents, with brotli and
+# gzip copies beside it - a minute or so of compression, once per image.
+RUN npm --prefix client run build
 
 # ---- The image that runs -----------------------------------------------------
 FROM debian:bookworm-slim

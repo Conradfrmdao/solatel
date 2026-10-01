@@ -35,8 +35,7 @@ import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
-
-const CLIENT_BUILD = 'solatel-client-three/0.1.0';
+import { asset, clientBuild } from './assets.js';
 
 /**
  * Field of view, measured *horizontally*, the way shooters quote it.
@@ -109,7 +108,7 @@ async function boot() {
   };
 
   say('loading simulation…');
-  await loadSim('sim/solatel_sim_bg.wasm');
+  await loadSim(asset('sim/solatel_sim_bg.wasm'));
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -166,14 +165,14 @@ async function boot() {
   say('connecting…');
   // Somebody's invite link, kept for the account this browser is about to make.
   noteReferral();
-  const link = new Link(CLIENT_BUILD, storedName());
+  const link = new Link(clientBuild(), storedName());
   await link.firstWelcome;
 
   say('loading the weapon…');
   const rifle = await viewmodel.load();
   say('loading the soldier…');
   // The same rifle, handed on rather than fetched again.
-  const soldier = await remotes.load('assets/characters/soldier.glb', rifle);
+  const soldier = await remotes.load(asset('assets/characters/soldier.glb'), rifle);
   // And the same soldier's arms in first person, in the same pose.
   viewmodel.setArms(soldier, remotes.clips.aim);
 
@@ -314,7 +313,7 @@ async function boot() {
     menu.show(false);
     say(`loading ${mapName}…`);
     document.body.classList.remove('running');
-    await world.load(`assets/maps/${mapName}.glb`);
+    await world.load(mapName);
 
     // The far plane is set from the map rather than left at a constant, and
     // kept as tight as the map allows. Depth precision is spent between near
@@ -358,6 +357,10 @@ async function boot() {
        *  what is solid - a camera placed for a screenshot, say. */
       get brushes() {
         return BRUSHES;
+      },
+      /** The current map's spawns, x, y, z and yaw in fours - for tour.mjs. */
+      get spawns() {
+        return SPAWNS;
       },
       setComposer(on) {
         composer = on ? builtComposer : null;
