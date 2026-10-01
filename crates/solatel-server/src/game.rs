@@ -75,20 +75,53 @@ use solatel_protocol::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::{mpsc, oneshot};
 
-/// Inputs a player may have queued ahead of the simulation.
+/// Inputs a player may have waiting for the simulation.
 ///
-/// The server runs exactly one command per tick. A client that sends faster
-/// than the server steps builds a backlog, and a backlog is lag: the player
-/// sees the result of a command they gave several frames ago. Dropping the
-/// oldest keeps them at the front of their own input stream.
-const MAX_QUEUED_INPUTS: usize = 8;
+/// Room for every command a stall the guess can make good leaves behind (see
+/// [`GUESS_WINDOW_TICKS`]), which all arrive at once when it ends. It is not
+/// how far behind a player may run: that is [`BACKLOG_LIMIT`].
+const MAX_QUEUED_INPUTS: usize = GUESS_WINDOW_TICKS as usize + 8;
 
-/// Ticks a player's last input keeps being applied when nothing new arrives.
+/// Commands that may wait while nothing is owed before the oldest are
+/// dropped.
+///
+/// The server runs one command a tick, so a command that waits is lag: the
+/// player's body is where they were that many ticks ago, for everybody else
+/// and for their shots. A late command does not wait - it is run the tick it
+/// arrives, over the guess made in its place - so a queue this deep only
+/// forms behind a stall too long to make good, or from a client sending
+/// faster than the server steps, and in both its oldest commands are for
+/// ticks long gone. Dropping them keeps the player at the front of their own
+/// input stream, at the price of a correction on their screen.
+const BACKLOG_LIMIT: usize = 4;
+
+/// Ticks a guess keeps moving a body on its owner's last input.
 ///
 /// A quarter of a second. Short enough that a client which has gone away stops
 /// moving almost at once, long enough that a single dropped packet does not
 /// make somebody stutter.
 const MAX_CARRY_FORWARD_TICKS: u32 = 16;
+
+/// How long a guess can still be put right when the real commands arrive.
+///
+/// A body whose owner's next command is late is moved on a guess - their last
+/// one again - so that everybody else sees them carry on rather than stop.
+/// When the real commands come, the body goes back to where the owner's own
+/// last command left it and runs them, every one, in the tick they arrive.
+/// The owner's prediction was made from those commands and nothing else, so
+/// it is then exactly right: a late packet costs them nothing on their own
+/// screen. Running the late ones on top of the guess, as this did once, put
+/// the body a step ahead of the owner for every tick guessed and left the
+/// queue that much deeper for good - after one stall on a lossy link, a
+/// correction on most snapshots and an eighth of a second of lag for the
+/// rest of the match.
+///
+/// Half a second covers a lost packet on a TCP link - the retransmission
+/// timer, a round trip, and a frame that hitched while it waited - on any
+/// connection worth playing on: three eighths of a second did not, measured
+/// with `client/lag.mjs`. A guess older than this stands, and the commands it
+/// stood in for are dropped as history.
+const GUESS_WINDOW_TICKS: u32 = 32;
 
 /// One second of authoritative states, which is what lag compensation rewinds
 /// through.
@@ -377,7 +410,9 @@ struct Body {
     /// come. Nobody can take it off them by killing them.
     winnings_micro_usd: i64,
     state: PlayerState,
-    pending: VecDeque<InputCommand>,
+    /// Commands waiting to be run, each with the tick it arrived on - how
+    /// long it waited is part of how far its shot is rewound.
+    pending: VecDeque<(InputCommand, u32)>,
     /// Last command actually consumed by the simulation. Sent back to the
     /// client so it knows what to re-predict from.
     last_applied_seq: u32,
@@ -386,8 +421,9 @@ struct Body {
     last_input: InputCommand,
     /// Game time of the last shot, for enforcing the fire rate.
     last_fire_at: f32,
-    /// Consecutive ticks with no input to run. See [`MAX_CARRY_FORWARD_TICKS`].
-    starved_ticks: u32,
+    /// The body is being moved on a guess while its owner's commands are
+    /// late. See [`GUESS_WINDOW_TICKS`].
+    guess: Option<Guess>,
     /// Recent authoritative states, newest last, for lag compensation.
     history: VecDeque<(u32, PlayerState)>,
     /// False once their stake has left escrow, however it left.
@@ -425,7 +461,7 @@ impl Body {
             last_applied_seq: 0,
             last_input: idle_input(state),
             last_fire_at: f32::NEG_INFINITY,
-            starved_ticks: 0,
+            guess: None,
             history: VecDeque::with_capacity(HISTORY_TICKS),
             staked: true,
             ammo: MAGAZINE,
@@ -438,6 +474,168 @@ impl Body {
             regen_carry: 0.0,
             last_reaction: None,
         }
+    }
+
+    /// The state to tell this body's owner they are in.
+    ///
+    /// While a guess stands in for commands still on their way, that is where
+    /// the owner's own last command left them, not where the guess has taken
+    /// them: their client replays everything it sent since that command, and
+    /// replaying it on top of the guess would count the guessed ticks twice.
+    /// Health is as it is now - a guessed body takes real damage.
+    fn reported_state(&self) -> PlayerState {
+        match self.guess {
+            Some(guess) if guess.ticks <= GUESS_WINDOW_TICKS => PlayerState {
+                health: self.state.health,
+                ..guess.from
+            },
+            _ => self.state,
+        }
+    }
+
+    /// This tick's commands for this body.
+    ///
+    /// Normally one: the next in line. When none has arrived, a guess - the
+    /// last one again - so the body carries on for everybody watching. When
+    /// commands arrive behind a guess, the guess is undone and every one of
+    /// them is run now: one for each tick guessed and one for this. See
+    /// [`GUESS_WINDOW_TICKS`]. That is never more commands than ticks: each
+    /// tick runs one, or guesses and owes one, so no client can make a body
+    /// move faster by holding its commands back and sending them together.
+    #[allow(clippy::too_many_arguments)]
+    fn advance(
+        &mut self,
+        id: PlayerId,
+        tick: u32,
+        frozen: bool,
+        now: f32,
+        ground: &map::Map,
+        shots: &mut Vec<Shot>,
+        throws: &mut Vec<(PlayerId, PlayerState)>,
+    ) {
+        if self.pending.is_empty() {
+            self.guess_on(ground);
+            return;
+        }
+        let mut owed = 1;
+        match self.guess {
+            Some(guess) if guess.ticks <= GUESS_WINDOW_TICKS => {
+                owed += guess.ticks as usize;
+                self.end_guess();
+            }
+            Some(guess) => {
+                self.guess = None;
+                // Gone too long to make good. The guess stands, and only the
+                // newest command is run on it: the rest were for ticks long
+                // gone, and running them one a tick would only be lag.
+                tracing::debug!(player = %id, ticks = guess.ticks, waiting = self.pending.len(), "guess too old to put right");
+                while self.pending.len() > 1 {
+                    self.pending.pop_front();
+                }
+            }
+            None => {
+                if self.pending.len() > BACKLOG_LIMIT {
+                    tracing::debug!(player = %id, waiting = self.pending.len(), "backlog dropped");
+                }
+                while self.pending.len() > BACKLOG_LIMIT {
+                    self.pending.pop_front();
+                }
+            }
+        }
+        let run = owed.min(self.pending.len());
+        for _ in 0..run {
+            let Some((command, arrived)) = self.pending.pop_front() else {
+                break;
+            };
+            let waited = tick.wrapping_sub(arrived);
+            self.run_command(id, command, waited, frozen, now, ground, shots, throws);
+        }
+        // Still short of this tick: guess the rest from here.
+        for _ in run..owed {
+            self.guess_on(ground);
+        }
+    }
+
+    /// Ends a guess. Within the window the body goes back to where its
+    /// owner's own last command left it - its position, motion, aim and
+    /// crouch, not its health, because a guessed body takes real damage.
+    /// Past the window the guess stands.
+    fn end_guess(&mut self) {
+        if let Some(guess) = self.guess.take()
+            && guess.ticks <= GUESS_WINDOW_TICKS
+        {
+            self.state = PlayerState {
+                health: self.state.health,
+                ..guess.from
+            };
+            self.previous_buttons = guess.buttons;
+        }
+    }
+
+    /// One of the owner's commands, exactly as their client predicted it.
+    #[allow(clippy::too_many_arguments)]
+    fn run_command(
+        &mut self,
+        id: PlayerId,
+        mut command: InputCommand,
+        waited: u32,
+        frozen: bool,
+        now: f32,
+        ground: &map::Map,
+        shots: &mut Vec<Shot>,
+        throws: &mut Vec<(PlayerId, PlayerState)>,
+    ) {
+        if frozen {
+            command.forward = 0.0;
+            command.right = 0.0;
+            command.buttons = Buttons::empty();
+        }
+        self.last_applied_seq = command.seq;
+        self.last_input = command;
+        solatel_protocol::sim::step_tick(&mut self.state, &command, ground);
+        if command.buttons.fire() {
+            // From where this command left them: when several are run in one
+            // tick, each shot leaves from its own place.
+            shots.push(Shot {
+                shooter: id,
+                command,
+                origin: self.state.eye_position(),
+                waited,
+            });
+        }
+        // A throw is the press, not the holding of it.
+        if command.buttons.throw() && !self.previous_buttons.throw() && self.grenades > 0 {
+            throws.push((id, self.state));
+        }
+        if command.buttons.reload() && self.reload_until.is_none() && self.ammo < MAGAZINE {
+            self.reload_until = Some(now + RELOAD_SECONDS);
+        }
+        self.previous_buttons = command.buttons;
+    }
+
+    /// One tick on a guess: the last command again, but never anything it
+    /// fired, threw or reloaded - a late packet must not fire the gun - and
+    /// without its movement once the silence looks less like a late packet
+    /// than a client that has gone.
+    fn guess_on(&mut self, ground: &map::Map) {
+        let guess = self.guess.get_or_insert(Guess {
+            from: self.state,
+            buttons: self.previous_buttons,
+            ticks: 0,
+        });
+        guess.ticks = guess.ticks.saturating_add(1);
+        let mut carried = self.last_input;
+        // A crouch is a posture, not an action: it is held, and a late
+        // packet should not stand anybody up.
+        let crouched = carried.buttons.crouch();
+        carried.buttons = Buttons::empty();
+        carried.buttons.set(Buttons::CROUCH, crouched);
+        if guess.ticks > MAX_CARRY_FORWARD_TICKS {
+            carried.forward = 0.0;
+            carried.right = 0.0;
+        }
+        solatel_protocol::sim::step_tick(&mut self.state, &carried, ground);
+        self.previous_buttons = carried.buttons;
     }
 
     /// The state this body was in `rewind_ms` ago, as best the server
@@ -455,6 +653,28 @@ impl Body {
             .map(|(_, state)| *state)
             .unwrap_or(self.state)
     }
+}
+
+/// A body moved on a guess while its owner's commands are late: where their
+/// own last command left it, and how many ticks have been guessed since.
+#[derive(Clone, Copy, Debug)]
+struct Guess {
+    from: PlayerState,
+    /// The buttons that command held, so a throw held across the gap is the
+    /// same throw and not a second one.
+    buttons: Buttons,
+    ticks: u32,
+}
+
+/// A trigger pull to resolve once everybody has moved this tick.
+#[derive(Clone, Copy, Debug)]
+struct Shot {
+    shooter: PlayerId,
+    command: InputCommand,
+    /// The shooter's eyes as this command left them.
+    origin: solatel_protocol::glam::Vec3,
+    /// Ticks the command waited on the server, counting the one it ran on.
+    waited: u32,
 }
 
 /// One match: a map, a stake, a clock, and the bodies playing it.
@@ -1151,7 +1371,9 @@ impl Lobby {
                     {
                         body.pending.clear();
                         body.last_applied_seq = 0;
-                        body.starved_ticks = 0;
+                        // The new connection starts from the next snapshot,
+                        // with the body where the old one's commands left it.
+                        body.end_guess();
                     }
 
                     let _ = reply.send(JoinOutcome {
@@ -1246,8 +1468,10 @@ impl Lobby {
                     // quarter of a second later; this stops them on the next
                     // tick, which is the difference between a body standing
                     // where it was and one that walked off a roof after its
-                    // owner had gone.
+                    // owner had gone - and a guess carrying them on since
+                    // their last command is taken back for the same reason.
                     body.pending.clear();
+                    body.end_guess();
                     body.last_input.forward = 0.0;
                     body.last_input.right = 0.0;
                     body.last_input.buttons = solatel_protocol::sim::Buttons::empty();
@@ -1277,6 +1501,7 @@ impl Lobby {
                     // apply it to.
                     return;
                 };
+                let tick = self.tick;
                 let Some(body) = self
                     .matches
                     .get_mut(&match_id)
@@ -1291,14 +1516,18 @@ impl Lobby {
                     if command.seq <= body.last_applied_seq {
                         continue;
                     }
-                    if body.pending.iter().any(|queued| queued.seq == command.seq) {
+                    if body
+                        .pending
+                        .iter()
+                        .any(|(queued, _)| queued.seq == command.seq)
+                    {
                         continue;
                     }
-                    body.pending.push_back(command.sanitized());
+                    body.pending.push_back((command.sanitized(), tick));
                 }
 
                 // Keep the queue ordered even if packets arrived out of order.
-                body.pending.make_contiguous().sort_by_key(|c| c.seq);
+                body.pending.make_contiguous().sort_by_key(|(c, _)| c.seq);
 
                 while body.pending.len() > MAX_QUEUED_INPUTS {
                     body.pending.pop_front();
@@ -1646,9 +1875,9 @@ impl Lobby {
         let frozen = game.warming_up(self.tick);
         let ground = game.map;
         let ids: Vec<PlayerId> = game.bodies.keys().copied().collect();
-        let mut shots: Vec<(PlayerId, InputCommand)> = Vec::new();
+        let mut shots: Vec<Shot> = Vec::new();
         let mut fell: Vec<(PlayerId, DeathCause)> = Vec::new();
-        let mut throws: Vec<PlayerId> = Vec::new();
+        let mut throws: Vec<(PlayerId, PlayerState)> = Vec::new();
         let tick = self.tick;
 
         {
@@ -1664,60 +1893,7 @@ impl Lobby {
                     continue;
                 }
 
-                // Exactly one command per tick. See [`MAX_QUEUED_INPUTS`] for
-                // why there is no catch-up path here, however tempting one
-                // looks.
-                match body.pending.pop_front() {
-                    Some(mut command) => {
-                        if frozen {
-                            command.forward = 0.0;
-                            command.right = 0.0;
-                            command.buttons = Buttons::empty();
-                        }
-                        body.starved_ticks = 0;
-                        body.last_applied_seq = command.seq;
-                        body.last_input = command;
-                        solatel_protocol::sim::step_tick(&mut body.state, &command, ground);
-                        if command.buttons.fire() {
-                            shots.push((*id, command));
-                        }
-                        // A throw is the press, not the holding of it.
-                        if command.buttons.throw()
-                            && !body.previous_buttons.throw()
-                            && body.grenades > 0
-                        {
-                            throws.push(*id);
-                        }
-                        if command.buttons.reload()
-                            && body.reload_until.is_none()
-                            && body.ammo < MAGAZINE
-                        {
-                            body.reload_until = Some(now + RELOAD_SECONDS);
-                        }
-                        body.previous_buttons = command.buttons;
-                    }
-                    None => {
-                        body.starved_ticks = body.starved_ticks.saturating_add(1);
-
-                        // Carry their motion forward briefly, but never repeat
-                        // one-shot actions - a dropped packet must not fire
-                        // the gun again - and give up entirely once the
-                        // silence stops looking like packet loss and starts
-                        // looking like a client that has gone away.
-                        let mut carried = body.last_input;
-                        // A crouch is a posture, not an action: it is held,
-                        // and dropping a packet should not stand anybody up.
-                        let crouched = carried.buttons.crouch();
-                        carried.buttons = Buttons::empty();
-                        carried.buttons.set(Buttons::CROUCH, crouched);
-                        if body.starved_ticks > MAX_CARRY_FORWARD_TICKS {
-                            carried.forward = 0.0;
-                            carried.right = 0.0;
-                        }
-                        solatel_protocol::sim::step_tick(&mut body.state, &carried, ground);
-                        body.previous_buttons = carried.buttons;
-                    }
-                }
+                body.advance(*id, tick, frozen, now, ground, &mut shots, &mut throws);
 
                 if let Some(done) = body.reload_until
                     && now >= done
@@ -1787,15 +1963,15 @@ impl Lobby {
         for (victim, cause) in fell {
             self.die_unshot(match_id, victim, cause, now);
         }
-        for thrower in throws {
-            self.throw(match_id, thrower, now);
+        for (thrower, from) in throws {
+            self.throw(match_id, thrower, from, now);
         }
         self.step_grenades(match_id, now);
 
         // Shots are resolved after everyone has moved, so all players are at
         // the same point in time.
-        for (shooter_id, command) in shots {
-            self.resolve_shot(match_id, shooter_id, command, now);
+        for shot in shots {
+            self.resolve_shot(match_id, shot, now);
         }
 
         // The clock, and the last player standing.
@@ -1897,8 +2073,9 @@ impl Lobby {
         self.eliminate(match_id, victim);
     }
 
-    /// A grenade out of a player's hand.
-    fn throw(&mut self, match_id: MatchId, thrower: PlayerId, now: f32) {
+    /// A grenade out of a player's hand, thrown from `from`: where the
+    /// command that threw it left them.
+    fn throw(&mut self, match_id: MatchId, thrower: PlayerId, from: PlayerState, now: f32) {
         let Some(game) = self.matches.get_mut(&match_id) else {
             return;
         };
@@ -1909,7 +2086,7 @@ impl Lobby {
             return;
         }
         body.grenades -= 1;
-        let flight = grenade::Flight::thrown_by(&body.state);
+        let flight = grenade::Flight::thrown_by(&from);
         game.next_grenade = game.next_grenade.wrapping_add(1);
         let id = game.next_grenade;
         game.grenades.push(LiveGrenade {
@@ -2012,13 +2189,13 @@ impl Lobby {
         }
     }
 
-    fn resolve_shot(
-        &mut self,
-        match_id: MatchId,
-        shooter_id: PlayerId,
-        command: InputCommand,
-        now: f32,
-    ) {
+    fn resolve_shot(&mut self, match_id: MatchId, shot: Shot, now: f32) {
+        let Shot {
+            shooter: shooter_id,
+            command,
+            origin,
+            waited,
+        } = shot;
         let Some(game) = self.matches.get(&match_id) else {
             return;
         };
@@ -2050,7 +2227,6 @@ impl Lobby {
             return;
         }
 
-        let origin = shooter.state.eye_position();
         // The look direction comes from the input command, not from the
         // shooter's stored state, so the shot matches the frame they fired on.
         let direction = solatel_protocol::sim::look_direction(command.yaw, command.pitch);
@@ -2064,15 +2240,22 @@ impl Lobby {
                 > crate::records::SNAP_DEGREES.to_radians()
         };
 
-        // Rewind everyone else to what this shooter could see: half a round
-        // trip for the snapshot to reach them, plus the interpolation buffer
-        // they render behind by.
+        // Rewind everyone else to what this shooter could see when they
+        // pulled the trigger. That is older than now by the whole round trip -
+        // the snapshot they were looking at took half of it to reach them,
+        // and the command took the other half to come back - plus however
+        // long the command then waited here, plus the interpolation buffer
+        // they render behind by. It used to be half the round trip and no
+        // wait, which judged every shot against where its target was a few
+        // tens of milliseconds after the shooter last saw it: a running
+        // target a third of a metre on, and a shot at an edge a miss.
         let rtt_ms = self
             .connections
             .get(&shooter_id)
             .map(|c| c.rtt_ms)
             .unwrap_or(0.0);
-        let rewind_ms = (rtt_ms * 0.5 + INTERPOLATION_DELAY_MS).clamp(0.0, MAX_LAG_COMPENSATION_MS);
+        let rewind_ms = (rtt_ms + waited_ms(waited) + INTERPOLATION_DELAY_MS)
+            .clamp(0.0, MAX_LAG_COMPENSATION_MS);
 
         let tick = self.tick;
         let rewound: Vec<(PlayerId, PlayerState)> = game
@@ -2488,7 +2671,16 @@ impl Lobby {
                 continue;
             }
             // Each client gets its own acknowledgement, so the payload differs
-            // per recipient and cannot be a single shared broadcast.
+            // per recipient and cannot be a single shared broadcast. So does
+            // their own entry while a guess stands in for their late commands:
+            // everybody else sees the guess, and its owner where their own
+            // commands left them.
+            let mut players = players.clone();
+            if body.guess.is_some()
+                && let Some(mine) = players.iter_mut().find(|p| p.id == *id)
+            {
+                mine.state = body.reported_state();
+            }
             connection.send(ServerMsg::Snapshot {
                 match_id,
                 tick: self.tick,
@@ -2497,7 +2689,7 @@ impl Lobby {
                 pool_micro_usd: pool,
                 zone_radius: zone.radius,
                 match_remaining_ms: remaining_ms,
-                players: players.clone(),
+                players,
                 ammo: body.ammo,
                 reload_ms: body
                     .reload_until
@@ -2518,6 +2710,13 @@ fn tier_of(stakes: Stakes) -> Tier {
         entry_fee_micro_usd: stakes.entry().micros(),
         kill_reward_micro_usd: stakes.reward().micros(),
     }
+}
+
+/// How long a command waited on the server, from how many ticks it was
+/// there. It arrived somewhere in the tick before the first, half a tick
+/// before it on average, and ran at the start of the last.
+fn waited_ms(ticks: u32) -> f32 {
+    (ticks as f32 - 0.5).max(0.0) * TICK_DT * 1000.0
 }
 
 fn idle_input(state: PlayerState) -> InputCommand {
@@ -2579,10 +2778,10 @@ pub fn spawn(
         lobby.floor = rules.floor.max(1);
         lobby.wait = rules.wait.max(0.0);
         lobby.warmup = rules.warmup.max(0.0);
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs_f32(TICK_DT));
-        // Falling behind must not be made up by replaying ticks back to back;
-        // for an authoritative server that would fast-forward the game.
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut clock = TickClock::new(
+            tokio::time::Instant::now(),
+            std::time::Duration::from_secs_f32(TICK_DT),
+        );
 
         loop {
             tokio::select! {
@@ -2594,12 +2793,56 @@ pub fn spawn(
                         lobby.handle(next);
                     }
                 }
-                _ = ticker.tick() => {
+                () = tokio::time::sleep_until(clock.due()) => {
                     lobby.step();
+                    clock.advance(tokio::time::Instant::now());
                 }
             }
         }
     });
+}
+
+/// How late a tick may be and still be made up, by running the next straight
+/// after it.
+///
+/// Every client makes a command each tick of its own clock, which keeps the
+/// wall's time, so a server whose ticks fall behind the wall takes commands
+/// slower than they come: its queues grow, and every command dropped from one
+/// is a correction on somebody's screen. tokio's `Delay` moved the whole
+/// schedule on by every tick more than five milliseconds late, and on a busy
+/// host that came to a third of a percent - a command every five seconds,
+/// for every player. Made up, the ticks keep the wall's time. Lateness past
+/// this - a paused container, a host that slept - is not made up: the clock
+/// starts again from then, because running a stall's worth of ticks back to
+/// back would fast-forward the match.
+const MAX_CATCH_UP: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// When the next tick is due: one period after the last was due, not after
+/// it ran, so lateness is made up - see [`MAX_CATCH_UP`].
+struct TickClock {
+    period: std::time::Duration,
+    next: tokio::time::Instant,
+}
+
+impl TickClock {
+    fn new(now: tokio::time::Instant, period: std::time::Duration) -> Self {
+        Self {
+            period,
+            next: now + period,
+        }
+    }
+
+    fn due(&self) -> tokio::time::Instant {
+        self.next
+    }
+
+    /// The tick that was due has run, and it is now `now`.
+    fn advance(&mut self, now: tokio::time::Instant) {
+        self.next += self.period;
+        if now > self.next + MAX_CATCH_UP {
+            self.next = now + self.period;
+        }
+    }
 }
 
 // In its own file because it is long, and a child module because it reaches

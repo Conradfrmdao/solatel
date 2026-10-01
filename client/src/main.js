@@ -30,7 +30,7 @@ import { Audio } from './audio.js';
 import { Link, noteReferral, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
-import { BRUSHES, SIM, SPAWNS, loadSim, selectMap } from './sim.js';
+import { BRUSHES, SIM, SPAWNS, loadSim, selectMap, spawnFacing } from './sim.js';
 import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
@@ -93,13 +93,27 @@ function storedFov() {
 /**
  * Never advance more than this many simulation ticks in one frame.
  *
- * A backgrounded tab stops rendering, and when it comes back the elapsed time
- * would otherwise be replayed as hundreds of ticks in one frame - a spike that
- * freezes the page and sends a burst of input the server will refuse anyway,
- * since it consumes exactly one command per tick. Dropping the backlog is the
- * honest response: that time was not played.
+ * A long frame leaves ticks owed, and running them all at once would make
+ * the next frame long too. A few a frame makes them up without that.
  */
 const MAX_TICKS_PER_FRAME = 5;
+
+/** Scratch for drawing a shot from where its shooter is drawn. */
+const _muzzle = new THREE.Vector3();
+const _from = new THREE.Vector3();
+
+/**
+ * How much time the fixed step may owe and still make up, in ticks.
+ *
+ * Well under the server's `GUESS_WINDOW_TICKS`, the longest it waits for a
+ * late command and puts its guess right: a frame that hitched for a fifth of
+ * a second sends that fifth of a second's commands late, and nothing on the
+ * screen jumps. Owing more - a tab that was in the background - the time is
+ * let go: it was not played, and the server has stopped waiting for it.
+ * The frame's own time is capped at a quarter of a second besides, so a tab
+ * coming back never asks for hundreds of ticks at once.
+ */
+const CATCH_UP_TICKS = 20;
 
 async function boot() {
   const canvas = document.getElementById('solatel-canvas');
@@ -331,10 +345,6 @@ async function boot() {
     camera.far = Math.hypot(SIM.arenaHalfX, SIM.arenaHalfZ) * 2.2;
     camera.updateProjectionMatrix();
 
-    // Start looking the way a spawn faces, so the opening frame is open
-    // ground rather than a wall. Only the camera: where the player actually
-    // is is the server's answer, and it arrives a moment later.
-    if (SPAWNS.length >= 4) input.yaw = SPAWNS[3];
     document.body.classList.add('running');
   }
 
@@ -495,9 +505,18 @@ async function boot() {
     for (const message of link.drain()) {
       local.handle(message, dt);
       if (message.t === 'snapshot') {
-        remotes.record(message, now);
+        // A straggler from a match this player has left is nothing to draw.
+        if (message.match_id === local.matchId) remotes.record(message, now);
       } else if (message.t === 'shot_fired') {
-        world.addTracer(message.from, message.to, message.hit_player);
+        // Somebody else's tracer leaves the rifle as it is drawn; see
+        // `muzzleOf`. Within a couple of metres of the server's `from`, or
+        // something is wrong with the drawing and the server's is used.
+        const muzzle = message.shooter === local.id ? null : remotes.muzzleOf(message.shooter, _muzzle);
+        const from =
+          muzzle && muzzle.distanceTo(_from.fromArray(message.from)) < 2.5
+            ? [muzzle.x, muzzle.y, muzzle.z]
+            : message.from;
+        world.addTracer(from, message.to, message.hit_player);
         // Where it landed, as the server says: dust off a wall, a mist off
         // a player. Drawn for every shot, the player's own included, from
         // the server's account rather than this client's prediction.
@@ -585,7 +604,12 @@ async function boot() {
       accumulator -= tickDt;
       ticks += 1;
     }
-    if (accumulator > tickDt * MAX_TICKS_PER_FRAME) accumulator = 0;
+    // Behind by more than the server will wait for: the time is let go.
+    // Short of that it is made up over the next few frames, so a long frame
+    // costs nothing - the server has been guessing in the meantime and
+    // re-runs the commands when they come - where letting it go left this
+    // player's commands behind the server's clock for good.
+    if (accumulator > tickDt * CATCH_UP_TICKS) accumulator = 0;
 
     // This player's own shots, the moment they leave the weapon.
     for (let shots = local.takePredictedShots(); shots > 0; shots -= 1) {
@@ -632,6 +656,20 @@ async function boot() {
       entering = enterMatch(local.mapName).finally(() => {
         entering = null;
       });
+    }
+    // Face the way this player's spawn does, once a snapshot has said which
+    // spawn that is: they are dealt out afresh every match, and each faces
+    // into the map. Before this the view was turned to the table's first
+    // spawn, which on a shuffled table is somebody else's, so a player
+    // could start the match looking at a wall. Only the view turns; the
+    // server hears it in the next command, as it would a turn of the mouse.
+    if (local.faceSpawn && local.seenSnapshot && local.matchId === enteredMatch) {
+      local.faceSpawn = false;
+      const yaw = spawnFacing(local.serverPosition);
+      if (yaw !== null) {
+        input.yaw = yaw;
+        input.pitch = 0;
+      }
     }
     // A life that has just ended is played out before the menu: see death.js.
     let dying = death.playing ? death.frame(now, deathPose) : null;
