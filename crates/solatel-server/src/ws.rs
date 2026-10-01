@@ -88,7 +88,13 @@ async fn run_session(
     // Who this is, before the lobby hears of them. A database round trip,
     // which is why it happens here in the connection's own task and not in
     // the lobby's loop, which must never wait on anything.
-    let signed_in = match crate::account::sign_in(&state.pool, hello.account.as_deref()).await {
+    let signed_in = match crate::account::sign_in(
+        &state.pool,
+        hello.account.as_deref(),
+        hello.referral.as_deref(),
+    )
+    .await
+    {
         Ok(signed_in) => signed_in,
         Err(err) => {
             reject(
@@ -164,6 +170,7 @@ async fn run_session(
                 .as_ref()
                 .map(|terms| Box::new(terms.offer(player_id))),
             solana_pubkey: signed_in.solana_pubkey,
+            invite_code: signed_in.invite_code,
         },
     )
     .await?;
@@ -443,6 +450,7 @@ struct Hello {
     name: String,
     resume: Option<ResumeToken>,
     account: Option<String>,
+    referral: Option<String>,
 }
 
 /// Reads and validates the opening message.
@@ -469,6 +477,7 @@ async fn read_hello(socket: &mut WebSocket, session_id: SessionId) -> Result<Hel
             name,
             resume,
             account,
+            referral,
         }) => {
             if protocol_version != PROTOCOL_VERSION {
                 let reason = format!(
@@ -491,6 +500,7 @@ async fn read_hello(socket: &mut WebSocket, session_id: SessionId) -> Result<Hel
                 name,
                 resume,
                 account,
+                referral,
             })
         }
         Ok(_) => {

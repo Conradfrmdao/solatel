@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 15;
+pub const PROTOCOL_VERSION: u16 = 16;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -110,6 +110,12 @@ pub enum ClientMsg {
         /// A key the server does not recognise costs nothing: it is a new
         /// account, and the `Welcome` carries the key for it.
         account: Option<String>,
+        /// The invite code this browser arrived with (`?ref=` in the link),
+        /// if any. Only ever acted on when this connection makes a new
+        /// account - an existing player cannot be re-attributed to somebody
+        /// else's invite - and an unknown code is ignored.
+        #[serde(default)]
+        referral: Option<String>,
     },
     /// Round-trip probe. `client_time_ms` is echoed back untouched so the
     /// client can measure RTT without the server needing clock sync. The server
@@ -384,6 +390,9 @@ pub enum ServerMsg {
         /// The Solana wallet this account is signed in with, if it has one.
         #[serde(default)]
         solana_pubkey: Option<String>,
+        /// This player's invite code, for the link they can hand out.
+        #[serde(default)]
+        invite_code: Option<String>,
     },
     Pong {
         seq: u32,

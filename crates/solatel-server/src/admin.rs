@@ -310,6 +310,9 @@ async fn player(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response
             'id', pl.id,
             'created_at', pl.created_at,
             'solana_pubkey', pl.solana_pubkey,
+            'invite_code', pl.referral_code,
+            'referred_by', pl.referred_by,
+            'invited', (SELECT count(*) FROM players i WHERE i.referred_by = pl.id),
             'balance_micro_usd', (SELECT b.balance_micro_usd
                                     FROM ledger_accounts a
                                     JOIN ledger_account_balances b ON b.account_id = a.id

@@ -27,7 +27,7 @@ import { setNatureDetail } from './nature.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
-import { Link, readAccountKey, writeAccountKey } from './net.js';
+import { Link, noteReferral, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
 import { BRUSHES, SIM, SPAWNS, loadSim, selectMap } from './sim.js';
@@ -164,6 +164,8 @@ async function boot() {
   // a match starts - see `enterMatch` below - and until then there is no world
   // to draw.
   say('connecting…');
+  // Somebody's invite link, kept for the account this browser is about to make.
+  noteReferral();
   const link = new Link(CLIENT_BUILD, storedName());
   await link.firstWelcome;
 
@@ -284,7 +286,7 @@ async function boot() {
       window.location.reload();
     },
   });
-  menu.setPlayer(link.playerId);
+  menu.setPlayer(link.playerId, link.inviteCode);
   menu.setWallet(link.wallet);
   menu.setSolana(link.solanaPubkey);
   if (link.accountReplaced) {
@@ -517,7 +519,7 @@ async function boot() {
       } else if (message.t === 'welcome') {
         // A reconnection. The server may have restarted with a different
         // wallet, and a new account may have been made.
-        menu.setPlayer(link.playerId);
+        menu.setPlayer(link.playerId, link.inviteCode);
         menu.setWallet(link.wallet);
         menu.setSolana(link.solanaPubkey);
       } else if (message.t === 'wallet_challenge') {

@@ -459,6 +459,23 @@ goes with it. So an account can carry a Solana wallet (protocol 14, migration
   `standard:connect` and `solana:signMessage` on a Solana chain is offered.
   No wallet library, and no key ever in the page.
 
+### Invites
+
+Protocol 16, migration 0012. Every account has an invite code - seven
+characters of base58, unique - and the profile pane shows the link,
+`/?ref=<code>`. A browser with no account that arrives on one keeps the code
+(and takes it off the address bar), sends it in its `Hello`, and the server
+records the inviter **in the same statement that makes the account**: an
+existing player can never be re-attributed, an unknown code is no code, and
+the database refuses an account inviting itself. The admin player view shows
+the code, the inviter and how many were invited.
+
+**Nothing is paid for an invite.** What one is worth is Conrad's decision.
+When it is made, the reward belongs on the invited player's real-money
+activity - a first deposit, a first paid match - never on the sign-up,
+because an account costs nothing to make and a reward for making one is a
+reward for making a thousand.
+
 `client/menu.mjs` checks the account in a real browser: a closed tab comes
 back as the same player, and a second tab takes over while the first stays
 put. Wallet sign-in was checked the same way with a Wallet Standard wallet
@@ -548,7 +565,7 @@ cover is returned with a reason.
 
 Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
 Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms;
-protocol 14 adds wallet sign-in (see *Accounts*) and 15 USDC. The
+protocol 14 adds wallet sign-in (see *Accounts*), 15 USDC and 16 invites. The
 menu's wallet pane states the rate and shows what the server says it is
 sending; it never converts an amount itself. `/health` has a `wallet` block -
 the treasury against what is owed - which is an operator's number, not a

@@ -54,6 +54,8 @@ pub struct SignedIn {
     pub new_key: Option<String>,
     /// The wallet this account is signed in with, if it has one.
     pub solana_pubkey: Option<String>,
+    /// The code this player hands out to invite people.
+    pub invite_code: Option<String>,
 }
 
 /// The stored form of a key.
@@ -69,20 +71,51 @@ fn mint() -> Result<String> {
     Ok(bs58::encode(bytes).into_string())
 }
 
+/// A fresh invite code: seven characters of base58 from forty random bits.
+/// Short enough to say out loud; unique because the database says so.
+fn invite() -> Result<String> {
+    let mut bytes = [0u8; 5];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|err| anyhow::anyhow!("no randomness to make an invite code from: {err}"))?;
+    Ok(bs58::encode(bytes).into_string())
+}
+
+/// An invite code as somebody typed or pasted it, or nothing: base58 only,
+/// and no longer than a code can be.
+fn clean_code(code: &str) -> Option<&str> {
+    let code = code.trim();
+    let ok = !code.is_empty()
+        && code.len() <= 12
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() && !matches!(b, b'0' | b'O' | b'I' | b'l'));
+    ok.then_some(code)
+}
+
 /// The player behind a key, or a new player if there is none.
+///
+/// A new player arriving with somebody's invite code is recorded as theirs.
+/// Only a new one: the referrer is set in the same statement that makes the
+/// account, so nothing can attribute an existing player to an invite after
+/// the fact. Nothing is paid for it - what an invite is worth is not
+/// decided yet - and an unknown code is no code.
 ///
 /// A key that is missing, malformed or unknown is not an error: it is a new
 /// account. That is what lets a client always send whatever it has - after a
 /// database reset, every key in every browser is unknown, and the answer to
 /// that must be "here is a new one" rather than a connection that cannot get
 /// in.
-pub async fn sign_in(pool: &PgPool, presented: Option<&str>) -> Result<SignedIn> {
+pub async fn sign_in(
+    pool: &PgPool,
+    presented: Option<&str>,
+    referral: Option<&str>,
+) -> Result<SignedIn> {
     if let Some(key) = presented.filter(|k| !k.trim().is_empty()) {
         // The key the account was made with, or one a wallet sign-in made.
-        let known: Option<(Uuid, Option<String>)> = sqlx::query_as(
-            "SELECT id, solana_pubkey FROM players WHERE account_key_hash = $1
+        let known: Option<(Uuid, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT id, solana_pubkey, referral_code FROM players WHERE account_key_hash = $1
              UNION ALL
-             SELECT p.id, p.solana_pubkey
+             SELECT p.id, p.solana_pubkey, p.referral_code
                FROM account_keys k JOIN players p ON p.id = k.player_id
               WHERE k.key_hash = $1
              LIMIT 1",
@@ -91,11 +124,19 @@ pub async fn sign_in(pool: &PgPool, presented: Option<&str>) -> Result<SignedIn>
         .fetch_optional(pool)
         .await
         .context("looking up an account key")?;
-        if let Some((id, solana_pubkey)) = known {
+        if let Some((id, solana_pubkey, code)) = known {
+            let player_id = PlayerId::from(id);
+            // Accounts from before invites had none; they get one the first
+            // time they are seen.
+            let invite_code = match code {
+                Some(code) => Some(code),
+                None => give_invite_code(pool, player_id).await.ok(),
+            };
             return Ok(SignedIn {
-                player_id: PlayerId::from(id),
+                player_id,
                 new_key: None,
                 solana_pubkey,
+                invite_code,
             });
         }
         tracing::info!("an account key nobody recognises; making a new account");
@@ -103,18 +144,52 @@ pub async fn sign_in(pool: &PgPool, presented: Option<&str>) -> Result<SignedIn>
 
     let key = mint()?;
     let player_id = PlayerId::new();
-    sqlx::query("INSERT INTO players (id, account_key_hash) VALUES ($1, $2)")
+    let referral = referral.and_then(clean_code);
+    // Two attempts: an invite code colliding with one already given out is a
+    // one in a trillion event per account, and the database catches it.
+    let mut last_err = None;
+    for _ in 0..2 {
+        let code = invite()?;
+        let made = sqlx::query_scalar::<_, Option<Uuid>>(
+            "INSERT INTO players (id, account_key_hash, referral_code, referred_by)
+             VALUES ($1, $2, $3, (SELECT id FROM players WHERE referral_code = $4))
+             RETURNING referred_by",
+        )
         .bind(player_id.as_uuid())
         .bind(hash(&key))
-        .execute(pool)
-        .await
-        .context("making an account")?;
-    tracing::info!(%player_id, "account made");
-    Ok(SignedIn {
-        player_id,
-        new_key: Some(key),
-        solana_pubkey: None,
-    })
+        .bind(&code)
+        .bind(referral)
+        .fetch_one(pool)
+        .await;
+        match made {
+            Ok(referred_by) => {
+                tracing::info!(%player_id, invited = referred_by.is_some(), "account made");
+                return Ok(SignedIn {
+                    player_id,
+                    new_key: Some(key),
+                    solana_pubkey: None,
+                    invite_code: Some(code),
+                });
+            }
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.expect("two attempts were made")).context("making an account")
+}
+
+/// Gives an account that has no invite code one.
+async fn give_invite_code(pool: &PgPool, player_id: PlayerId) -> Result<String> {
+    let code = invite()?;
+    let given: Option<String> = sqlx::query_scalar(
+        "UPDATE players SET referral_code = coalesce(referral_code, $2)
+          WHERE id = $1 RETURNING referral_code",
+    )
+    .bind(player_id.as_uuid())
+    .bind(&code)
+    .fetch_optional(pool)
+    .await
+    .context("giving an account its invite code")?;
+    given.context("no such account")
 }
 
 // ---- signing in with a wallet ----------------------------------------------
@@ -360,6 +435,75 @@ mod tests {
     /// Ignored by default because it needs a database. Run it with
     /// `DATABASE_URL=... cargo test -p solatel-server -- --ignored wallet`.
     /// It makes players and wallets of its own.
+    #[test]
+    fn an_invite_code_is_cleaned_or_refused() {
+        assert_eq!(clean_code("  Ab3xYz9 "), Some("Ab3xYz9"));
+        assert_eq!(clean_code(""), None);
+        assert_eq!(clean_code("'; DROP TABLE players; --"), None);
+        assert_eq!(clean_code("0OIl"), None, "not base58");
+        assert_eq!(clean_code(&"a".repeat(40)), None);
+    }
+
+    /// Against a real Postgres: an invited account records who invited it,
+    /// and nothing else can be attributed - not an unknown code, not an
+    /// account that already exists. Accounts from before invites get a code
+    /// the first time they are seen.
+    #[tokio::test]
+    #[ignore = "needs a Postgres at DATABASE_URL"]
+    async fn an_invite_is_recorded_on_a_new_account_and_nowhere_else() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = crate::db::connect(&url).await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let referrer_of = |player: PlayerId| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<Uuid>>(
+                    "SELECT referred_by FROM players WHERE id = $1",
+                )
+                .bind(player.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        let host = sign_in(&pool, None, None).await.unwrap();
+        let code = host.invite_code.clone().expect("a new account has a code");
+
+        let invited = sign_in(&pool, None, Some(&code)).await.unwrap();
+        assert_eq!(
+            referrer_of(invited.player_id).await,
+            Some(host.player_id.as_uuid())
+        );
+        assert_ne!(
+            invited.invite_code, host.invite_code,
+            "codes are each account's own"
+        );
+
+        let stranger = sign_in(&pool, None, Some("Zzzzzzz")).await.unwrap();
+        assert_eq!(
+            referrer_of(stranger.player_id).await,
+            None,
+            "an unknown code is no code"
+        );
+
+        // Coming back with somebody's code does not re-attribute an account.
+        let returning = sign_in(&pool, stranger.new_key.as_deref(), Some(&code))
+            .await
+            .unwrap();
+        assert_eq!(returning.player_id, stranger.player_id);
+        assert_eq!(referrer_of(stranger.player_id).await, None);
+
+        // An account from before invites gets one when it is next seen.
+        sqlx::query("UPDATE players SET referral_code = NULL WHERE id = $1")
+            .bind(host.player_id.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let again = sign_in(&pool, host.new_key.as_deref(), None).await.unwrap();
+        assert!(again.invite_code.is_some());
+    }
+
     #[tokio::test]
     #[ignore = "needs a Postgres at DATABASE_URL"]
     async fn a_wallet_signs_in_as_one_account_from_any_browser() {
@@ -374,7 +518,7 @@ mod tests {
         };
 
         // A browser's account, and a wallet nobody has: linked.
-        let first = sign_in(&pool, None).await.unwrap();
+        let first = sign_in(&pool, None, None).await.unwrap();
         let wallet = wallet_key(1);
         assert!(matches!(
             wallet_sign_in(&pool, first.player_id, &wallet)
@@ -390,13 +534,15 @@ mod tests {
             WalletOutcome::Linked
         ));
         // The account carries it when it signs in.
-        let back = sign_in(&pool, first.new_key.as_deref()).await.unwrap();
+        let back = sign_in(&pool, first.new_key.as_deref(), None)
+            .await
+            .unwrap();
         assert_eq!(back.solana_pubkey.as_deref(), Some(wallet.as_str()));
 
         // Another browser signs in with that wallet: it becomes the first
         // account, with a key of its own that works, and the first key
         // still works too.
-        let second = sign_in(&pool, None).await.unwrap();
+        let second = sign_in(&pool, None, None).await.unwrap();
         let WalletOutcome::SignedInAs { player_id, key } =
             wallet_sign_in(&pool, second.player_id, &wallet)
                 .await
@@ -406,11 +552,11 @@ mod tests {
         };
         assert_eq!(player_id, first.player_id);
         assert_eq!(
-            sign_in(&pool, Some(&key)).await.unwrap().player_id,
+            sign_in(&pool, Some(&key), None).await.unwrap().player_id,
             first.player_id
         );
         assert_eq!(
-            sign_in(&pool, first.new_key.as_deref())
+            sign_in(&pool, first.new_key.as_deref(), None)
                 .await
                 .unwrap()
                 .player_id,
@@ -426,7 +572,7 @@ mod tests {
         ));
 
         // A browser holding money and no wallet is not walked away from.
-        let holder = sign_in(&pool, None).await.unwrap();
+        let holder = sign_in(&pool, None, None).await.unwrap();
         let mut accounts = crate::ledger::test_accounts();
         crate::ledger::test_deposit(&pool, &mut accounts, holder.player_id, 2_000_000)
             .await
