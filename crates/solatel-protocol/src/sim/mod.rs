@@ -225,6 +225,12 @@ pub const MAX_NAME_LEN: usize = 16;
 ///   "bigred" rather than into the two words somebody typed.
 /// * Every other control character goes. They are not display, they are a way
 ///   to forge a second killfeed line or break a log.
+/// * So do the invisible formatting characters - the bidirectional overrides
+///   and isolates, and the zero-width ones. `is_control` does not count them,
+///   and they are worse: an override reverses the rest of the killfeed line
+///   it is printed in, so "A killed B" can be made to read the other way
+///   round, and a zero-width space makes a name that looks exactly like
+///   somebody else's and is not.
 /// * Length is counted in `char`s and cut on a `char` boundary, not in bytes.
 ///   Cutting UTF-8 mid-sequence produces a string Rust will not build and
 ///   serde will not send.
@@ -244,7 +250,7 @@ pub fn sanitise_name(requested: &str, fallback: &str) -> String {
             pending_space = !out.is_empty();
             continue;
         }
-        if ch.is_control() {
+        if ch.is_control() || is_invisible_format(ch) {
             continue;
         }
         if pending_space {
@@ -264,6 +270,24 @@ pub fn sanitise_name(requested: &str, fallback: &str) -> String {
     } else {
         out
     }
+}
+
+/// Characters that change how text around them is shown without showing
+/// anything themselves: bidirectional marks, embeddings, overrides and
+/// isolates; zero-width spaces and joiners; the word joiner and invisible
+/// operators; the soft hyphen; and the byte-order mark.
+fn is_invisible_format(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+    )
 }
 
 // --- The match, and the circle it is played in --------------------------
@@ -910,6 +934,19 @@ mod tests {
         // Bounded, and counted in characters.
         let long = sanitise_name(&"x".repeat(200), "fallback");
         assert_eq!(long.chars().count(), MAX_NAME_LEN);
+    }
+
+    #[test]
+    fn a_name_cannot_turn_text_round_or_hide_in_it() {
+        // An override reverses what is printed after it: in a killfeed line
+        // that is "A killed B" reading the other way round.
+        assert_eq!(sanitise_name("ab\u{202E}cd", "fallback"), "abcd");
+        assert_eq!(sanitise_name("\u{2067}x\u{2069}", "fallback"), "x");
+        // A zero-width space makes a name that looks like somebody else's.
+        assert_eq!(sanitise_name("Con\u{200B}rad", "fallback"), "Conrad");
+        assert_eq!(sanitise_name("\u{FEFF}\u{00AD}", "fallback"), "fallback");
+        // Ordinary accents and scripts are names, and stay.
+        assert_eq!(sanitise_name("Zoë مرحبا", "fallback"), "Zoë مرحبا");
     }
 
     #[test]

@@ -29,11 +29,19 @@
 //   * a withdrawal of a negative amount;
 //   * a message only the server sends - telling the server what our balance
 //     is - and coming back afterwards to see whether it listened;
-//   * a resume token nobody issued, to be somebody else.
+//   * a resume token nobody issued, to be somebody else;
+//   * signing in with a wallet that never signed anything: a proof with no
+//     challenge asked, a signature of random bytes, a real signature over
+//     different words, a good proof sent twice, and one account's proof
+//     replayed by another to take its wallet;
+//   * a table nobody runs - a $3 stake, a map that does not exist - and a
+//     name five hundred characters long full of control characters.
 //
 // And after all of that, an honest client must still be able to connect
 // and be answered promptly: a cheat that cannot win can still try to make
 // the game unplayable for everyone else.
+
+import nodeCrypto from 'node:crypto';
 
 const url = process.argv.slice(2).find((a) => a.startsWith('ws')) ?? 'ws://localhost:8080/ws';
 const health = url.replace(/^ws/, 'http').replace(/\/ws$/, '/health');
@@ -47,7 +55,36 @@ const JUMP = 1 << 0;
 const THROW = 1 << 4;
 const GRENADES_PER_LIFE = 2;
 
+const MAX_NAME_LEN = 16;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let out = '';
+  while (n > 0n) {
+    out = ALPHABET[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = `1${out}`;
+  }
+  return out;
+}
+
+/** A wallet: an ed25519 key, as a browser extension holds one. */
+function wallet() {
+  const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync('ed25519');
+  // The raw 32 bytes are the last 32 of the SPKI encoding.
+  const raw = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+  return {
+    address: base58(raw),
+    sign: (text) => base58(nodeCrypto.sign(null, Buffer.from(text, 'utf8'), privateKey)),
+  };
+}
 const results = [];
 function check(ok, what, detail = '') {
   results.push({ ok, what });
@@ -64,6 +101,22 @@ class Wire {
     this.matchStarts = 0;
     this.refusals = [];
     this.explosions = 0;
+    this.walletAnswers = [];
+  }
+
+  /** Sends a request and waits for the next wallet answer to it. */
+  async walletAnswer(msg) {
+    const before = this.walletAnswers.length;
+    this.send(msg);
+    for (let i = 0; i < 50 && this.walletAnswers.length === before; i += 1) await sleep(100);
+    return this.walletAnswers[before] ?? { ok: false, reason: '(no answer)' };
+  }
+
+  async askChallenge() {
+    this.challenge = null;
+    this.send({ t: 'wallet_challenge' });
+    for (let i = 0; i < 50 && !this.challenge; i += 1) await sleep(100);
+    return this.challenge;
   }
 
   async connect(hello = {}) {
@@ -122,6 +175,15 @@ class Wire {
         break;
       case 'withdrawal_refused':
         this.refusals.push(msg.reason);
+        break;
+      case 'wallet_challenge':
+        this.challenge = msg.message;
+        break;
+      case 'wallet_signed_in':
+        this.walletAnswers.push({ ok: true, ...msg });
+        break;
+      case 'wallet_refused':
+        this.walletAnswers.push({ ok: false, reason: msg.reason });
         break;
       default:
         break;
@@ -307,6 +369,74 @@ for (const [what, commands] of [
   await sleep(700);
   check(probe.closed, `${what}, and the connection ends`);
 }
+
+// ---- signing in with a wallet that never signed --------------------------------
+const signer = new Wire('Signer');
+await signer.connect();
+const key = wallet();
+
+let answer = await signer.walletAnswer({ t: 'wallet_proof', public_key: key.address, signature: key.sign('anything') });
+check(!answer.ok, 'a proof with no challenge asked signs nobody in', answer.reason);
+
+let challenge = await signer.askChallenge();
+const noise = base58(nodeCrypto.randomBytes(64));
+answer = await signer.walletAnswer({ t: 'wallet_proof', public_key: key.address, signature: noise });
+check(!answer.ok, 'a signature of random bytes signs nobody in', answer.reason);
+
+challenge = await signer.askChallenge();
+answer = await signer.walletAnswer({
+  t: 'wallet_proof', public_key: key.address, signature: key.sign(`${challenge}\nand credit me $1000`),
+});
+check(!answer.ok, 'a real signature over different words signs nobody in', answer.reason);
+
+challenge = await signer.askChallenge();
+const good = { t: 'wallet_proof', public_key: key.address, signature: key.sign(challenge) };
+answer = await signer.walletAnswer(good);
+check(
+  answer.ok && answer.player_id === signer.playerId && !answer.account_key,
+  'a real signature over the challenge links the wallet to the account that asked',
+  answer.reason ?? '',
+);
+answer = await signer.walletAnswer(good);
+check(!answer.ok, 'the same proof sent again is refused: a challenge is good once', answer.reason);
+
+// Another account replays the first one's proof, hoping to be signed in as
+// the wallet - which would hand it the first account's balance.
+const thief = new Wire('Thief');
+await thief.connect();
+await thief.askChallenge();
+answer = await thief.walletAnswer(good);
+check(
+  !answer.ok,
+  "another account replaying that proof is not signed in as the wallet's account",
+  answer.reason,
+);
+
+// ---- tables nobody runs, and a name nobody should have ---------------------------
+const fussy = new Wire('\u0000\u0007'.repeat(10) + 'x'.repeat(480) + '\u202e');
+await fussy.connect();
+const name = fussy.welcome.name;
+check(
+  [...name].length <= MAX_NAME_LEN && !/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(name),
+  'a name five hundred characters long full of control characters is cut down and cleaned',
+  JSON.stringify(name),
+);
+fussy.send({ t: 'queue', map: 'arena', tier_dollars: 3 });
+fussy.send({ t: 'queue', map: 'the-moon', tier_dollars: 1 });
+await sleep(2500);
+check(
+  fussy.matchStarts === 0 && !fussy.closed,
+  'a $3 table and a map that does not exist start nothing',
+);
+// And one short enough to keep, with an override in it that would print
+// every killfeed line it appears in backwards.
+const sly = new Wire('ab\u202ecd\u200b');
+await sly.connect();
+check(sly.welcome.name === 'abcd', 'an override and a zero-width space are taken out of a name', JSON.stringify(sly.welcome.name));
+sly.close();
+fussy.close();
+signer.close();
+thief.close();
 
 // ---- and everybody else can still play ----------------------------------------
 const honest = new Wire('Honest');
