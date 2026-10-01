@@ -119,12 +119,29 @@ speed, only that things draw. Ask Conrad for a test pass on his machine.
 
 ### 4. Waiting on Conrad (not to be done without him)
 
-The list in *Status, 2026-10-01* below: devnet end-to-end deposit and
+The list in *Status, 2026-10-01 (morning)* below: devnet end-to-end deposit and
 withdrawal, task 4 on Neon, hosting and Plisio, a multisig vault for cold
 storage, invite rewards, deploy refund policy, the movement playtest, the
 yard's licence in writing.
 
-## Status, 2026-10-01
+## Status, end of 1 October 2026
+
+The brief above was worked through in order, PRs #21 to #26: files cached
+for good and precompressed; photographs at 2k as KTX2, fetched while the
+line forms; baked light on every map and the sky's second sun gone;
+rubbish, damp and puddles; the yard repainted; and the netcode measured and
+fixed (`client/lag.mjs`). Each item above says what is done and what is
+still open. Before/after pictures of all three maps, from the same cameras,
+are in the report Conrad was sent.
+
+Still open, in rough order of value: Conrad's playtest and a frame-rate run
+on his GPU (`node client/perf.mjs --crowd 25`, free-play server); recoil,
+spread and sprint (his decision, server first); the yard rebuilt the way the
+facility was; the lamps' own light, contact shadows finer than a light
+cell, better water, edge wear, leaves under trees, LOD; reload and throw
+clips for the soldier (raw Mixamo files from Conrad, never committed).
+
+## Status, 2026-10-01 (morning)
 
 Everything below this section is the record of earlier sessions. Since then,
 merged to `main` through PR #19:
