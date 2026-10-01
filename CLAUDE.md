@@ -1373,7 +1373,10 @@ whitespace, drops other control characters, bounds the length in `char`s and
 falls back to a stable name rather than rejecting anybody. Whitespace is
 tested *before* control characters and that order matters: a tab and a newline
 are both, and dropping them outright turns "big⇥red" into "bigred" rather than
-the two words somebody typed. Nothing is ever keyed on a name — anything that
+the two words somebody typed. Invisible formatting characters go too
+- bidi overrides and isolates, zero-width spaces and joiners - because
+`is_control` does not count them, and an override prints the rest of a
+killfeed line backwards. Nothing is ever keyed on a name — anything that
 moved money by name would be paying whoever typed the name.
 
 ## Health, the circle, and what a life carries
@@ -1438,6 +1441,15 @@ full damage inside two metres, falling to nothing at seven, and nothing
 through a wall. The thrower is hurt too. `Exploded` is sent for the flash
 and the bang; the damage arrives as `Damaged`. `cheat.mjs` presses the
 button forty times and counts what goes off.
+
+`node client/cheat.mjs` is the adversarial client, over the real wire:
+speed and fire-rate floods, impossible aim, values the wire cannot carry,
+a second life for one stake, withdrawals of nothing, claiming a balance,
+somebody else's resume token, more grenades than a life carries, wallet
+sign-in with no challenge, random bytes, a signature over other words, a
+replayed proof and another account's proof, tables nobody runs, and names
+built to break a killfeed - then that an honest client is still answered
+and the ledger reconciles. Add to it whenever the protocol grows a way in.
 
 ## Match history, the anti-cheat, and the admin view
 
