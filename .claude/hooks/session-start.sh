@@ -52,6 +52,12 @@ fi
 if ! python3 -c "import numpy, scipy" 2>/dev/null; then
     pip install --quiet --root-user-action=ignore numpy scipy
 fi
+# scripts/bake-light.py traces with Embree. Only re-baking needs it - the
+# baked light is committed - so a failure here is a warning, not a stop.
+if ! python3 -c "import embreex" 2>/dev/null; then
+    pip install --quiet --root-user-action=ignore embreex \
+        || echo ">> could not install embreex; scripts/bake-light.py will not run"
+fi
 
 # ---- a local Postgres for tests and a dev server ----------------------------
 # Throwaway, inside this container. The server applies migrations itself on

@@ -56,6 +56,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { SIM, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
 import { HAND, holdMatrix, palms } from './grip.js';
+import { lightMaterial } from './light.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -270,7 +271,6 @@ export class Remotes {
   async load(soldierUrl, weapon) {
     const soldier = await new GLTFLoader().loadAsync(soldierUrl);
     this.template = soldier.scene;
-    this.weapon = weapon;
 
     this.template.traverse((node) => {
       if (node.isMesh || node.isSkinnedMesh) {
@@ -280,10 +280,23 @@ export class Remotes {
         // culled when an animation takes it outside them, which shows up as
         // players flickering out at the edge of the screen.
         node.frustumCulled = false;
+        // Lit by the map's light, so a soldier in a dark room is in the dark.
+        for (const material of [node.material].flat()) lightMaterial(material);
       }
     });
+    // The rifle in somebody else's hands is lit by the map as they are. The
+    // one in the player's own hands is drawn in a scene of its own, lit its
+    // own way, so this is a copy with copies of its materials.
+    const copies = new Map();
+    const lit = (material) => {
+      if (!copies.has(material)) copies.set(material, lightMaterial(material.clone()));
+      return copies.get(material);
+    };
+    this.weapon = weapon.clone(true);
     this.weapon.traverse((node) => {
-      if (node.isMesh) node.castShadow = true;
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.material = Array.isArray(node.material) ? node.material.map(lit) : lit(node.material);
     });
 
     const find = (name) => {

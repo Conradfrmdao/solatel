@@ -724,8 +724,8 @@ smaller ETC1S because ETC1S shows its blocks on a wall a player stands at.
 Colour is 2k for what a player stands next to and every normal map 1k;
 grainy ground, rock and planks are 1k throughout. Those sizes were measured
 against what each map downloads (`scripts/fetch-photo-assets.mjs` says
-why), and keep the arena at 33 MB, the yard 30 and the facility 47, every
-byte of it cached for good. `scripts/build-basisu.sh` builds the encoder
+why), and with the baked light keep every map under 50 MB, every byte of
+it cached for good. `scripts/build-basisu.sh` builds the encoder
 from the upstream source on crates.io; the fetch script writes each set's
 mean colour and roughness to `client/src/photo-sets.js`.
 
@@ -760,22 +760,86 @@ Things about the files that are not obvious:
 (`SKIES` in `world.js`): partly cloudy over the facility, a heavy overcast
 over the yard with a weak sun and soft shadows, a late clear sun over the
 arena. Each is read alongside its map and kept once read. Blurred by PMREM
-into `scene.environment` it lights everything the sun does not reach, and it
-is most of the difference between a scene that looks lit and one that looks
-drawn. The sun is put where the panorama's own sun is (its brightest texel),
-so shadows agree with the sky, and the fog takes the colour of the
-panorama's horizon. With it loaded, the hemisphere, bounce and ambient lights
-drop to a trace. The water is a standard material with travelling-sine wave
-normals in the shader, reflecting that same environment: no mirror pass.
+into `scene.environment` it is what everything reflects, and the light of
+whatever the bake below does not cover. The sun is put where the
+panorama's own sun is (its brightest texel), so shadows agree with the sky,
+and the fog takes the colour of the panorama's horizon. The water is a
+standard material with travelling-sine wave normals in the shader,
+reflecting that same environment: no mirror pass.
 
-**A sky's sun is spread before it is blurred** (`spreadSun`). PMREM renders
-into half-float targets, whose largest value is 65,504, and a clear sky's
-sun disc is 135,000: it became infinity there and the whole frame went
-white, or black through the composer. The partly cloudy sky peaks at 60,000
-and had been fine by luck. Anything over `SKY_TEXEL_LIMIT` is spread evenly
-over the few degrees round it, which keeps every bit of the sun's energy -
-the light a surface gets is unchanged - and loses only the sharpness of a
-disc the blur takes off anyway. Check a new sky's peak before adding it.
+**The sky's light has no sun in it** (`cutSun`). Left in, the photograph's
+sun was blurred into the environment as a second sun that cast no shadow -
+on the arena's clear sky four times as bright as the directional light - and
+it lit every shadow and every room: that is why both used to read pale and
+flat. Everything within 8 degrees of the brightest texel is brought down to
+the sky round it before the blur, and the directional light carries the sun
+at the strength `SKIES` gives it. The sky the player sees is a separate
+image and keeps its sun. The sky's light also keeps only 60% of its colour
+(`SKY_SATURATION`): a clear sky is deep blue, and shade lit by all of it
+read as night where an eye standing in it sees grey. Cutting the sun also
+keeps the blur in range - PMREM renders into half-float targets, whose
+largest value is 65,504, and a clear sky's sun disc is 135,000, which once
+became infinity there and turned the frame white or black.
+
+### Baked light
+
+`scripts/bake-light.py`, `light.js`, `assets/light/<map>.bin`. What a
+renderer of this kind cannot work out for itself, traced offline with Embree
+into a grid of cells over each map - half a metre on the arena, three
+quarters on the yard, a metre on the facility - because the maps have no
+texture coordinates and a grid needs only a position:
+
+- **the light arriving at each cell**: the sky's (its photograph, cut as
+  above) and what the map's own surfaces send back at their own colour - the
+  sun's off whatever it lands on and the sky's off everything - traced twice,
+  so light that has bounced once comes round again. That is how a room is
+  lit through its door and why the side of a building facing a sunlit yard
+  is warm. Held as a colour and the way it leans: first-order spherical
+  harmonics with one direction shared by the three colours, so a surface
+  facing n gets E0 (1 + d.n);
+- **whether the sun gets there**, for shadows past the shadow map's 34 m;
+- **how much sky is in view**, for dimming reflections.
+
+On the map it **replaces** the environment's diffuse light and the
+hemisphere, ambient and bounce lights, which knew nothing of what stands in
+the way. Players, props and trees are lit by it too (`lightMaterial`), so
+nobody in a dark room is lit as if they stood in the open, and the
+first-person rifle - drawn in a scene of its own - dims its own lights by
+what `lightHere` finds at the eye. A map with nothing baked draws as it did
+before there was any.
+
+Things about it that are not obvious:
+
+- **Re-run the bake after anything that changes a map's geometry or
+  colours, or its numbers in `SKIES`.** The light is added up for one
+  strength of sun and sky, and the console says so when they differ. The
+  sun's light and the sky's are traced apart and added at the end, and the
+  trace is kept in `target/light/` while the geometry, colours and
+  photograph hold, so trying a brighter sun costs seconds; new geometry
+  costs minutes (two for the arena, five for the facility, on four
+  cores).
+- **Light through a surface is the failure to watch for.** The shader reads
+  the grid a cell out along the face's own normal, so a wall reads the air
+  in front of it, and a cell and a half out from anything facing up: the
+  texture is filtered between cells, so a nearer read takes in the cells
+  behind the surface too, and the facility's pitched roofs came out black
+  from the sealed attics under them. The smoothing that takes out the noise
+  of a finite number of rays blends only cells that can see one another.
+  Cells inside geometry are filled from their neighbours, and inside means
+  what open air cannot reach through cells that see one another - not, as
+  it first did, a cell whose rays met the backs of faces: the facility's
+  shed roofs are wound inside out (drawn from both sides, so it never
+  showed), and that put the air over every one of them inside a wall.
+- **Nothing is darker than a floor** (`FLOOR`, a quarter of what open
+  ground gets from the sky), met softly in the shader. A shut room is still
+  one a player can see into: on a real-money map a black room is a place to
+  hide.
+- **The file is laid out for brotli**: each of the eight bytes a cell as a
+  plane of its own, each row stored as differences, and the way light leans,
+  the sun and the openness held to 33 values each - the colour alone keeps
+  every bit. A tenth of the raw size goes over the wire, 1.8 to 2.5 MB a map.
+- What it leaves out: anything that moves (the shadow map has that), the
+  trees' shade (they are not in the bake), and the light of lamps.
 
 `post.js` is the chain every frame goes through: a multisampled half-float
 target, GTAO (still a setting, still off by default - it is the expensive
@@ -830,7 +894,9 @@ time - from its spawns at eye height, from above, and through the player's
 own eyes - which is how a visual change is judged against the last one. It
 wants a free-play server with a long `SOLATEL_WARMUP`: on a software
 renderer a tour takes minutes, and once a match is live the circle burns a
-player who never moves and puts the page back on the menu.
+player who never moves and puts the page back on the menu. The debug camera
+it uses carries the shadow map and the sky with it, so a picture shows the
+shadows a player standing there would see rather than the baked ones.
 
 ### Trees, grass, smoke and birds
 
@@ -1046,10 +1112,12 @@ They are downloaded by every player, so size is a gameplay number - once
 per player and build, now that a browser keeps them, and compressed. A player fetches only the map being played, so the budget is per map,
 not for the folder, and Conrad's is **20 to 50 MB a map** if every byte goes
 into how it looks and plays. Over the wire today, everything a map needs:
-the arena 33 MB, the yard 30 and the facility 47, almost all of it
-photographs (see *Photographs, sky and light*); the models themselves are
-0.06, 0.23 and 0.64 MB as brotli. The soldier is 1.5 MB on top, once, and
-the rifle nothing - it is built in code.
+the arena 34.4 MB, the yard 31.9 and the facility 49.6, almost all of it
+photographs (see *Photographs, sky and light*); the baked light is 1.8,
+2.0 and 2.5 MB of that, and the models themselves 0.06, 0.23 and 0.64 MB as
+brotli. The facility is the one at the limit: anything added to it has to
+be paid for there. The soldier is 1.5 MB on top, once, and the rifle
+nothing - it is built in code.
 
 `prepare-assets.py` strips normals and texture coordinates from the maps, which
 is most of that 11 MB. Neither is ever read — there are no textures in either

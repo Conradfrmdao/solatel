@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { photoSet } from './photo.js';
+import { lightMaterial } from './light.js';
 
 const KINDS = [
   { kind: 'truck', test: /^truck(_olive|_grey)?\d+$/ },
@@ -371,7 +372,7 @@ async function materials() {
     material.normalScale = new THREE.Vector2(0.6, 0.6);
     return material;
   };
-  return {
+  const kit = {
     // Factory paint, gone matt with dust, with a thin clear coat still
     // catching the sky on the curves.
     paint: new THREE.MeshPhysicalMaterial({
@@ -400,6 +401,10 @@ async function materials() {
     planks: withPhoto(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }), planks, 0.6),
     battens: withPhoto(new THREE.MeshStandardMaterial({ color: 0xb8aa98, roughness: 0.9 }), planks, 0.3),
   };
+  // Lit by the map's light like the map itself: a car in a shed is in the
+  // shed's shade.
+  for (const material of Object.values(kit)) lightMaterial(material);
+  return kit;
 }
 
 // ---- fitting a model into a stand-in's box --------------------------------------

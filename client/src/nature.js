@@ -26,6 +26,7 @@
 import * as THREE from 'three';
 import { foliageSet, photoFiles, photoSet } from './photo.js';
 import { asset } from './assets.js';
+import { lightMaterial } from './light.js';
 
 /** Seconds of wind, shared by every swaying material. */
 const wind = { value: 0 };
@@ -559,11 +560,15 @@ function windy(material, { flutter = 0.06, lean = 0.28 } = {}) {
           * ${flutter.toFixed(3)} * sway * (0.5 + gust);`,
       );
   };
+  // The sway is written into the source, so each strength of it is a program
+  // of its own: keyed on the function alone, as three does by default, the
+  // grass and the leaves shared one and swayed as whichever compiled first.
+  material.customProgramCacheKey = () => `windy-${lean}-${flutter}`;
   return material;
 }
 
 function leafMaterial({ albedo, alpha }) {
-  const material = windy(
+  const material = lightMaterial(windy(
     new THREE.MeshStandardMaterial({
       map: albedo,
       alphaMap: alpha,
@@ -573,7 +578,7 @@ function leafMaterial({ albedo, alpha }) {
       metalness: 0,
       envMapIntensity: 0.55,
     }),
-  );
+  ));
   // Soft edges on a multisampled canvas rather than a hard cut-out, which
   // also stops distant crowns thinning to nothing as the texture mips down.
   material.alphaToCoverage = true;
@@ -646,7 +651,7 @@ class Grass {
   constructor(ground, parent, textures) {
     this.ground = decodeGround(ground);
     const capacity = Math.ceil((Math.PI * GRASS_RADIUS * GRASS_RADIUS) / (GRASS_STEP * GRASS_STEP));
-    const material = windy(
+    const material = lightMaterial(windy(
       new THREE.MeshStandardMaterial({
         map: textures.grass.albedo,
         alphaMap: textures.grass.alpha,
@@ -655,7 +660,7 @@ class Grass {
         roughness: 1,
       }),
       { flutter: 0.0, lean: 0.12 },
-    );
+    ));
     material.alphaToCoverage = true;
     // One mesh per kind of clump, sharing the material: three draws, and a
     // field that does not repeat one clump to the horizon.
@@ -929,10 +934,10 @@ export async function growNature(map) {
     const leafMap = textures.leaves;
     const needleMap = textures.needles;
     const paintedNeedles = { albedo: needleTexture(), alpha: null };
-    const bark = windy(new THREE.MeshStandardMaterial({ map: textures.bark, roughness: 0.95 }), {
+    const bark = lightMaterial(windy(new THREE.MeshStandardMaterial({ map: textures.bark, roughness: 0.95 }), {
       flutter: 0,
       lean: 0.28,
-    });
+    }));
     const variants = {};
     for (const kind of Object.keys(GROWERS)) {
       // Spruce wears a painted spray, not the scan: the scanned fir sprigs

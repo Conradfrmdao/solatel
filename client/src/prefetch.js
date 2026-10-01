@@ -15,6 +15,7 @@
 
 import { asset } from './assets.js';
 import { photoFiles } from './photo.js';
+import { lightFiles } from './light.js';
 import { natureFiles } from './nature.js';
 import { PROP_SETS } from './props.js';
 import { skyFiles } from './world.js';
@@ -61,6 +62,7 @@ class Prefetch {
     const { materials, extras } = readGlb(map);
     const urls = [
       ...skyFiles(mapName),
+      ...lightFiles(mapName),
       ...photoFiles(materials),
       ...PROP_SETS.flatMap((set) => photoFiles([], [set])),
       ...natureFiles(extras),
