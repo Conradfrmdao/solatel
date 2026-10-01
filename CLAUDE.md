@@ -1137,7 +1137,18 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
   hand kept last frame's posing and built on it: the arm stayed at the
   magazine after a reload, and the aim then turned the whole torso to put
   the hands back on a rifle the arm had left.
-- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth.
+- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth,
+  and every fourth out of view.
+- **Fewer triangles further away** (`DETAIL`): the soldier and rifle are
+  simplified at load with meshoptimizer to 30% beyond 15 m and 10% beyond
+  40 m, each level an index list over the same vertices so the skin still
+  works, never further off the full shape than a couple of pixels where it
+  is first used. A crowd photographed both ways is the same picture.
+- **Players are culled**, by a sphere `POSE_REACH` times their resting
+  bounds. They never were - bounds from the bind pose lost a player whose
+  clip carried them outside it - so every player in a match was drawn every
+  frame, and again into the shadow map, wherever they stood. Together that
+  took a twelve-player arena from 1.39 to 0.73 million triangles.
 
 The rifle is a clone of the viewmodel's, which carries that rig's offset and
 scale. Both are reset on the copy - inheriting them is what once made every

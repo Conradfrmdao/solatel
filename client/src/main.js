@@ -794,7 +794,7 @@ async function boot() {
       impacts.update(slow);
       world.followWithShadows(dying.position);
       world.positionSky(dying.position, camera.far);
-      remotes.update(now, slow, local.id, dying.position);
+      remotes.update(now, slow, local.id, dying.position, camera);
       camera.position.copy(dying.position);
       camera.rotation.set(dying.pitch, dying.yaw, dying.roll, 'YXZ');
       const fov = verticalFov(horizontalFov, camera.aspect, 1);
@@ -825,7 +825,7 @@ async function boot() {
     world.positionSky(viewer, camera.far);
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
-    remotes.update(now, dt, local.id, camera.position);
+    remotes.update(now, dt, local.id, camera.position, camera);
     for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     lightHere(eye, here);

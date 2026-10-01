@@ -53,6 +53,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 import { SIM, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
 import { HAND, holdMatrix, palms } from './grip.js';
@@ -189,7 +190,85 @@ const CROUCH_RATE = 12;
 const NEAR = 35;
 const FAR = 70;
 
+/**
+ * Fewer triangles the further away a player is.
+ *
+ * The soldier is 34,000 triangles and the rifle 5,500, which is right at
+ * arm's length and a waste at forty metres, where the whole player is a few
+ * dozen pixels tall: a full match drawn at full detail was most of a frame's
+ * triangles. Each level is the same mesh with fewer triangles (meshoptimizer,
+ * at load), never further from the full shape than `error` of its size - a
+ * couple of pixels where it is first used - so nobody is any harder or easier
+ * to see. Every player is drawn the same way, at every graphics level.
+ */
+const DETAIL = [
+  { beyond: 0, keep: 1, error: 0 },
+  { beyond: 15, keep: 0.3, error: 0.015 },
+  { beyond: 40, keep: 0.1, error: 0.04 },
+];
+
+/**
+ * How far an animated player reaches past the soldier at rest, as a multiple
+ * of its resting bounds - lying dead, or a rifle at full stretch.
+ *
+ * Their bodies were never culled, because bounds taken from the resting pose
+ * lost players at the edge of the screen when a clip carried them outside.
+ * Never culled, every player in the match was drawn every frame, and drawn
+ * again into the shadow map, behind the camera or across the map alike. A
+ * sphere this generous never loses anybody and still culls almost everybody
+ * out of view.
+ */
+const POSE_REACH = 2.5;
+
+/** Each geometry's levels of detail, full first (see `DETAIL`). */
+const DETAILS = new WeakMap();
+
+/** A sphere round a player's feet that holds all of them, for asking
+ *  whether they are in view. */
+const SEEN_RADIUS = 2.5;
+
+/** Builds `geometry`'s levels of detail, sharing its vertices: each level is
+ *  only a shorter list of triangles, so a skinned mesh keeps its skin. */
+function detailed(geometry) {
+  if (DETAILS.has(geometry) || !geometry.index) return;
+  const position = geometry.attributes.position;
+  const points = new Float32Array(position.count * 3);
+  for (let i = 0; i < position.count; i += 1) {
+    points[i * 3] = position.getX(i);
+    points[i * 3 + 1] = position.getY(i);
+    points[i * 3 + 2] = position.getZ(i);
+  }
+  const full = Uint32Array.from(geometry.index.array);
+  geometry.computeBoundingSphere();
+  geometry.computeBoundingBox();
+  const levels = [geometry];
+  for (const { keep, error } of DETAIL.slice(1)) {
+    const target = Math.max(3, Math.floor((full.length * keep) / 3) * 3);
+    const [indices] = MeshoptSimplifier.simplify(full, points, 3, target, error);
+    const level = new THREE.BufferGeometry();
+    for (const [name, attribute] of Object.entries(geometry.attributes)) level.setAttribute(name, attribute);
+    level.setIndex(new THREE.BufferAttribute(position.count < 65536 ? Uint16Array.from(indices) : indices, 1));
+    level.boundingSphere = geometry.boundingSphere;
+    level.boundingBox = geometry.boundingBox;
+    levels.push(level);
+  }
+  DETAILS.set(geometry, levels);
+}
+
+/** Which level of detail to draw at `distance`, given the one drawn now: a
+ *  metre either side of an edge stays where it is, so a player standing on
+ *  one does not flicker between two. */
+function detailFor(distance, current) {
+  let level = 0;
+  for (let i = 1; i < DETAIL.length; i += 1) {
+    if (distance >= DETAIL[i].beyond + (i <= current ? -1 : 1)) level = i;
+  }
+  return level;
+}
+
 // Scratch objects, reused every frame so posing a crowd allocates nothing.
+const _seen = new THREE.Sphere();
+const _view = new THREE.Matrix4();
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
@@ -277,14 +356,20 @@ export class Remotes {
     const soldier = await new GLTFLoader().loadAsync(soldierUrl);
     this.template = soldier.scene;
 
+    await MeshoptSimplifier.ready;
     this.template.traverse((node) => {
       if (node.isMesh || node.isSkinnedMesh) {
         node.castShadow = true;
         node.receiveShadow = true;
-        // A skinned mesh whose bounds are computed from the bind pose gets
-        // culled when an animation takes it outside them, which shows up as
-        // players flickering out at the edge of the screen.
-        node.frustumCulled = false;
+        // Culled by bounds that reach as far as any pose does (see
+        // `POSE_REACH`); the copies made for each player take these.
+        if (node.isSkinnedMesh) {
+          node.geometry.computeBoundingSphere();
+          node.boundingSphere = node.geometry.boundingSphere.clone();
+          node.boundingSphere.radius *= POSE_REACH;
+          node.frustumCulled = true;
+        }
+        detailed(node.geometry);
         // Lit by the map's light, so a soldier in a dark room is in the dark.
         for (const material of [node.material].flat()) lightMaterial(material);
       }
@@ -302,6 +387,7 @@ export class Remotes {
       if (!node.isMesh) return;
       node.castShadow = true;
       node.material = Array.isArray(node.material) ? node.material.map(lit) : lit(node.material);
+      detailed(node.geometry);
     });
 
     const find = (name) => {
@@ -365,9 +451,16 @@ export class Remotes {
    * drawing it would put a shoulder through the camera. `eye` is where the
    * camera is, for deciding how much detail each player is worth.
    */
-  update(nowMs, dt, selfId, eye) {
+  update(nowMs, dt, selfId, eye, camera) {
     this.selfId = selfId;
     if (!this.template) return;
+    // What the camera saw last frame, near enough to say who is in view.
+    if (camera) {
+      this.view ??= new THREE.Frustum();
+      this.view.setFromProjectionMatrix(
+        _view.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+      );
+    }
 
     const renderAt = this.clock.drawAt(nowMs, dt * 1000);
     if (renderAt === null) return;
@@ -476,13 +569,21 @@ export class Remotes {
     flashSprite.visible = false;
     muzzle.add(flashSprite);
 
+    // Everything drawn of them that has levels of detail.
+    const details = [];
+    root.traverse((node) => {
+      const levels = node.isMesh ? DETAILS.get(node.geometry) : null;
+      if (levels) details.push({ mesh: node, levels });
+    });
+
     // What the clips last said for each bone in `POSED`.
     const clean = POSED.map((key) => bones[key])
       .filter(Boolean)
       .map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
     return {
-      id, root, body, mixer, actions, bones, rifle, flashSprite, hipsScale, clean,
+      id, root, body, mixer, actions, bones, rifle, flashSprite, hipsScale, clean, details,
+      level: 0,
       gait: 'idle',
       legYaw: 0,
       reverse: false,
@@ -543,11 +644,20 @@ export class Remotes {
 
     const distance = eye ? root.position.distanceTo(eye) : 0;
 
+    // Fewer triangles further away (see `DETAIL`).
+    const level = detailFor(distance, player.level);
+    if (level !== player.level) {
+      player.level = level;
+      for (const d of player.details) d.mesh.geometry = d.levels[level];
+    }
+
     // Fewer mixer updates the further away they are: every frame near,
-    // every other frame at middle distance, every fourth far away. The time
-    // is saved up rather than dropped, so the clips stay in step.
+    // every other frame at middle distance, every fourth far away - or out
+    // of view, where only a shadow might show it. The time is saved up
+    // rather than dropped, so the clips stay in step.
     player.pending += dt;
-    const every = distance > FAR ? 4 : distance > NEAR ? 2 : 1;
+    const seen = !this.view || this.view.intersectsSphere(_seen.set(root.position, SEEN_RADIUS));
+    const every = !seen || distance > FAR ? 4 : distance > NEAR ? 2 : 1;
     player.frame += 1;
     if (player.frame % every !== 0) return;
     const step = player.pending;

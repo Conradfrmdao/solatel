@@ -38,78 +38,6 @@ const mapName = mapAt === -1 ? null : process.argv[mapAt + 1];
 const crowdAt = process.argv.indexOf('--crowd');
 const crowdSize = crowdAt === -1 ? 0 : Number(process.argv[crowdAt + 1]);
 
-const browser = await puppeteer.launch({
-  executablePath: CHROME,
-  // Headless draws with a software rasteriser, so its numbers mean nothing;
-  // it is only for checking that the script itself still works.
-  headless: process.env.PERF_HEADLESS === '1',
-  defaultViewport: null,
-  args: [
-    // Containers run as root, where Chrome will not start sandboxed.
-    ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
-    '--window-size=1600,900',
-    // Off to the side, so a profiling run does not take over the screen.
-    '--window-position=2400,80',
-    '--autoplay-policy=no-user-gesture-required',
-  ],
-});
-
-const page = (await browser.pages())[0] ?? (await browser.newPage());
-const errors = [];
-page.on('pageerror', (e) => errors.push(String(e)));
-page.on('console', (m) => {
-  if (m.type() === 'error') errors.push(m.text());
-});
-
-await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-await page.waitForFunction(() => window.solatel && window.solatel.link.isReady, {
-  timeout: 120000,
-  polling: 250,
-});
-
-const renderer = await page.evaluate(() => {
-  const gl = window.solatel.renderer.getContext();
-  const ext = gl.getExtension('WEBGL_debug_renderer_info');
-  return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-});
-console.log(`GPU: ${renderer}`);
-
-// Nothing is drawn in the menu, so get into a match first - behind the
-// crowd, if there is one, so they are all in the same line.
-await page.waitForSelector('#menu-tables .table', { timeout: 60000 });
-if (mapName) await page.click(`#menu-maps [data-map="${mapName}"]`);
-const crowd = crowdSize > 0 ? await gather(crowdSize) : [];
-await page.click('#menu-tables .table');
-await page.waitForFunction(
-  () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
-  { timeout: 240000, polling: 250 },
-);
-console.log(
-  `map: ${await page.evaluate(() => window.solatel.local.mapName)}, ` +
-    `auto picked: ${await page.evaluate(() => window.solatel.quality)}\n`,
-);
-
-/**
- * The crowd: `n` players over the wire, in line for the table the page is
- * about to click - the cheapest on its map - before it clicks.
- */
-async function gather(n) {
-  // Whatever the page is about to click: the chosen map's first table.
-  const { map, dollars } = await page.evaluate(() => ({
-    map: document.querySelector('#menu-maps .map.on')?.dataset.map,
-    dollars: Number(document.querySelector('#menu-tables .table')?.dataset.stake),
-  }));
-  if (!map || !Number.isFinite(dollars)) throw new Error('could not tell which table the page will click');
-  const ws = URL.replace(/^http/, 'ws').replace(/\/(\?.*)?$/, '') + '/ws';
-  const health = await fetch(ws.replace(/^ws/, 'http').replace(/\/ws$/, '/health')).then((r) => r.json());
-  const bots = [];
-  for (let i = 0; i < n; i += 1) bots.push(new Bot(`Crowd ${i + 1}`, ws, health.protocol_version));
-  await Promise.all(bots.map((b) => b.ready));
-  for (const bot of bots) bot.queue(map, dollars);
-  console.log(`crowd: ${n} in line for $${dollars} on ${map}`);
-  return bots;
-}
-
 /** One of the crowd. Runs once its match is live; never aims at anybody. */
 class Bot {
   constructor(name, url, protocolVersion) {
@@ -163,6 +91,81 @@ class Bot {
     clearInterval(this.timer);
     this.ws.close();
   }
+}
+
+const browser = await puppeteer.launch({
+  executablePath: CHROME,
+  // Headless draws with a software rasteriser, so its numbers mean nothing;
+  // it is only for checking that the script itself still works.
+  headless: process.env.PERF_HEADLESS === '1',
+  defaultViewport: null,
+  args: [
+    // Containers run as root, where Chrome will not start sandboxed.
+    ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
+    '--window-size=1600,900',
+    // Off to the side, so a profiling run does not take over the screen.
+    '--window-position=2400,80',
+    '--autoplay-policy=no-user-gesture-required',
+  ],
+});
+
+const page = (await browser.pages())[0] ?? (await browser.newPage());
+const errors = [];
+page.on('pageerror', (e) => errors.push(String(e)));
+page.on('console', (m) => {
+  if (m.type() === 'error') errors.push(m.text());
+});
+
+await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForFunction(() => window.solatel && window.solatel.link.isReady, {
+  timeout: 120000,
+  polling: 250,
+});
+
+const renderer = await page.evaluate(() => {
+  const gl = window.solatel.renderer.getContext();
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+});
+console.log(`GPU: ${renderer}`);
+
+// Nothing is drawn in the menu, so get into a match first - behind the
+// crowd, if there is one, so they are all in the same line.
+await page.waitForSelector('#menu-tables .table', { timeout: 60000 });
+if (mapName) await page.click(`#menu-maps [data-map="${mapName}"]`);
+const crowd = crowdSize > 0 ? await gather(crowdSize) : [];
+// Clicked from inside the page: the list is redrawn whenever the line
+// changes, which with a crowd joining is constantly, and a handle taken
+// from outside can be gone by the time it is clicked.
+await page.evaluate(() => document.querySelector('#menu-tables .table').click());
+await page.waitForFunction(
+  () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
+  { timeout: 240000, polling: 250 },
+);
+console.log(
+  `map: ${await page.evaluate(() => window.solatel.local.mapName)}, ` +
+    `auto picked: ${await page.evaluate(() => window.solatel.quality)}\n`,
+);
+
+/**
+ * The crowd: `n` players over the wire, in line for the table the page is
+ * about to click - the cheapest on its map - before it clicks.
+ */
+async function gather(n) {
+  // Whatever the page is about to click: the chosen map's first table.
+  const { map, dollars } = await page.evaluate(() => ({
+    map: document.querySelector('#menu-maps .map.on')?.dataset.map,
+    dollars: Number(document.querySelector('#menu-tables .table')?.dataset.stake),
+  }));
+  if (!map || !Number.isFinite(dollars)) throw new Error('could not tell which table the page will click');
+  const ws = URL.replace(/^http/, 'ws').replace(/\/(\?.*)?$/, '') + '/ws';
+  const health = await fetch(ws.replace(/^ws/, 'http').replace(/\/ws$/, '/health')).then((r) => r.json());
+  const bots = [];
+  for (let i = 0; i < n; i += 1) bots.push(new Bot(`Crowd ${i + 1}`, ws, health.protocol_version));
+  await Promise.all(bots.map((b) => b.ready));
+  for (const bot of bots) bot.queue(map, dollars);
+  console.log(`crowd: ${n} in line for $${dollars} on ${map}`);
+  return bots;
 }
 
 /** Runs for a while and reports the frame rate the client itself measured. */
