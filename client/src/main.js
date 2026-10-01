@@ -37,6 +37,7 @@ import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
 import { initPhotos } from './photo.js';
 import { prefetchMap } from './prefetch.js';
+import { lightHere } from './light.js';
 import { asset, clientBuild } from './assets.js';
 
 /**
@@ -473,6 +474,8 @@ async function boot() {
   /** The match this client has already loaded a map for. */
   let enteredMatch = null;
   const eye = new THREE.Vector3();
+  // The baked light where the eye is, for the rifle in the player's hands.
+  const here = { sky: 1, sun: 1 };
   // Where the player is and which way they are facing, for panning sound.
   // Read while handling messages, so they are a frame old - which is sixteen
   // milliseconds of listener movement, and inaudible.
@@ -767,13 +770,18 @@ async function boot() {
     local.tickTimers(dt);
     world.update(dt);
     impacts.update(dt);
-    world.followWithShadows(eye);
-    world.positionSky(eye, camera.far);
+    // A debug camera (`cameraOverride`) takes the shadows and the sky with
+    // it, so a picture taken from it shows what a player standing there sees.
+    const viewer = window.solatel?.cameraOverride ? camera.position : eye;
+    world.followWithShadows(viewer);
+    world.positionSky(viewer, camera.far);
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position);
     for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
+    lightHere(eye, here);
+    viewmodel.setLight(dt, here.sky, here.sun);
     hud.update(now, link, local, input);
     hud.updateDamage(now, eye, input.yaw);
 

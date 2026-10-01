@@ -26,6 +26,18 @@ import { dressProps } from './props.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { asset } from './assets.js';
+import {
+  LIGHT,
+  LIGHTS_FRAGMENT_BEGIN,
+  LIGHT_BEFORE_LIGHTS,
+  LIGHT_INDIRECT,
+  LIGHT_OCCLUSION,
+  SHADOW_CENTRE,
+  SHADOW_REACH,
+  lightDeclarations,
+  loadLight,
+  useLight,
+} from './light.js';
 import { PHOTO_DECLARATIONS, PHOTO_NORMAL, PHOTO_ROUGHNESS, loadPhotos, photoUniforms } from './photo.js';
 
 /** How long a tracer stays on screen. */
@@ -259,6 +271,8 @@ function addSurfaceDetail(material, photo = null) {
   const markings = surface?.kind === GROUND ? material.userData?.markings ?? [] : [];
 
   material.onBeforeCompile = (shader) => {
+    // The map's baked light, shared by everything lit by it.
+    Object.assign(shader.uniforms, LIGHT);
     shader.uniforms.grainRange = { value: GRAIN_RANGE };
     shader.uniforms.grainDepth = { value: GRAIN_DEPTH };
     if (surface) {
@@ -311,6 +325,7 @@ function addSurfaceDetail(material, photo = null) {
         ${markings.length ? `#define MARKINGS ${markings.length}` : ''}
         ${photo ? '#define PHOTO' : ''}
         varying vec3 vGrainPosition;
+        ${lightDeclarations('vGrainPosition')}
         ${photo ? PHOTO_DECLARATIONS : ''}
         uniform float grainRange;
         uniform float grainDepth;
@@ -506,6 +521,9 @@ function addSurfaceDetail(material, photo = null) {
         }`,
       )
       .replace('#include <roughnessmap_fragment>', photo ? PHOTO_ROUGHNESS : '#include <roughnessmap_fragment>')
+      .replace('#include <lights_fragment_begin>', LIGHT_BEFORE_LIGHTS + LIGHTS_FRAGMENT_BEGIN)
+      .replace('#include <lights_fragment_maps>', LIGHT_INDIRECT)
+      .replace('#include <aomap_fragment>', LIGHT_OCCLUSION)
       .replace('#include <normal_fragment_maps>', photo ? PHOTO_NORMAL : '#include <normal_fragment_maps>')
       .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
       .replace('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
@@ -543,7 +561,7 @@ const ZONE_WALL_HEIGHT = 60;
  *  player rather than covering the map, so this is "how far away a shadow
  *  is still worth drawing" and not "how big is the map". Thirty-four metres
  *  of it across 2048 texels is about 30 texels per metre. */
-const SHADOW_EXTENT = 34;
+const SHADOW_EXTENT = SHADOW_REACH;
 
 /** Where the sun sits relative to whatever it is lighting. Fixed, so that
  *  shadows keep pointing the same way as the player moves. */
@@ -558,9 +576,9 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
  * is a harder map for every player on it alike.
  */
 const SKIES = {
-  facility: { file: 'partly', sun: 3.4, sunColour: 0xfff0dc, sky: 0.9 },
+  facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5 },
   yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25 },
-  arena: { file: 'afternoon', sun: 3.1, sunColour: 0xffd9ab, sky: 0.85 },
+  arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5 },
 };
 
 /** The sky for anything not in `SKIES`. */
@@ -718,45 +736,70 @@ function playBounds(map, box) {
 }
 
 /**
- * The brightest a sky texel may be when it is blurred into the environment
- * light. The blur renders into half-float targets, whose largest value is
- * 65,504: a clear sky's sun disc is twice that, becomes infinity there, and
- * the whole frame goes to white or black. Well under the limit, because the
- * blur adds neighbours together.
+ * How far round a sky's sun it is cut out (`cutSun`), and the ring outside
+ * that whose brightness it is cut down to, in radians. `bake-light.py` cuts
+ * its copy of the sky the same way, and the two must agree.
  */
-const SKY_TEXEL_LIMIT = 24000;
+const SUN_CUT = THREE.MathUtils.degToRad(8);
+const SUN_RING = THREE.MathUtils.degToRad(12);
 
 /**
- * Brings every texel of an equirectangular sky under `SKY_TEXEL_LIMIT` by
- * spreading what is over it evenly across the texels round it - a few
- * degrees of sky - so the sun keeps all of its light and loses only the
- * sharpness of its disc, which the blur takes off anyway for anything but a
- * mirror. The sun that casts shadows is the directional light, not this.
+ * How much of its colour a sky's light keeps. A clear sky is deep blue, and
+ * shade lit by all of it read as night, where an eye standing in it sees
+ * grey. The sky the player sees keeps all of its colour; `bake-light.py`
+ * takes the same out of its copy.
  */
-function spreadSun(data, width, height) {
-  const R = 6;
-  const share = 1 / ((2 * R + 1) * (2 * R + 1));
-  const over = [];
+const SKY_SATURATION = 0.6;
+
+/** Rec. 709 luminance, as `bake-light.py` weighs a texel. */
+const luminance = (data, i) => data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
+
+/**
+ * Takes the sun out of an equirectangular sky, before it is blurred into the
+ * environment light: every texel within `SUN_CUT` of the brightest one is
+ * brought down to no brighter than the ring of sky round it, keeping its own
+ * colour; then all of it loses some colour (`SKY_SATURATION`).
+ *
+ * The sun is the directional light, which casts shadows. Left in, the
+ * photograph's sun was blurred into a second one that cast none, and on the
+ * arena's clear sky it was four times as bright as the first: it lit every
+ * shadow and every room, and is most of why both read so pale. The sky the
+ * player sees is a separate image and keeps its sun.
+ *
+ * It also keeps the blur in range: PMREM renders into half-float targets,
+ * whose largest value is 65,504, and a clear sky's sun disc is 135,000 -
+ * left in, it became infinity there and the frame went white or black.
+ */
+function cutSun(data, width, height, peak) {
+  const toward = (i, out) => {
+    const x = i % width;
+    const y = Math.floor(i / width);
+    const elevation = (0.5 - (y + 0.5) / height) * Math.PI;
+    const azimuth = ((x + 0.5) / width - 0.5) * Math.PI * 2;
+    return out.set(Math.cos(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.sin(azimuth) * Math.cos(elevation));
+  };
+  const sun = toward(peak, new THREE.Vector3());
+  const look = new THREE.Vector3();
+  const near = [];
+  let ring = 0;
+  let ringCount = 0;
   for (let i = 0; i < width * height; i += 1) {
-    const peak = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
-    if (peak > SKY_TEXEL_LIMIT) over.push(i);
-  }
-  for (const i of over) {
-    const peak = Math.max(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]);
-    const keep = SKY_TEXEL_LIMIT / peak;
-    const x0 = i % width;
-    const y0 = Math.floor(i / width);
-    for (let c = 0; c < 3; c += 1) {
-      const excess = data[i * 4 + c] * (1 - keep);
-      data[i * 4 + c] *= keep;
-      for (let dy = -R; dy <= R; dy += 1) {
-        const y = Math.min(height - 1, Math.max(0, y0 + dy));
-        for (let dx = -R; dx <= R; dx += 1) {
-          const x = (x0 + dx + width) % width;
-          data[(y * width + x) * 4 + c] += excess * share;
-        }
-      }
+    const angle = Math.acos(THREE.MathUtils.clamp(toward(i, look).dot(sun), -1, 1));
+    if (angle < SUN_CUT) near.push(i);
+    else if (angle < SUN_RING) {
+      ring += luminance(data, i * 4);
+      ringCount += 1;
     }
+  }
+  const ceiling = ring / Math.max(ringCount, 1);
+  for (const i of near) {
+    const lum = luminance(data, i * 4);
+    if (lum <= ceiling) continue;
+    for (let c = 0; c < 3; c += 1) data[i * 4 + c] *= ceiling / lum;
+  }
+  for (let i = 0; i < width * height * 4; i += 4) {
+    const grey = luminance(data, i);
+    for (let c = 0; c < 3; c += 1) data[i + c] = grey + (data[i + c] - grey) * SKY_SATURATION;
   }
 }
 
@@ -853,7 +896,7 @@ export class World {
       Math.sin(elevation),
       Math.sin(azimuth) * Math.cos(elevation),
     );
-    spreadSun(data, width, height);
+    cutSun(data, width, height, at);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const environment = pmrem.fromEquirectangular(hdr).texture;
@@ -1217,13 +1260,13 @@ export class World {
     // The map's own sky, read alongside the map rather than after it.
     const sky = this.renderer ? this.useSky(mapName) : null;
     try {
-      return await this._loadMap(asset(`assets/maps/${mapName}.glb`));
+      return await this._loadMap(mapName, asset(`assets/maps/${mapName}.glb`));
     } finally {
       await sky;
     }
   }
 
-  async _loadMap(url) {
+  async _loadMap(mapName, url) {
     if (this.arena && this._loadedUrl === url) {
       this._takeWater(this.arena);
       return this.arena;
@@ -1238,6 +1281,7 @@ export class World {
     if (arena) {
       this.scene.add(arena);
       this.arena = arena;
+      useLight(arena.userData.light);
       this._loadedUrl = url;
       playBounds(arena, this.bounds);
       const cached = this.bounds.getSize(new THREE.Vector3());
@@ -1246,6 +1290,8 @@ export class World {
       return arena;
     }
 
+    // The map's baked light, read alongside the model.
+    const lighting = loadLight(mapName, SKIES[mapName] ?? SKIES[DEFAULT_SKY]);
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(url);
     arena = gltf.scene;
@@ -1254,7 +1300,10 @@ export class World {
       if (!node.isMesh) return;
       for (const material of [node.material].flat()) if (material?.name) names.push(material.name);
     });
-    const photos = await loadPhotos(names);
+    const [photos, light] = await Promise.all([loadPhotos(names), lighting]);
+    // Kept with the map, to be put back up when it is shown again.
+    arena.userData.light = light;
+    useLight(light);
     // The scale belongs to the map, and `SIM.arenaScale` is whichever map the
     // simulation is pointed at - so this reads it after `selectMap`, never
     // before. Drawing a map at another one's scale would put every wall
@@ -1464,6 +1513,8 @@ export class World {
     this.sun.position.set(target.x + 18, target.y + 34, target.z + 12);
     this.sun.target.position.copy(target);
     this.sun.target.updateMatrixWorld();
+    // Past the shadow map's reach from here, the baked sun takes over.
+    SHADOW_CENTRE.value.copy(target);
   }
 }
 

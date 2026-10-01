@@ -46,6 +46,10 @@ import { HAND, holdMatrix, palms } from './grip.js';
 import { SIM, wrapAngle } from './sim.js';
 import { RIFLE } from './weapons.js';
 
+/** The first-person rifle's own key and fill, in full light (`setLight`). */
+const KEY_LIGHT = 2.4;
+const FILL_LIGHT = 1.7;
+
 /** Frame-rate independent approach: the same curve at 30 fps as at 240. */
 function damp(current, target, rate, dt) {
   return current + (target - current) * (1 - Math.exp(-rate * dt));
@@ -447,12 +451,30 @@ export class Viewmodel {
     // Its own scene means its own light. Keyed from the upper left so the
     // weapon's top and left faces catch it and it reads as a solid object
     // rather than a silhouette.
-    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    const key = new THREE.DirectionalLight(0xffffff, KEY_LIGHT);
     key.position.set(-0.6, 1.0, 0.4);
     this.scene.add(key);
     // Enough fill that dark camouflage and black gloves still read as cloth
     // and leather rather than as holes in the picture.
-    this.scene.add(new THREE.HemisphereLight(0xb4c8e6, 0x3a3228, 1.7));
+    const fill = new THREE.HemisphereLight(0xb4c8e6, 0x3a3228, FILL_LIGHT);
+    this.scene.add(fill);
+    this.lights = { key, fill, sky: 1, sun: 1 };
+  }
+
+  /**
+   * The world's light where the player stands (`lightHere` in `light.js`),
+   * so the rifle in their hands is in the shade they are in: the key dims
+   * out of the sun, the fill under a roof. Never to nothing - it is the
+   * player's own weapon and has to read - and eased, so walking through a
+   * doorway is a change of light rather than a switch.
+   */
+  setLight(dt, sky, sun) {
+    const lights = this.lights;
+    const ease = 1 - Math.exp(-dt / 0.25);
+    lights.sky += (Math.min(Math.max(sky, 0.35), 1.15) - lights.sky) * ease;
+    lights.sun += (sun - lights.sun) * ease;
+    lights.key.intensity = KEY_LIGHT * (0.45 + 0.55 * lights.sun) * Math.min(1, 0.4 + 0.6 * lights.sky);
+    lights.fill.intensity = FILL_LIGHT * lights.sky;
   }
 
   _buildFlash() {
