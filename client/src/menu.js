@@ -1066,6 +1066,11 @@ const TEMPLATE = `
           <input id="rawmouse" type="checkbox" />
           <span>turn off if aim sticks after switching windows</span>
         </label>
+        <label class="check">
+          clips
+          <input id="clips" type="checkbox" />
+          <span id="clips-note">F8 saves the last 20 seconds as a video</span>
+        </label>
         <label>
           graphics
           <select id="quality">
