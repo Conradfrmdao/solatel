@@ -31,6 +31,7 @@ export class Matchmaking {
     this.seats = root.querySelector('.mm-seats');
     this.status = root.querySelector('.mm-status');
     this.fine = root.querySelector('.mm-fine');
+    this.download = root.querySelector('.mm-download');
     this.leave = root.querySelector('.mm-leave');
     this.leave.addEventListener('click', () => onLeave());
     this._phase = null;
@@ -67,6 +68,9 @@ export class Matchmaking {
 
     const place = view.map ? `<b>${escapeHtml(view.map)}</b>` : '';
     const stake = view.dollars ? ` &middot; $${view.dollars} table` : '';
+    const fetching = Boolean(view.download && !view.download.done);
+    this.card.dataset.fetching = fetching ? 'yes' : 'no';
+    this._set(this.download, phase === 'loading' ? '' : downloadLine(view.download));
 
     if (phase === 'searching') {
       this._set(this.title, 'finding a match');
@@ -112,7 +116,14 @@ export class Matchmaking {
       this._set(this.table, `${place}${stake}${view.players ? ` &middot; ${plural(view.players, 'player')}` : ''}`);
       this.fill.style.transform = 'scaleX(1)';
       this._set(this.seats, '');
-      this._set(this.status, `loading ${escapeHtml(view.map ?? 'the map')}…`);
+      if (fetching) {
+        // The download is most of the wait on a first visit: say so, in bytes.
+        const { loaded, total } = view.download;
+        this.fill.style.transform = `scaleX(${total > 0 ? Math.min(1, loaded / total) : 0})`;
+        this._set(this.status, `downloading ${escapeHtml(view.map ?? 'the map')} &middot; ${megabytes(loaded, total)}`);
+      } else {
+        this._set(this.status, `loading ${escapeHtml(view.map ?? 'the map')}…`);
+      }
       this._set(this.fine, 'the match starts with a short countdown on your spawn');
     }
     return true;
@@ -125,6 +136,19 @@ export class Matchmaking {
       element.innerHTML = html;
     }
   }
+}
+
+/** "12.3 of 41.0 MB". */
+function megabytes(loaded, total) {
+  const mb = (bytes) => (bytes / 1048576).toFixed(1);
+  return `${mb(loaded)} of ${mb(total)} MB`;
+}
+
+/** The map's download, while waiting: under way, or done. */
+function downloadLine(download) {
+  if (!download || download.total === 0) return '';
+  if (download.done) return 'map downloaded';
+  return `downloading the map &middot; ${megabytes(download.loaded, download.total)}`;
 }
 
 /** Milliseconds as m:ss. */
@@ -153,6 +177,7 @@ const TEMPLATE = `
     <div class="mm-seats"></div>
     <div class="mm-status"></div>
     <div class="mm-fine"></div>
+    <div class="mm-download"></div>
     <button class="mm-leave" type="button">leave the line</button>
   </div>
 `;

@@ -182,7 +182,15 @@ for (const pane of ['wallet', 'profile', 'fair', 'settings', 'play']) {
 }
 console.log('>> every tab opens its pane, and the payout record loads');
 
-// 4. Pick the cheapest table on the first map and get in line.
+// 4. Pick the cheapest table on the first map and get in line - watching
+//    every file the page fetches from here on.
+const fetched = [];
+page.on('response', (response) => {
+  const url = new URL(response.url());
+  if (url.protocol.startsWith('http')) {
+    fetched.push({ path: url.pathname.slice(1), cached: response.fromCache(), status: response.status() });
+  }
+});
 const stake = Math.min(...stakes);
 await page.click(`#menu-maps [data-map="${maps[0]}"]`);
 await page.click(`#menu-tables [data-stake="${stake}"]`);
@@ -237,6 +245,21 @@ await sleep(2000);
 const drawn = await page.evaluate(() => window.solatel.stats().triangles);
 console.log(`>> drawing ${drawn.toLocaleString()} triangles`);
 if (drawn < 1000) fail('the world is not being drawn');
+
+// The map's files were fetched while the line formed, into the cache, and
+// loading the map then found every one there: nothing it asked for was
+// missing from the list, and nothing came over the network twice.
+const ahead = new Set(await page.evaluate((name) => window.solatel.prefetched(name), maps[0]));
+const named = fetched.filter((f) => /\.[0-9a-f]{16}\./.test(f.path) && f.path.startsWith('assets/'));
+const missed = [...new Set(named.map((f) => f.path))].filter((path) => !ahead.has(path));
+const twice = Object.entries(
+  named.filter((f) => !f.cached).reduce((count, f) => ({ ...count, [f.path]: (count[f.path] ?? 0) + 1 }), {}),
+).filter(([, n]) => n > 1);
+for (const path of missed) console.log(`     loaded without being fetched ahead: ${path}`);
+for (const [path, n] of twice) console.log(`     over the network ${n} times: ${path}`);
+if (missed.length || twice.length) fail('fetching the map ahead did not cover what loading it needed');
+if (named.some((f) => f.status >= 400)) fail('a file the map needs was not there');
+console.log(`>> the map's ${ahead.size} files were fetched in line; loading it found every one in the cache`);
 
 const shot = flag('--shot');
 if (shot) await page.screenshot({ path: shot });

@@ -99,6 +99,43 @@ try {
       at: { x, y: eye, z, tx: x - Math.sin(yaw) * 20, ty: eye - 1.0, tz: z - Math.cos(yaw) * 20 },
     });
   }
+  // Up close, where a texture's resolution shows: the first wall along the
+  // first spawn's facing, from a step back, and the ground at its feet.
+  {
+    const [x, y, z, yaw] = spawns.slice(0, 4);
+    const eye = y + plan.eye;
+    const dx = -Math.sin(yaw);
+    const dz = -Math.cos(yaw);
+    const boxes = await page.evaluate(() => Array.from(window.solatel.brushes));
+    let nearest = 30;
+    for (let i = 0; i < boxes.length; i += 6) {
+      const [x0, y0, z0, x1, y1, z1] = boxes.slice(i, i + 6);
+      if (eye < y0 || eye > y1) continue;
+      // Slab test along the ray, in x and z.
+      let near = 0;
+      let far = nearest;
+      for (const [o, d, lo, hi] of [[x, dx, x0, x1], [z, dz, z0, z1]]) {
+        if (Math.abs(d) < 1e-9) {
+          if (o < lo || o > hi) far = -1;
+          continue;
+        }
+        const a = (lo - o) / d;
+        const b = (hi - o) / d;
+        near = Math.max(near, Math.min(a, b));
+        far = Math.min(far, Math.max(a, b));
+      }
+      if (near <= far && near > 0.4) nearest = Math.min(nearest, near);
+    }
+    const back = Math.max(0, nearest - 1.3);
+    shots.push({
+      name: 'wall',
+      at: { x: x + dx * back, y: eye, z: z + dz * back, tx: x + dx * nearest, ty: eye - 0.15, tz: z + dz * nearest },
+    });
+    shots.push({
+      name: 'ground',
+      at: { x, y: eye, z, tx: x + dx * 1.6, ty: y, tz: z + dz * 1.6 },
+    });
+  }
   const { hx, hz } = plan;
   shots.push({
     name: 'above',
