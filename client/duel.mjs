@@ -356,7 +356,12 @@ console.log(
 // measuring two settlements rather than one.
 await sleep(6000);
 const killsNow = new Set(clients.flatMap((c) => c.kills).map((k) => `${k.victim}`)).size;
-const potAfter = clients[0].pool;
+// Read from somebody still in the match the kill happened in. The victim may
+// well be in another by now - it asks to come back forty times, and a test
+// server with a floor of one starts a match for it alone - and its pot is
+// that match's.
+const witness = clients.find((c) => c !== victim && c.matchId === diedIn) ?? killer;
+const potAfter = witness.pool;
 const moved = potBefore - potAfter;
 console.log(
   `>> pot $${(potBefore / 1e6).toFixed(2)} -> $${(potAfter / 1e6).toFixed(2)} over ${killsNow} death(s)`,

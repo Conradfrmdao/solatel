@@ -229,7 +229,22 @@ pub fn judge(record: &Record) -> Vec<&'static str> {
 #[derive(Clone)]
 pub struct RecordsHandle {
     lives: mpsc::Sender<Life>,
+    /// Finished matches, for `match_replays`. A queue of their own: a
+    /// recording is a megabyte, and a life's row should not wait behind one.
+    replays: Option<mpsc::Sender<PendingReplay>>,
 }
+
+/// A match's recording, not yet serialised.
+pub struct PendingReplay {
+    match_id: MatchId,
+    map: &'static str,
+    recorder: crate::replay::Recorder,
+    names: std::collections::HashMap<PlayerId, String>,
+}
+
+/// How long a recording is kept when nobody is under review for anything
+/// in it.
+pub const REPLAY_DAYS: i32 = 14;
 
 impl RecordsHandle {
     /// Queues a life to be written. A full queue drops it with a log line
@@ -240,6 +255,29 @@ impl RecordsHandle {
             tracing::error!(%err, "records queue full or closed; a life went unrecorded");
         }
     }
+
+    /// Queues a finished match's recording. Dropped with a log line if the
+    /// queue is full, for the same reason as a life.
+    pub fn send_replay(
+        &self,
+        match_id: MatchId,
+        map: &'static str,
+        recorder: crate::replay::Recorder,
+        names: std::collections::HashMap<PlayerId, String>,
+    ) {
+        let Some(replays) = &self.replays else {
+            return;
+        };
+        let pending = PendingReplay {
+            match_id,
+            map,
+            recorder,
+            names,
+        };
+        if replays.try_send(pending).is_err() {
+            tracing::error!(%match_id, "replay queue full or closed; a match went unrecorded");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -247,12 +285,47 @@ impl RecordsHandle {
     /// Records nothing, and keeps what it was given for a test to read.
     pub fn recording() -> (Self, mpsc::Receiver<Life>) {
         let (tx, rx) = mpsc::channel(64);
-        (Self { lives: tx }, rx)
+        (
+            Self {
+                lives: tx,
+                replays: None,
+            },
+            rx,
+        )
+    }
+
+    /// The same, keeping finished matches' recordings too.
+    pub fn recording_replays() -> (Self, mpsc::Receiver<Life>, mpsc::Receiver<PendingReplay>) {
+        let (tx, rx) = mpsc::channel(64);
+        let (replays, pending) = mpsc::channel(8);
+        (
+            Self {
+                lives: tx,
+                replays: Some(replays),
+            },
+            rx,
+            pending,
+        )
+    }
+}
+
+#[cfg(test)]
+impl PendingReplay {
+    /// The recording as it would be stored.
+    pub fn finish(self) -> serde_json::Value {
+        let PendingReplay {
+            map,
+            recorder,
+            names,
+            ..
+        } = self;
+        recorder.finish(map, |id| names.get(&id).cloned().unwrap_or_default())
     }
 }
 
 /// Starts the task that writes lives and opens reviews.
 pub fn spawn(pool: PgPool) -> RecordsHandle {
+    let pool_for_replays = pool.clone();
     let (tx, mut rx) = mpsc::channel::<Life>(4096);
     tokio::spawn(async move {
         while let Some(life) = rx.recv().await {
@@ -273,7 +346,63 @@ pub fn spawn(pool: PgPool) -> RecordsHandle {
             }
         }
     });
-    RecordsHandle { lives: tx }
+    let (replays, mut pending) = mpsc::channel::<PendingReplay>(64);
+    let replay_pool = pool_for_replays;
+    tokio::spawn(async move {
+        while let Some(replay) = pending.recv().await {
+            let match_id = replay.match_id;
+            if let Err(err) = write_replay(&replay_pool, replay).await {
+                tracing::error!(?err, %match_id, "could not record a match");
+            }
+        }
+    });
+    RecordsHandle {
+        lives: tx,
+        replays: Some(replays),
+    }
+}
+
+/// Serialise one match's recording, store it, and let go of the old ones.
+async fn write_replay(pool: &PgPool, pending: PendingReplay) -> Result<()> {
+    let PendingReplay {
+        match_id,
+        map,
+        recorder,
+        names,
+    } = pending;
+    let data = recorder.finish(map, |id| names.get(&id).cloned().unwrap_or_default());
+    let replay = crate::replay::Replay {
+        match_id,
+        map,
+        data,
+    };
+    sqlx::query(
+        "INSERT INTO match_replays (match_id, map, data) VALUES ($1, $2, $3)
+         ON CONFLICT (match_id) DO NOTHING",
+    )
+    .bind(replay.match_id.as_uuid())
+    .bind(replay.map)
+    .bind(replay.data.to_string())
+    .execute(pool)
+    .await
+    .context("writing a match's recording")?;
+    // Old recordings go, except any match somebody under review played in:
+    // that one is the evidence, for as long as the question is open and
+    // after it has been answered against them.
+    sqlx::query(
+        "DELETE FROM match_replays r
+          WHERE r.recorded_at < now() - make_interval(days => $1)
+            AND NOT EXISTS (
+                SELECT 1 FROM match_lives l
+                  JOIN reviews v ON v.player_id = l.player_id
+                 WHERE l.match_id = r.match_id
+                   AND v.status IN ('open', 'confirmed'))",
+    )
+    .bind(REPLAY_DAYS)
+    .execute(pool)
+    .await
+    .context("letting go of old recordings")?;
+    Ok(())
 }
 
 /// Write one life, then judge the record it is now part of. Answers the
@@ -579,6 +708,113 @@ mod tests {
         write(&pool, &twice).await.unwrap();
         write(&pool, &twice).await.unwrap();
         assert_eq!(recent_record(&pool, honest).await.unwrap().lives, 4);
+    }
+
+    /// Against a real Postgres: a recording is stored, an old one nobody
+    /// needs goes, and an old one that is evidence in an open review stays.
+    #[tokio::test]
+    #[ignore = "needs a Postgres at DATABASE_URL"]
+    async fn recordings_are_kept_while_they_are_evidence() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let pool = crate::db::connect(&url).await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let old = |match_id: MatchId| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO match_replays (match_id, map, data, recorded_at)
+                     VALUES ($1, 'arena', '{}', now() - interval '30 days')",
+                )
+                .bind(match_id.as_uuid())
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let exists = |match_id: MatchId| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS (SELECT 1 FROM match_replays WHERE match_id = $1)",
+                )
+                .bind(match_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        // Nobody in this one is under review.
+        let forgotten = MatchId::new();
+        old(forgotten).await;
+        // A player under review played in this one.
+        let evidence = MatchId::new();
+        let suspect = PlayerId::new();
+        old(evidence).await;
+        let life = Life {
+            match_id: evidence,
+            player_id: suspect,
+            map: "arena",
+            stake: MicroUsd::from_usd(1),
+            outcome: Outcome::Survived,
+            counts: Counts::default(),
+            winnings: MicroUsd::ZERO,
+            alive_ms: 1000,
+        };
+        write(&pool, &life).await.unwrap();
+        sqlx::query(
+            "INSERT INTO reviews (player_id, match_id, reasons, evidence)
+             VALUES ($1, $2, ARRAY['accuracy'], '{}')",
+        )
+        .bind(suspect.as_uuid())
+        .bind(evidence.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A new match's recording arrives, and the sweep runs with it.
+        let fresh = MatchId::new();
+        let mut recorder = crate::replay::Recorder::default();
+        recorder.sample(
+            0,
+            [crate::replay::Pose {
+                id: suspect,
+                position: solatel_protocol::glam::Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+                health: 100,
+            }],
+        );
+        write_replay(
+            &pool,
+            PendingReplay {
+                match_id: fresh,
+                map: "arena",
+                recorder,
+                names: std::collections::HashMap::from([(suspect, "Suspect".to_string())]),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(exists(fresh).await, "a new recording is stored");
+        assert!(
+            !exists(forgotten).await,
+            "an old one nobody needs is let go"
+        );
+        assert!(
+            exists(evidence).await,
+            "an old one that is evidence is kept"
+        );
+        let stored: String =
+            sqlx::query_scalar("SELECT data FROM match_replays WHERE match_id = $1")
+                .bind(fresh.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(value["players"][0]["name"], "Suspect");
     }
 
     #[test]

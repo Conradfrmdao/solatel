@@ -143,7 +143,8 @@ cut, summed from the ledger and naming nobody. `/chain/blockhash` is what a
 page building a deposit for a connected wallet builds it on, and
 `/chain/usdc-account?owner=` names a wallet's USDC account for a USDC deposit. With `SOLATEL_ADMIN_TOKEN` set, `/admin` is
 the operator's view: the ledger's accounts, any player's balance, lives and
-ledger history, any match, and the anti-cheat's review queue.
+ledger history, any match with a replay of it from above, and the
+anti-cheat's review queue.
 
 **In a Claude Code on the web session** there is no Docker, and
 `.claude/hooks/session-start.sh` sets the machine up instead (wasm-bindgen, the

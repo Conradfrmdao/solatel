@@ -1528,6 +1528,23 @@ payout is finalized": a payout is money leaving for the chain. Nothing here
 claws money back or stops anybody playing; both are a person's decision.
 Clawing back is a ledger `adjustment` with a reason, made deliberately.
 
+**Every match is recorded for the reviewer** (`replay.rs`, migration 0011).
+A review holds a payout until a person decides, and a person cannot decide
+from ratios alone. The lobby samples every body eight times a second -
+position, aim, health - and keeps every shot, kill and blast the match was
+told about, by hooking `to_match` (the recorder sits in a `RefCell` on the
+`Match`, because that path has only a shared borrow). Names are taken when
+the match forms, since by its end some players have left. At `end_match` the
+recording goes to its own queue on the records task - serialised there, not
+on the tick - as integer JSON in decimetres and hundredths of a radian, into
+`match_replays`, where Postgres compresses it: a thirteen-player match is
+168 KB of text and 6 KB on disk. Recordings older than fourteen days go,
+unless somebody in the match is under review or was found against. The admin
+match view draws it from above over `/admin/api/maps/<name>/plan` (the brushes
+between knee and eye height): aim lines, the focused player's field of view,
+shots, kills, a timeline. A review links to its match with the flagged player
+in focus. `node client/admin.mjs` drives the whole admin view in a browser.
+
 **The admin view** is at `/admin`, off unless `SOLATEL_ADMIN_TOKEN` (24
 characters or more) is set, and its API answers only a request carrying that
 token as a bearer token, compared by SHA-256 so the comparison takes the same

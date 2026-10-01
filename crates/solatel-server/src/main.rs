@@ -14,6 +14,7 @@ mod ledger;
 mod proof;
 mod reconcile;
 mod records;
+mod replay;
 mod solana;
 mod tick;
 mod wallet;

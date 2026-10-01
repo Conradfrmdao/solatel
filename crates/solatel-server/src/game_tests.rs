@@ -2277,6 +2277,38 @@ fn a_survivor_is_written_with_what_they_did() {
 }
 
 #[test]
+fn a_finished_match_is_recorded_for_review() {
+    let mut duel = Duel::new();
+    let (handle, _lives, mut replays) = crate::records::RecordsHandle::recording_replays();
+    duel.lobby.records = Some(handle);
+    duel.kill_the_victim();
+    duel.lobby.end_match(duel.match_id);
+
+    let recording = replays
+        .try_recv()
+        .expect("a match that ended should hand over its recording")
+        .finish();
+    let names: Vec<&str> = recording["players"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    let index = |name: &str| names.iter().position(|n| *n == name).unwrap() as i64;
+    // Sampled through the match, every shot that was taken, and the kill.
+    assert!(recording["frames"].as_array().unwrap().len() > 3);
+    assert_eq!(
+        recording["shots"].as_array().unwrap().len() as u32,
+        Duel::shots_to_kill(),
+        "every shot the match was told about"
+    );
+    let kill = &recording["kills"][0];
+    assert_eq!(kill[1].as_i64(), Some(index("Shooter")));
+    assert_eq!(kill[2].as_i64(), Some(index("Victim")));
+    assert!(replays.try_recv().is_err(), "one recording per match");
+}
+
+#[test]
 fn nothing_is_written_in_free_play() {
     let mut duel = Duel::new();
     duel.kill_the_victim();

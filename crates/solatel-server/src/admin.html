@@ -189,7 +189,6 @@ function evidenceView(e) {
     `${e.lives} lives, ${e.shots_fired} shots: accuracy ${pct(e.shots_hit, e.shots_fired)}, `
     + `headshots ${pct(e.headshots, e.shots_hit)} of hits, flicks ${pct(e.snap_hits, e.shots_hit)} of hits, `
     + (e.reactions != null ? `quicker than a person in ${pct(e.quick_reactions, e.reactions)} of ${e.reactions} fights, ` : '')
-    + `
     + `${e.kills} kills`);
 }
 
@@ -214,7 +213,8 @@ async function reviews(status = 'open') {
       el('div', { class: 'row' },
         el('b', {}, 'player '), playerLink(r.player_id),
         r.reasons.map((x) => el('span', { class: 'tag warn' }, x)),
-        el('span', { class: 'dim' }, `flagged ${when(r.created_at)} on match `), matchLink(r.match_id)),
+        el('span', { class: 'dim' }, `flagged ${when(r.created_at)} on match `),
+        r.match_id ? el('a', { href: `#matches/${r.match_id}/${r.player_id}`, class: 'mono' }, `${short(r.match_id)} (watch it)`) : '-'),
       evidenceView(r.evidence),
       el('div', { class: 'dim' }, `balance ${usd(r.balance_micro_usd)}, ${r.lives} lives on record`),
       r.status === 'open'
@@ -300,11 +300,13 @@ async function player(id) {
   ];
 }
 
-async function matches(id) {
+async function matches(id, focusPlayer) {
   if (id) {
     const m = await api(`/matches/${id}`);
     return [
       el('div', { class: 'box' }, el('b', {}, 'match '), el('span', { class: 'mono' }, m.match_id)),
+      el('h2', {}, 'Replay'),
+      m.replay ? await replayView(m.match_id, focusPlayer) : el('p', { class: 'dim' }, 'No recording of this match: it ended before recordings were kept, or more than fourteen days ago with nobody in it under review.'),
       el('h2', {}, 'Lives'), table(lifeColumns(true), m.lives),
       el('h2', {}, 'Ledger transactions keyed on this match'), table([
         ['when', (t) => when(t.created_at)],
@@ -328,21 +330,196 @@ async function matches(id) {
   ], list)];
 }
 
+// ---- the replay viewer ------------------------------------------------------
+//
+// The match from above, as the server recorded it (replay.rs): every body a
+// few times a second, every shot, kill and blast. Walls are the map's brushes
+// between knee and eye height. Positions are decimetres, angles hundredths
+// of a radian, times ticks from the first sample.
+
+const COLOURS = ['#7fd49a', '#f2c14e', '#7fb3f2', '#ef6f6c', '#c792ea', '#f78c6c', '#89ddff', '#c3e88d',
+  '#ffcb6b', '#ff5370', '#82aaff', '#b2ccd6'];
+const CAUSE = ['rifle', 'grenade', 'zone', 'fall'];
+
+async function replayView(matchId, focusPlayer) {
+  const res = await fetch(`/admin/api/matches/${matchId}/replay`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return el('p', { class: 'dim' }, `could not load the recording (${res.status})`);
+  const rec = await res.json();
+  if (rec.v !== 1) return el('p', { class: 'dim' }, `a recording of version ${rec.v}, which this page cannot read`);
+  const plan = await api(`/maps/${rec.map}/plan`);
+  const hz = rec.tick_hz;
+  const frames = rec.frames.map((f) => {
+    const bodies = new Map();
+    for (let i = 1; i + 6 < f.length; i += 7) bodies.set(f[i], f.slice(i + 1, i + 7));
+    return { t: f[0], bodies };
+  });
+  const end = Math.max(frames.at(-1)?.t ?? 0, ...rec.kills.map((k) => k[0]), ...rec.shots.map((s) => s[0]));
+  // Whoever the reviewer came here to look at, if they came from a review.
+  let focus = Math.max(0, rec.players.findIndex((p) => p.id === focusPlayer));
+  let at = 0;
+  let playing = false;
+  let speed = 1;
+
+  const canvas = el('canvas', { width: 1100, height: 760, style: 'width:100%;background:#0b0e10;border:1px solid var(--line);border-radius:8px' });
+  const g = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const scale = Math.min(W / (2 * plan.half_x), H / (2 * plan.half_z)) * 0.98;
+  const sx = (x) => W / 2 + x * scale;
+  const sz = (z) => H / 2 + z * scale;
+
+  const slider = el('input', { type: 'range', min: 0, max: end, value: 0, style: 'flex:1' });
+  const clock = el('span', { class: 'mono' });
+  const play = el('button', { type: 'button' }, 'play');
+  const rate = el('select', {}, [0.25, 0.5, 1, 2, 4].map((v) => el('option', { value: v, ...(v === 1 ? { selected: '' } : {}) }, `${v}x`)));
+  const who = el('select', {}, rec.players.map((p, i) => el('option', { value: i }, `${p.name} · ${short(p.id)}`)));
+  const kills = el('div', { class: 'dim', style: 'margin-top:8px' }, rec.kills.map((k) => {
+    const killer = k[1] >= 0 ? rec.players[k[1]].name : 'nobody';
+    const victim = rec.players[k[2]].name;
+    const link = el('a', { href: '#', class: 'mono' }, stamp(k[0]));
+    link.addEventListener('click', (e) => { e.preventDefault(); at = Math.max(0, k[0] - 3 * hz); focus = k[1] >= 0 ? k[1] : k[2]; who.value = focus; draw(); });
+    return el('div', {}, link, ` ${killer} killed ${victim} (${CAUSE[k[3]] ?? '?'}${k[4] ? ', head' : ''})`);
+  }));
+
+  function stamp(t) {
+    const secs = Math.floor(t / hz);
+    return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  }
+
+  /** Each body at tick `t`, between the two samples either side of it. */
+  function bodiesAt(t) {
+    let lo = 0;
+    let hi = frames.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (frames[mid].t <= t) lo = mid; else hi = mid - 1;
+    }
+    const a = frames[lo];
+    const b = frames[Math.min(lo + 1, frames.length - 1)];
+    const k = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
+    const out = new Map();
+    for (const [id, p] of a.bodies) {
+      const q = b.bodies.get(id) ?? p;
+      let dyaw = q[3] - p[3];
+      if (dyaw > 314) dyaw -= 628;
+      if (dyaw < -314) dyaw += 628;
+      out.set(id, [p[0] + (q[0] - p[0]) * k, p[1], p[2] + (q[2] - p[2]) * k, p[3] + dyaw * k, p[4], p[5]]);
+    }
+    return out;
+  }
+
+  function draw() {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = 'rgba(150, 160, 170, 0.5)';
+    for (const [x0, z0, x1, z1] of plan.walls) g.fillRect(sx(x0), sz(z0), Math.max(1, (x1 - x0) * scale), Math.max(1, (z1 - z0) * scale));
+    const bodies = bodiesAt(at);
+    // The focused player's view: ninety degrees, forty metres.
+    const me = bodies.get(focus);
+    if (me) {
+      const yaw = me[3] / 100;
+      g.fillStyle = 'rgba(127, 212, 154, 0.08)';
+      g.beginPath();
+      g.moveTo(sx(me[0]), sz(me[2]));
+      for (const d of [-Math.PI / 4, Math.PI / 4]) g.lineTo(sx(me[0] - Math.sin(yaw + d) * 400), sz(me[2] - Math.cos(yaw + d) * 400));
+      g.closePath();
+      g.fill();
+    }
+    for (const s of rec.shots) {
+      const age = at - s[0];
+      if (age < 0 || age > hz * 0.5) continue;
+      g.strokeStyle = s[8] ? `rgba(239, 111, 108, ${1 - age / (hz * 0.5)})` : `rgba(242, 193, 78, ${0.7 - age / (hz * 0.7)})`;
+      g.lineWidth = s[1] === focus ? 2 : 1;
+      g.beginPath();
+      g.moveTo(sx(s[2]), sz(s[4]));
+      g.lineTo(sx(s[5]), sz(s[7]));
+      g.stroke();
+    }
+    for (const b of rec.blasts) {
+      const age = at - b[0];
+      if (age < 0 || age > hz) continue;
+      g.strokeStyle = `rgba(255, 160, 60, ${1 - age / hz})`;
+      g.beginPath();
+      g.arc(sx(b[2]), sz(b[4]), 70 * scale, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.font = '11px system-ui';
+    for (const [id, p] of bodies) {
+      const colour = id === focus ? '#ffffff' : COLOURS[id % COLOURS.length];
+      const x = sx(p[0]);
+      const z = sz(p[2]);
+      const yaw = p[3] / 100;
+      g.strokeStyle = colour;
+      g.lineWidth = id === focus ? 2 : 1;
+      g.beginPath();
+      g.moveTo(x, z);
+      g.lineTo(x - Math.sin(yaw) * 30 * scale * 3, z - Math.cos(yaw) * 30 * scale * 3);
+      g.stroke();
+      g.fillStyle = colour;
+      g.beginPath();
+      g.arc(x, z, id === focus ? 5 : 3.5, 0, Math.PI * 2);
+      g.fill();
+      g.fillText(`${rec.players[id]?.name ?? id} ${p[5]}`, x + 7, z - 6);
+    }
+    for (const k of rec.kills) {
+      const age = at - k[0];
+      if (age < 0 || age > hz * 4) continue;
+      const before = bodiesAt(k[0] - 1).get(k[2]);
+      if (!before) continue;
+      g.strokeStyle = `rgba(239, 111, 108, ${1 - age / (hz * 4)})`;
+      g.lineWidth = 2;
+      const x = sx(before[0]);
+      const z = sz(before[2]);
+      g.beginPath();
+      g.moveTo(x - 6, z - 6); g.lineTo(x + 6, z + 6); g.moveTo(x + 6, z - 6); g.lineTo(x - 6, z + 6);
+      g.stroke();
+    }
+    slider.value = String(Math.round(at));
+    clock.textContent = `${stamp(at)} / ${stamp(end)}`;
+  }
+
+  let last = null;
+  function tick(now) {
+    if (!playing) { last = null; return; }
+    if (last !== null) at = Math.min(end, at + ((now - last) / 1000) * hz * speed);
+    last = now;
+    draw();
+    if (at >= end) { playing = false; play.textContent = 'play'; return; }
+    requestAnimationFrame(tick);
+  }
+  play.addEventListener('click', () => {
+    playing = !playing;
+    play.textContent = playing ? 'pause' : 'play';
+    if (at >= end) at = 0;
+    if (playing) requestAnimationFrame(tick);
+  });
+  slider.addEventListener('input', () => { at = Number(slider.value); draw(); });
+  rate.addEventListener('change', () => { speed = Number(rate.value); });
+  who.addEventListener('change', () => { focus = Number(who.value); draw(); });
+  who.value = String(focus);
+  draw();
+  return el('div', { class: 'box' },
+    el('div', { class: 'row', style: 'display:flex;gap:8px;align-items:center;margin-bottom:8px' }, play, slider, clock, rate, who),
+    canvas,
+    el('div', { class: 'dim', style: 'margin-top:6px' },
+      'From above, as the server recorded it. White is the player in focus, with a ninety degree view; lines are aim. Red lines are shots that hit, yellow ones missed; a red cross is a death. The number by each name is health.'),
+    kills);
+}
+
 const views = { overview, reviews, players, matches };
 
-async function render(tab, arg) {
+async function render(tab, arg, extra) {
   for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab);
   main.replaceChildren(el('p', { class: 'dim' }, 'loading…'));
   try {
-    main.replaceChildren(...(await views[tab](arg)));
+    main.replaceChildren(...(await views[tab](arg, extra)));
   } catch (err) {
     if (err.message !== 'unauthorised') main.replaceChildren(el('div', { class: 'msg' }, `could not load: ${err.message}`));
   }
 }
 
 function route() {
-  const [tab, arg] = location.hash.slice(1).split('/');
-  render(views[tab] ? tab : 'overview', arg);
+  const [tab, arg, extra] = location.hash.slice(1).split('/');
+  render(views[tab] ? tab : 'overview', arg, extra);
 }
 
 function start() {
