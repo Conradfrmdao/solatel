@@ -485,6 +485,10 @@ struct Match {
     /// Grenades thrown and not yet gone off.
     grenades: Vec<LiveGrenade>,
     next_grenade: u32,
+    /// Everything this match is, as it is played, for a reviewer. In a cell
+    /// because it is written from `to_match`, which everything that tells a
+    /// match anything already goes through with a shared borrow.
+    recorder: std::cell::RefCell<crate::replay::Recorder>,
 }
 
 /// A grenade in the air or on the ground, with its fuse burning.
@@ -852,12 +856,21 @@ impl Lobby {
                 next_spawn: 0,
                 grenades: Vec::new(),
                 next_grenade: 0,
+                recorder: Default::default(),
             },
         );
         tracing::info!(
             match_id = %id, map = map.name, stake = %stakes.entry(), players = seats,
             "match forming"
         );
+        let names: Vec<(PlayerId, String)> =
+            players.iter().map(|p| (*p, self.name_of(*p))).collect();
+        if let Some(game) = self.matches.get(&id) {
+            let mut recorder = game.recorder.borrow_mut();
+            for (player, name) in names {
+                recorder.introduce(player, name);
+            }
+        }
 
         let found = ServerMsg::MatchFound {
             match_id: id,
@@ -1014,7 +1027,21 @@ impl Lobby {
                 winnings_micro_usd: winnings,
             });
         }
-        self.matches.remove(&match_id);
+        // The recording goes to be written. It is serialised there rather
+        // than here, so the tick does not wait on a megabyte of JSON.
+        if let Some(game) = self.matches.remove(&match_id)
+            && let Some(records) = &self.records
+        {
+            let recorder = game.recorder.into_inner();
+            if !recorder.is_empty() {
+                let names = game
+                    .bodies
+                    .keys()
+                    .map(|id| (*id, self.name_of(*id)))
+                    .collect();
+                records.send_replay(match_id, game.map.name, recorder, names);
+            }
+        }
         self.broadcast_lobby();
     }
 
@@ -1738,6 +1765,25 @@ impl Lobby {
             }
         }
 
+        // A few times a second, everybody standing, for the recording.
+        if crate::replay::Recorder::due(tick)
+            && let Some(game) = self.matches.get(&match_id)
+        {
+            game.recorder.borrow_mut().sample(
+                tick,
+                game.bodies
+                    .iter()
+                    .filter(|(_, b)| b.state.is_alive())
+                    .map(|(id, b)| crate::replay::Pose {
+                        id: *id,
+                        position: b.state.position,
+                        yaw: b.state.yaw,
+                        pitch: b.state.pitch,
+                        health: b.state.health,
+                    }),
+            );
+        }
+
         for (victim, cause) in fell {
             self.die_unshot(match_id, victim, cause, now);
         }
@@ -2383,6 +2429,8 @@ impl Lobby {
         let Some(game) = self.matches.get(&match_id) else {
             return;
         };
+        // What the match is told is what the recording keeps.
+        game.recorder.borrow_mut().heard(self.tick, msg);
         for id in game.bodies.keys() {
             if let Some(connection) = self.connections.get(id)
                 && connection.at == Whereabouts::Playing(match_id)

@@ -75,6 +75,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/players/{id}", get(player))
         .route("/matches", get(matches))
         .route("/matches/{id}", get(one_match))
+        .route("/matches/{id}/replay", get(replay))
+        .route("/maps/{name}/plan", get(plan))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
         .route("/admin", get(page))
@@ -389,6 +391,7 @@ async fn one_match(State(state): State<AppState>, Path(id): Path<Uuid>) -> Respo
         &state,
         "SELECT json_build_object(
             'match_id', $1::uuid,
+            'replay', EXISTS (SELECT 1 FROM match_replays WHERE match_id = $1),
             'lives', (SELECT coalesce(json_agg(l ORDER BY l.ended_at), '[]') FROM (
                         SELECT player_id, map, stake_micro_usd, outcome::text AS outcome,
                                killer_id, kills, shots_fired, shots_hit, headshots,
@@ -410,6 +413,31 @@ async fn one_match(State(state): State<AppState>, Path(id): Path<Uuid>) -> Respo
         &[Bind::Uuid(id)],
     )
     .await
+}
+
+/// A match's recording, as it was stored: already JSON, so it is handed
+/// over as it is rather than parsed and written out again.
+async fn replay(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    match sqlx::query_scalar::<_, String>("SELECT data FROM match_replays WHERE match_id = $1")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(Some(data)) => ([(header::CONTENT_TYPE, "application/json")], data).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(%err, "reading a recording failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// A map from above, for drawing a recording over.
+async fn plan(Path(name): Path<String>) -> Response {
+    match solatel_protocol::sim::map::by_name(&name) {
+        Some(map) => Json(crate::replay::plan(map)).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[cfg(test)]
