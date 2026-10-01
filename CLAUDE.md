@@ -563,6 +563,21 @@ development money can be played with and must not leave as SOL. The treasury
 keeps its own rent-exempt minimum plus the fee, and a withdrawal it cannot
 cover is returned with a reason.
 
+**The treasury is split hot and cold** (`cold.rs`, migration 0013), when
+`SOLATEL_COLD_ADDRESS` and `SOLATEL_HOT_CAP_SOL` are both set. The treasury
+key lives on the server, so what it controls is what a compromise costs: the
+hot wallet keeps its cap plus every withdrawal asked for and not yet landed,
+and anything over that by at least a tenth of the cap goes to the cold address
+- once an hour at most, one in flight at a time (the database holds to that
+too, with a partial unique index). A sweep is signed, written down, sent and
+followed exactly as a withdrawal is, into `treasury_sweeps`; it is not a
+ledger transaction, because the money is the game's either side. The cold
+address need not be on the curve - a Squads multisig vault is a
+program-derived address - and must not be the treasury. Solvency on
+`/health` counts hot and cold together. SOL only; USDC stays where it lands.
+Refilling hot from cold is the vault's signers' job, by hand. It has never
+been run against devnet: that moves SOL, and waits on Conrad.
+
 Protocol 10 carries it: `ClientMsg::Withdraw`, `ServerMsg::{Deposited,
 Withdrawal, WithdrawalRefused}`, and `Welcome.wallet` with the terms;
 protocol 14 adds wallet sign-in (see *Accounts*), 15 USDC and 16 invites. The

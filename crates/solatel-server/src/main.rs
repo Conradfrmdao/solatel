@@ -6,6 +6,7 @@
 mod account;
 mod admin;
 mod chain;
+mod cold;
 mod config;
 mod db;
 mod game;
@@ -373,6 +374,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             Some(s) => json!({
                 "treasury_lamports": s.treasury_lamports,
                 "treasury_usdc_units": s.treasury_usdc_units,
+                "cold_lamports": s.cold_lamports,
                 "treasury_micro_usd": s.treasury_micro_usd,
                 "owed_micro_usd": s.owed_micro_usd,
                 "micro_usd_per_sol": s.micro_usd_per_sol,

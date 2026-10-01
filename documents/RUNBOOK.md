@@ -35,6 +35,7 @@ keep the values in the platform's secret store.
 | `SOLATEL_ADMIN_TOKEN` | turns on `/admin`; 24 characters or more | yes |
 | `SOLATEL_TREASURY_KEY` | the devnet treasury's secret key; with the rate, turns the wallet on | yes |
 | `SOLATEL_SOL_USD` | dollars per SOL, fixed; required with the treasury key | no |
+| `SOLATEL_COLD_ADDRESS`, `SOLATEL_HOT_CAP_SOL` | cold storage: the hot wallet's excess over its cap swept there hourly | no |
 | `SOLATEL_TIERS` | which tables, out of `1,2,5,10`; all four by default | no |
 | `SOLATEL_QUEUE_WAIT`, `SOLATEL_MATCH_FLOOR`, `SOLATEL_WARMUP` | matchmaking; defaults are 120 s, 4, 15 s | no |
 | `RUST_LOG` | the image defaults to `solatel_server=info` | no |
@@ -109,6 +110,7 @@ alert on:
 | `escrow_micro_usd` | not falling back towards 0 after matches end | a settlement has stopped happening |
 | `wallet.treasury_micro_usd` | below `wallet.owed_micro_usd` | the treasury could not pay everybody out at once |
 | `wallet.checked` | `false` for more than a minute | the wallet loop cannot reach the chain |
+| `wallet.treasury_lamports` | far over the hot cap for more than an hour | sweeps to cold storage are not landing; read `treasury_sweeps` |
 
 `sessions` is how many sockets are open. `/proof` is the public payout
 record and should always answer; `/admin` is the operator's view of
@@ -159,8 +161,8 @@ devnet server for a launch:
 
 - Plisio (or another processor) for deposits and withdrawals in place of
   the devnet rail.
-- The treasury split into a hot wallet for withdrawals and cold storage
-  behind a multisig.
+- A multisig vault (Squads) set up and its address configured as cold
+  storage; the sweep is built and waits on it.
 - A drain on SIGTERM, so a deploy does not end matches in progress.
 - The rifle model's licence confirmed, or the model replaced.
 - Legal review of real-money play where it will be offered.

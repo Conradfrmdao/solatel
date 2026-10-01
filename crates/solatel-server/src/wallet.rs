@@ -262,6 +262,8 @@ impl Terms {
 pub struct Wallet {
     pub terms: Terms,
     treasury: Treasury,
+    /// Where the hot wallet's excess goes, if anywhere. See `cold.rs`.
+    cold: Option<crate::cold::ColdStorage>,
 }
 
 fn configured(name: &str) -> Option<String> {
@@ -292,6 +294,7 @@ impl Wallet {
         };
         let treasury = Treasury::from_base58(&key)?;
         let rate = SolUsd::parse(&rate).context("SOLATEL_SOL_USD")?;
+        let cold = crate::cold::ColdStorage::from_env(treasury.address)?;
         Ok(Some(Self {
             terms: Terms {
                 treasury: treasury.address,
@@ -304,6 +307,7 @@ impl Wallet {
                 withdrawals_open: !dev_grant,
             },
             treasury,
+            cold,
         }))
     }
 }
@@ -318,7 +322,11 @@ pub struct Solvency {
     pub treasury_lamports: u64,
     /// USDC in the treasury's token account, in base units (micro-USD).
     pub treasury_usdc_units: u64,
-    /// The treasury at the configured rate, USDC included one to one.
+    /// SOL in cold storage, when there is any. Counted in the treasury below:
+    /// it is the game's money, kept somewhere the server cannot spend it.
+    pub cold_lamports: Option<u64>,
+    /// The treasury at the configured rate, hot and cold, USDC included one
+    /// to one.
     pub treasury_micro_usd: i64,
     /// Every player balance, every stake in escrow and every withdrawal in
     /// flight.
@@ -351,6 +359,13 @@ pub fn spawn(wallet: Wallet, pool: PgPool, game: GameHandle, wake: Arc<Notify>) 
         withdrawals = wallet.terms.withdrawals_open,
         "wallet on devnet: deposits to the treasury, memo = player id"
     );
+    if let Some(cold) = &wallet.cold {
+        tracing::info!(
+            cold = %cold.address,
+            hot_cap = %sol_text(cold.hot_cap_lamports),
+            "cold storage on: the hot wallet's excess over its cap is swept there"
+        );
+    }
     if !wallet.terms.withdrawals_open {
         tracing::warn!(
             "withdrawals are off because SOLATEL_DEV_GRANT is set; development money must not leave as SOL"
@@ -386,6 +401,7 @@ pub fn spawn(wallet: Wallet, pool: PgPool, game: GameHandle, wake: Arc<Notify>) 
             let outcome = async {
                 chain.scan_deposits(&mut accounts).await?;
                 chain.drive_withdrawals(&mut accounts).await?;
+                chain.sweep_to_cold().await?;
                 chain.solvency().await
             }
             .await;
@@ -752,19 +768,124 @@ impl Chain<'_> {
         Ok(())
     }
 
+    // ---- cold storage ----------------------------------------------------
+
+    /// Follow any sweep in flight, then sweep the hot wallet's excess if it
+    /// is time to. Nothing at all without cold storage configured.
+    async fn sweep_to_cold(&self) -> Result<()> {
+        let Some(cold) = self.wallet.cold else {
+            return Ok(());
+        };
+        let in_flight = self.follow_sweeps().await?;
+        let (since_last, promised): (Option<f64>, i64) = sqlx::query_as(
+            "SELECT (SELECT extract(epoch FROM now() - max(created_at))::float8 FROM treasury_sweeps),
+                    (SELECT coalesce(sum(lamports), 0)::bigint FROM withdrawals
+                      WHERE status IN ('requested', 'sent'))",
+        )
+        .fetch_one(self.pool)
+        .await
+        .context("reading what the hot wallet has promised")?;
+        let hot = self.rpc.balance(self.treasury()).await?;
+        let Some(lamports) = cold.sweep(
+            hot,
+            u64::try_from(promised).unwrap_or(0),
+            since_last.map(|s| std::time::Duration::from_secs_f64(s.max(0.0))),
+            in_flight,
+        ) else {
+            return Ok(());
+        };
+        let signed = self
+            .rpc
+            .sign_transfer(
+                &self.wallet.treasury,
+                cold.address,
+                lamports,
+                Some("solatel sweep to cold storage"),
+            )
+            .await?;
+        // On record before it goes, exactly as a withdrawal is.
+        sqlx::query(
+            "INSERT INTO treasury_sweeps
+                 (lamports, destination, signature, signed_transaction, last_valid_block_height)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(lamports as i64)
+        .bind(cold.address.to_string())
+        .bind(&signed.signature)
+        .bind(&signed.wire_base64)
+        .bind(signed.last_valid_block_height as i64)
+        .execute(self.pool)
+        .await
+        .context("recording a sweep to cold storage")?;
+        tracing::info!(
+            sol = %sol_text(lamports),
+            to = %cold.address,
+            signature = %signed.signature,
+            "sweeping the hot wallet's excess to cold storage"
+        );
+        if let Err(err) = self.rpc.send(&signed.wire_base64).await {
+            tracing::debug!(?err, "sending a sweep did not answer cleanly");
+        }
+        Ok(())
+    }
+
+    /// What became of each sweep in flight. Answers whether one still is.
+    async fn follow_sweeps(&self) -> Result<bool> {
+        let sent: Vec<(Uuid, String, String, i64)> = sqlx::query_as(
+            "SELECT id, signature, signed_transaction, last_valid_block_height
+               FROM treasury_sweeps WHERE status = 'sent'",
+        )
+        .fetch_all(self.pool)
+        .await
+        .context("reading sweeps in flight")?;
+        let mut still = false;
+        for (id, signature, wire, last_valid) in sent {
+            let status = match self.rpc.outcome(&signature).await? {
+                Outcome::Finalized => "landed",
+                Outcome::Failed => "failed",
+                Outcome::Pending => {
+                    still = true;
+                    continue;
+                }
+                Outcome::Unknown => {
+                    if self.rpc.finalized_height().await? > last_valid as u64 + EXPIRY_MARGIN {
+                        "expired"
+                    } else {
+                        still = true;
+                        let _ = self.rpc.send(&wire).await;
+                        continue;
+                    }
+                }
+            };
+            sqlx::query("UPDATE treasury_sweeps SET status = $2, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .bind(status)
+                .execute(self.pool)
+                .await
+                .context("recording what became of a sweep")?;
+            tracing::info!(%signature, status, "sweep to cold storage settled");
+        }
+        Ok(still)
+    }
+
     async fn solvency(&self) -> Result<Solvency> {
         let lamports = self.rpc.balance(self.treasury()).await?;
         let usdc = self
             .rpc
             .token_balance(self.wallet.terms.usdc_account)
             .await?;
+        let cold = match self.wallet.cold {
+            Some(cold) => Some(self.rpc.balance(cold.address).await?),
+            None => None,
+        };
         let owed = ledger::owed(self.pool).await?;
         let rate = self.wallet.terms.rate;
         Ok(Solvency {
             treasury_lamports: lamports,
             treasury_usdc_units: usdc,
+            cold_lamports: cold,
             treasury_micro_usd: rate
-                .micros_for(lamports)
+                .micros_for(lamports.saturating_add(cold.unwrap_or(0)))
                 .saturating_add(i64::try_from(usdc).unwrap_or(i64::MAX)),
             owed_micro_usd: owed.micros(),
             micro_usd_per_sol: rate.micro_usd(),
