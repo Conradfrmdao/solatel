@@ -608,7 +608,8 @@ The wire format is JSON text frames for now, funnelled through `net::encode` /
 
 Three.js, plain JavaScript, bundled by esbuild into `web/dist`. It replaced a
 Bevy/wasm client that was 81 MB and fought us over asset compatibility, visuals
-and mouse look; this one is about 690 KB all in. `./x client` builds it, `./x
+and mouse look; this one's JavaScript is about 940 KB, before the wasm and
+the assets. `./x client` builds it, `./x
 watch` rebuilds the JavaScript on save.
 
 **Movement is not reimplemented in JavaScript.** `crates/solatel-sim-wasm` wraps

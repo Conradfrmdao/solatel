@@ -271,9 +271,12 @@ Two limits exist purely because this game pays money:
    server's own counts; implausible records (accuracy, headshots, hits at the
    end of a flick, fights opened faster than a person reacts) open a review
    that holds withdrawals until a person decides it in the admin view at
-   `/admin`. Still to do: an adversarial client run
-   against a live server, and tuning the lines against real records.
-6. Polish and launch prep.
+   `/admin`, with a replay of every match from above. An adversarial client
+   (`client/cheat.mjs`) runs against a live server. Still to do: tuning the
+   lines against real records.
+6. **Polish and launch prep.** *(started)* A container image and a runbook
+   (`documents/RUNBOOK.md`), the treasury split hot and cold, invites recorded,
+   clips, the rifle built in code. Waiting on decisions listed below.
 
 ## Open decisions
 
