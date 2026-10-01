@@ -5,6 +5,43 @@ Windows machine. Read this whole file, then `CLAUDE.md` (the authoritative
 working notes; its rules are not negotiable), then start on the task list.
 Everything described here is committed at `9bff08c` on `main`.
 
+## Status, 2026-10-01
+
+Everything below this section is the record of earlier sessions. Since then,
+merged to `main` through PR #19:
+
+- Money: an escrow lease so one server owns escrow; deposits in SOL or USDC
+  from a connected wallet or a Solana Pay code; signing in with a Solana
+  wallet; the treasury split hot and cold (off until a cold address is set);
+  invites recorded (nothing paid); a public payout record at `/proof`.
+- Fair play: a reaction-time line in the anti-cheat; every match recorded and
+  replayable from above in `/admin`; an adversarial client (`cheat.mjs`, 26
+  checks); names that cannot print a killfeed backwards.
+- The game: per-map skies, real grass, tyres and drums in the yard, a better
+  sedan, bullet impacts, reloads and throws seen on other players, graphics
+  presets, a death you see happen, hits that say where they came from, the
+  kill payout on screen, F8 clips, and the rifle built in code (the
+  unlicensed model is deleted).
+- Running it: a Dockerfile, `documents/RUNBOOK.md`, SIGTERM handled, stale
+  tabs reload themselves after a deploy.
+
+Drivers: `menu.mjs`, `resume.mjs`, `duel.mjs`, `survive.mjs`, `cheat.mjs`,
+`admin.mjs` (needs `SOLATEL_ADMIN_TOKEN`), `stale.mjs` (needs no server),
+`load.mjs`, `perf.mjs`, `smoke.mjs`.
+
+**Waiting on Conrad**, and not to be done without him:
+
+- The devnet end-to-end deposit and withdrawal (funding the payer moves SOL).
+- Task 4, the $4 escrow correction on Neon.
+- Hosting, and the processor (Plisio) and its key.
+- A multisig vault for cold storage, and the hot wallet's cap.
+- What an invite is worth, and on what it is paid.
+- Whether a deploy refunds live stakes in full rather than as abandons, or
+  drains matches first.
+- A movement and shooting playtest, and the recoil, spread and sprint
+  decisions that have to be enforced by the server.
+- The yard map's licence in writing.
+
 ## Status after the first cloud session (2026-09-25)
 
 Branch `claude/cloud-session-check-4os737`, PR #1. Done there:
@@ -61,7 +98,7 @@ before building.
 - **Solana stays on devnet** until Conrad explicitly says otherwise.
   `solana::Cluster::devnet()` is the only cluster, and nothing may be able to
   move mainnet funds by accident.
-- **Protocol changes bump `PROTOCOL_VERSION`** (currently 10) in the same
+- **Protocol changes bump `PROTOCOL_VERSION`** (currently 16) in the same
   commit.
 - **Never commit secrets.** `.env` is gitignored and never in the repo.
 - The yard map's licence is Conrad's word, still to be found in writing. The
