@@ -74,6 +74,7 @@ try {
   await page.click(`#menu-maps .map[data-map="${mapName}"]`);
   await page.waitForSelector('#menu-tables .table', { timeout: 30000 });
   await page.click('#menu-tables .table');
+  await page.click('#menu-play');
   await page.waitForFunction(() => document.body.classList.contains('running'), { timeout: 300000, polling: 500 });
   await frames(4);
   const started = performance.now();

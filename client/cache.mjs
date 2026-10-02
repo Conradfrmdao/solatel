@@ -76,12 +76,18 @@ async function visit() {
   await tab.goto(`${base}/?debug=1&nolock=1`);
   // Set once boot has loaded the simulation, the rifle and the soldier.
   await tab.waitForFunction(() => window.solatel !== undefined, { timeout: 90000 });
+  // Then the menu takes over from the boot screen and asks for its art. Left
+  // in flight, those requests were cut off by the next visit, never cached,
+  // and counted against it as files fetched twice.
+  await tab.waitForNetworkIdle({ idleTime: 500, timeout: 30000 });
   tab.off('response', listen);
   return seen;
 }
 const first = await visit();
 const second = await visit();
-const hashed = (path) => path !== '/' && path !== '/index.html';
+// Named by its contents - which the page and the API routes (`/board`) are
+// not, and are never stored either.
+const hashed = (path) => /\.[0-9a-f]{16}\.[a-z0-9]+$/.test(path);
 check(first.some((r) => hashed(r.path)), `the first visit fetched ${first.filter((r) => hashed(r.path)).length} files`);
 const refetched = second.filter((r) => hashed(r.path) && !r.cached);
 for (const r of refetched) console.log(`     fetched again: ${r.path}`);
@@ -89,7 +95,7 @@ check(
   refetched.length === 0 && second.some((r) => hashed(r.path) && r.cached),
   `the second visit took ${second.filter((r) => r.cached).length} files from the cache and fetched none again`,
 );
-check(second.some((r) => !hashed(r.path) && !r.cached), 'the second visit fetched the page itself from the server');
+check(second.some((r) => r.path === '/' && !r.cached), 'the second visit fetched the page itself from the server');
 await browser.close();
 
 // 4. The handshake: this build is let in, another is refused.

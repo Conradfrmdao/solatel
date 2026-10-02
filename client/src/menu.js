@@ -18,6 +18,7 @@
 // preview that lied about money.
 
 import qrcode from 'qrcode-generator';
+import { asset } from './assets.js';
 import {
   canSend,
   connect,
@@ -32,19 +33,28 @@ import {
   watchWallets,
 } from './solana.js';
 
-const PANES = ['play', 'wallet', 'profile', 'fair', 'settings'];
+const PANES = ['play', 'wallet', 'board', 'profile', 'fair', 'settings'];
 
 /** How long a read of the payout record is shown before it is read again.
  *  The server caches it for a minute; asking more often gains nothing. */
 const PROOF_STALE_MS = 30_000;
 
-/** One line about each map's ground, for the card. Cosmetic: the server
- *  names the maps and seats them, and a map with no line here still shows. */
+/** How often the live feed and the leaderboard are read while on screen.
+ *  The server caches its answer for fifteen seconds. */
+const BOARD_STALE_MS = 20_000;
+
+/** Two lines about each map's ground, for its card, in Conrad's words.
+ *  Cosmetic: the server names the maps and seats them, and a map with no
+ *  lines here still shows. */
 const MAP_BLURB = {
-  arena: 'close quarters · stairs and rooftops',
-  yard: 'open ground · long sightlines',
-  facility: 'a walled works in open country · a river, a hill, every range',
+  arena: ['Close quarters. Fast action.', 'No place to hide.'],
+  yard: ['Open spaces. Tactical fights.', 'Control the yard.'],
+  facility: ['High ground. Tight angles.', 'One mistake ends it.'],
 };
+
+/** Where the stake last chosen is kept, per browser: a convenience, so the
+ *  table a player plays at is the one picked when they come back. */
+const STAKE_KEY = 'solatel.stake';
 
 /** Micro-USD as a string, the way the rest of the client formats money. */
 function money(micros) {
@@ -97,6 +107,11 @@ function count(n) {
   return Number(n ?? 0).toLocaleString('en-US');
 }
 
+/** A count and the right word for it. */
+function plural(n, one, many) {
+  return `${count(n)} ${Number(n) === 1 ? one : many}`;
+}
+
 function shortAddress(address) {
   return address.length > 12 ? `${address.slice(0, 4)}…${address.slice(-4)}` : address;
 }
@@ -117,6 +132,11 @@ export class Menu {
     this.tabs = root.querySelector('#menu-tabs');
     this.maps = root.querySelector('#menu-maps');
     this.tables = root.querySelector('#menu-tables');
+    this.play = root.querySelector('#menu-play');
+    this.activity = root.querySelector('#menu-activity');
+    this.meName = root.querySelector('#me-name');
+    this.meAvatar = root.querySelector('#me-avatar');
+    this.meLine = root.querySelector('#me-line');
     this.status = root.querySelector('#menu-status');
     this.result = root.querySelector('#menu-result');
     this.balance = root.querySelector('#wallet-balance');
@@ -148,8 +168,18 @@ export class Menu {
     /** The maps it runs, and how many each seats. */
     this.mapList = [];
 
-    this.tabs.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-pane]');
+    /** Which stake, of the tables this server offers. */
+    this.chosenStake = null;
+    try {
+      this.chosenStake = Number(window.localStorage.getItem(STAKE_KEY)) || null;
+    } catch {
+      /* no storage: the first table it is */
+    }
+
+    // Every button naming a pane goes to it: the tabs, the wallet in the top
+    // bar, the wordmark, and the links beside the tables.
+    root.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-pane]');
       if (button) this.showPane(button.dataset.pane);
     });
 
@@ -160,6 +190,17 @@ export class Menu {
       this._drawMaps();
       this._drawTables();
     });
+    this.tables.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-stake]');
+      if (!button) return;
+      this.chosenStake = Number(button.dataset.stake);
+      try {
+        window.localStorage.setItem(STAKE_KEY, String(this.chosenStake));
+      } catch {
+        /* private browsing */
+      }
+      this._drawTables();
+    });
   }
 
   /** What the server said it offers, from the `Welcome`. */
@@ -167,20 +208,21 @@ export class Menu {
     this.mapList = maps ?? [];
     this.tiers = tiers ?? [];
     if (!this.chosenMap && this.mapList.length) this.chosenMap = this.mapList[0].name;
+    if (!this.tiers.some((t) => t.dollars === this.chosenStake)) this.chosenStake = this.tiers[0]?.dollars ?? null;
     this._drawMaps();
     this._drawTables();
   }
 
   /**
-   * What a click on a table does.
+   * What the play button does: join the line for the map and the stake
+   * chosen.
    *
    * Queueing is free - the entry fee is taken when a match actually forms -
    * so this is safe to wire directly to a button somebody can press twice.
    */
   bindPlay(onQueue, onLeaveQueue) {
-    this.tables.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-stake]');
-      if (button && this.chosenMap) onQueue(this.chosenMap, Number(button.dataset.stake));
+    this.play.addEventListener('click', () => {
+      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake);
     });
     this.status.addEventListener('click', (event) => {
       if (event.target.closest('#leave-queue')) onLeaveQueue();
@@ -240,6 +282,14 @@ export class Menu {
       const pasted = this.root.querySelector('#account-paste').value.trim();
       if (pasted) account.restore(pasted);
     });
+  }
+
+  /** The name this player plays under, as the server has it, for the top
+   *  bar. */
+  setName(name) {
+    const shown = (name ?? '').trim() || 'player';
+    this.meName.textContent = shown;
+    this.meAvatar.textContent = [...shown][0].toUpperCase();
   }
 
   /** Who this player is, and the link that invites people, for the
@@ -554,15 +604,70 @@ export class Menu {
   }
 
   showPane(name) {
+    if (!PANES.includes(name)) return;
     this.pane = name;
     if (name === 'fair') this._loadProof();
+    if (name === 'play' || name === 'board') this._loadBoard();
     for (const pane of PANES) {
-      const on = pane === name;
-      this.root.querySelector(`.pane[data-pane="${pane}"]`).classList.toggle('hidden', !on);
-      this.root
-        .querySelector(`#menu-tabs [data-pane="${pane}"]`)
-        .classList.toggle('on', on);
+      this.root.querySelector(`.pane[data-pane="${pane}"]`).classList.toggle('hidden', pane !== name);
     }
+    for (const button of this.root.querySelectorAll('.topbar [data-pane]')) {
+      button.classList.toggle('on', button.dataset.pane === name);
+    }
+    this.root.scrollTop = 0;
+  }
+
+  /**
+   * The live feed and the leaderboard, from the server's `/board`: the lives
+   * that won something, newest first, and the week's biggest winners. Every
+   * amount is what the server counted; this formats them and adds nothing
+   * up.
+   */
+  async _loadBoard(force = false) {
+    const now = Date.now();
+    if (!force && this._boardAt && now - this._boardAt < BOARD_STALE_MS) return;
+    this._boardAt = now;
+    try {
+      const response = await fetch('/board', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      this._drawBoard(await response.json());
+    } catch (err) {
+      this._boardAt = now - BOARD_STALE_MS + 5_000;
+      const none = '<li class="dim">The board could not be read just now.</li>';
+      if (!this._boardDrawn) {
+        this.activity.innerHTML = none;
+        this.root.querySelector('#board-leaders').innerHTML = none;
+      }
+      console.warn('board', err);
+    }
+  }
+
+  _drawBoard(board) {
+    this._boardDrawn = true;
+    const win = (r) =>
+      `<li><span class="mark">${ICON.coins}</span>` +
+      `<b class="name">${escapeHtml(r.name)}</b> <span class="dim">won</span> <b class="won">${money(r.winnings_micro_usd)}</b> ` +
+      `<span class="dim">on</span> <span class="where">${escapeHtml(r.map)}</span>` +
+      `<span class="when">${ago(r.at)}</span></li>`;
+    const recent = board.recent ?? [];
+    const quiet = '<li class="dim">No wins yet. Be the first on the board.</li>';
+    this.activity.innerHTML = recent.length ? recent.slice(0, 5).map(win).join('') : quiet;
+    this.root.querySelector('#board-recent').innerHTML = recent.length ? recent.map(win).join('') : quiet;
+    const leaders = board.leaders ?? [];
+    this.root.querySelector('#board-leaders').innerHTML = leaders.length
+      ? leaders
+          .map(
+            (l, i) =>
+              `<li class="${i < 3 ? `top top${i + 1}` : ''}"><span class="rank">${i + 1}</span>` +
+              `<b class="name">${escapeHtml(l.name)}</b>` +
+              `<span class="kills">${plural(l.kills, 'kill', 'kills')} &middot; ${plural(l.lives, 'life', 'lives')}</span>` +
+              `<b class="won">${money(l.winnings_micro_usd)}</b></li>`,
+          )
+          .join('')
+      : '<li class="dim">Nobody has won anything this week yet.</li>';
+    this.root.querySelector('#board-asof').textContent = board.as_of
+      ? `Read ${ago(board.as_of)}. The last seven days, every table and every map.`
+      : '';
   }
 
   /**
@@ -664,20 +769,39 @@ export class Menu {
   }
 
   _drawMaps() {
+    // The map with the most people on it right now, when anybody is.
+    let busiest = null;
+    let most = 0;
+    for (const map of this.mapList) {
+      const crowd = this._crowdOn(map.name);
+      if (crowd > most) {
+        most = crowd;
+        busiest = map.name;
+      }
+    }
     this.maps.innerHTML = this.mapList
       .map((map) => {
-        const busy = this._busyOn(map.name);
+        const blurb = MAP_BLURB[map.name];
         return (
           `<button class="map${map.name === this.chosenMap ? ' on' : ''}" ` +
           `type="button" data-map="${escapeHtml(map.name)}">` +
+          `<span class="art" aria-hidden="true"></span>` +
+          (map.name === busiest ? `<span class="badge">${ICON.star}Most popular</span>` : '') +
           `<span class="name">${escapeHtml(map.name)}</span>` +
-          `<span class="seats">${map.seats} players</span>` +
-          (MAP_BLURB[map.name] ? `<span class="blurb">${MAP_BLURB[map.name]}</span>` : '') +
-          `<span class="busy">${busy}</span>` +
+          (blurb ? `<span class="blurb">${blurb.map(escapeHtml).join('<br>')}</span>` : '') +
+          `<span class="seats">${ICON.people}${map.seats} players</span>` +
+          `<span class="busy">${this._busyOn(map.name)}</span>` +
           `</button>`
         );
       })
       .join('');
+    this._drawPlay();
+  }
+
+  _crowdOn(name) {
+    return (this._tables ?? [])
+      .filter((t) => t.map === name)
+      .reduce((n, t) => n + t.waiting + t.running, 0);
   }
 
   _busyOn(name) {
@@ -705,8 +829,8 @@ export class Menu {
           ? `${money(tier.kill_reward_micro_usd)} a kill`
           : '';
         return (
-          `<button class="table" type="button" data-stake="${tier.dollars}">` +
-          `<span class="caption">stake</span>` +
+          `<button class="table${tier.dollars === this.chosenStake ? ' on' : ''}" type="button" data-stake="${tier.dollars}">` +
+          `<span class="coin">${ICON.coins}</span>` +
           `<span class="stake">$${tier.dollars}</span>` +
           `<span class="pays">${pays}</span>` +
           `<span class="busy">${waiting} waiting · ${running} playing</span>` +
@@ -714,6 +838,22 @@ export class Menu {
         );
       })
       .join('');
+    this._drawPlay();
+  }
+
+  /** The play button says exactly what it will do. */
+  _drawPlay(queued = this._queued) {
+    const ready = Boolean(this.chosenMap && this.chosenStake);
+    const label = queued
+      ? 'In line&hellip;'
+      : ready
+        ? `Play <span>$${this.chosenStake} &middot; ${escapeHtml(this.chosenMap)}</span>`
+        : 'Play';
+    if (label !== this._playLabel) {
+      this._playLabel = label;
+      this.play.innerHTML = label;
+    }
+    this.play.disabled = !ready || Boolean(queued);
   }
 
   /**
@@ -787,10 +927,6 @@ export class Menu {
         `in line for <b>${escapeHtml(local.queuedMap ?? '')} $${local.queuedFor}</b> ` +
         `&middot; ${waiting} of ${needed} &middot; you are #${local.place} &middot; ${soon} ` +
         `<button id="leave-queue" type="button">leave the line</button>`;
-    } else if ((this.pane ?? 'play') === 'play' && this.chosenMap) {
-      // Only on the play pane: a prompt to pick a table means nothing
-      // under the wallet or the settings.
-      status = `pick a table to join the line on <b>${escapeHtml(this.chosenMap)}</b>`;
     } else {
       status = '';
     }
@@ -800,35 +936,110 @@ export class Menu {
       const here = this.status.querySelector('#play-here');
       if (here) here.addEventListener('click', () => window.location.reload());
     }
+
+    // Under the name in the top bar: where this player is.
+    const queued = local.queuedFor !== null && local.queuedFor !== undefined;
+    const line = link?.parked
+      ? 'in another tab'
+      : queued
+        ? `in line · ${local.queuedMap ?? ''} $${local.queuedFor}`
+        : 'in the lobby';
+    if (line !== this._line) {
+      this._line = line;
+      this.meLine.textContent = line;
+    }
+    if (queued !== this._queued) {
+      this._queued = queued;
+      this._drawPlay(queued);
+    }
+    if ((this.pane ?? 'play') === 'play' || this.pane === 'board') this._loadBoard();
   }
 }
 
+/**
+ * The menu's icons: line drawings on a 24-unit square in the text's own
+ * colour, small enough to keep in the page rather than as files.
+ */
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="1.2" class="dot"/></svg>',
+  wallet: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h14.5a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6.5A1.5 1.5 0 0 1 5 5h11"/><path d="M15 12h5v4h-5a2 2 0 0 1 0-4z"/></svg>',
+  trophy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8 20h8"/></svg>',
+  person: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8-7.5 9.5-4.3-1.5-7.5-5-7.5-9.5V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 2.8h3.4l.5 2.4 1.7.7 2-1.4 2.4 2.4-1.4 2 .7 1.7 2.4.5v3.4l-2.4.5-.7 1.7 1.4 2-2.4 2.4-2-1.4-1.7.7-.5 2.4h-3.4l-.5-2.4-1.7-.7-2 1.4-2.4-2.4 1.4-2-.7-1.7-2.4-.5v-3.4l2.4-.5.7-1.7-1.4-2 2.4-2.4 2 1.4 1.7-.7z"/><circle cx="12" cy="12" r="3.2"/></svg>',
+  gift: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h16v10H4zM3 7h18v3H3zM12 7v13"/><path d="M12 7c-1.5-3-5-3.5-5-1.2C7 7 9.5 7 12 7c2.5 0 5 0 5-1.2C17 3.5 13.5 4 12 7z"/></svg>',
+  bars: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-5M10 20v-9M15 20V7M20 20V4"/></svg>',
+  people: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="16.5" cy="9.5" r="2.6"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>',
+  coins: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.8"/><path d="M5 6.5v4c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-4M5 10.5v4c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-4M5 14.5v3c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-3"/></svg>',
+  star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8L3.6 9.6l5.8-.8z"/></svg>',
+};
+
 const TEMPLATE = `
-  <div class="menu-shell">
-    <header>
-      <div>
-        <div class="brand">SOLATEL</div>
-        <div class="tagline">one life &middot; real stakes &middot; paid per kill</div>
+  <header class="topbar">
+    <div class="bar">
+      <button type="button" class="brand" data-pane="play" title="play">
+        <img src="${asset('assets/menu/logo.svg')}" alt="Solatel" width="190" height="30" />
+        <span class="motto"><i></i>Play <b>Kill</b> Earn<i></i></span>
+      </button>
+      <nav id="menu-tabs" aria-label="menu">
+        <button type="button" data-pane="play" class="on">${ICON.play}<span>Play</span></button>
+        <button type="button" data-pane="wallet">${ICON.wallet}<span>Deposit</span></button>
+        <button type="button" data-pane="board">${ICON.trophy}<span>Leaderboard</span></button>
+        <button type="button" data-pane="profile">${ICON.person}<span>Profile</span></button>
+        <button type="button" data-pane="fair">${ICON.shield}<span>Fair play</span></button>
+        <button type="button" data-pane="settings" class="gear" title="settings" aria-label="settings">${ICON.gear}</button>
+      </nav>
+      <div class="me">
+        <span class="avatar" id="me-avatar" aria-hidden="true"></span>
+        <span class="who"><b id="me-name"></b><span id="me-line">in the lobby</span></span>
       </div>
-      <div id="purse"><span class="amount">—</span><span class="caption">wallet</span></div>
-    </header>
+      <button type="button" id="purse" data-pane="wallet" title="your wallet">
+        ${ICON.wallet}<span class="amount">—</span><span class="plus" aria-hidden="true">+</span>
+      </button>
+    </div>
+  </header>
+  <div id="menu-status"></div>
 
-    <nav id="menu-tabs">
-      <button type="button" data-pane="play" class="on">play</button>
-      <button type="button" data-pane="wallet">wallet</button>
-      <button type="button" data-pane="profile">profile</button>
-      <button type="button" data-pane="fair">fair play</button>
-      <button type="button" data-pane="settings">settings</button>
-    </nav>
-
+  <div class="menu-shell">
     <section class="pane" data-pane="play">
       <div id="menu-result" class="hidden"></div>
-      <div class="label">map</div>
-      <div id="menu-maps"></div>
-      <div class="label">table</div>
-      <div id="menu-tables"></div>
+      <div class="hero">
+        <h1>Choose your battle</h1>
+        <p>Select a map. Pick your entry. Get in the game.</p>
+      </div>
 
-      <div class="label">how it works</div>
+      <div id="menu-maps"></div>
+
+      <div class="play-row">
+        <div class="fees">
+          <h2>Select entry fee</h2>
+          <p class="sub">Choose how much you want to play with. Every kill pays its table's reward into your wallet at once.</p>
+          <div id="menu-tables"></div>
+          <div class="go">
+            <button type="button" id="menu-play" disabled>Play</button>
+            <p class="fine">Nothing is charged until your match forms. One stake buys one life.</p>
+          </div>
+        </div>
+        <aside class="side">
+          <button type="button" class="deposit" data-pane="wallet">${ICON.wallet}<span>Deposit</span><i>&rsaquo;</i></button>
+          <p class="sub">Add funds to your wallet and start playing.</p>
+          <div class="links">
+            <button type="button" data-pane="board">${ICON.trophy}<span>Leaderboard</span><i>&rsaquo;</i></button>
+            <button type="button" data-pane="fair">${ICON.shield}<span>Fair play &amp; payouts</span><i>&rsaquo;</i></button>
+            <button type="button" data-pane="profile">${ICON.gift}<span>Invite a friend</span><i>&rsaquo;</i></button>
+          </div>
+        </aside>
+      </div>
+
+      <div class="lower-row">
+        <div class="slogan"><span>Skill wins.</span><span>Strategy pays.</span><b>Play. Kill. Earn.</b></div>
+        <section class="activity">
+          <h3>${ICON.bars}Live activity</h3>
+          <ul id="menu-activity" class="feed"><li class="dim">reading the latest wins&hellip;</li></ul>
+        </section>
+      </div>
+
+      <h2 class="section">How it works</h2>
       <div class="rules">
         <div><b>one life</b><span>Your stake buys one life in one match. No respawn.</span></div>
         <div><b>paid per kill</b><span>Every kill pays the table's reward into your wallet at once.</span></div>
@@ -836,7 +1047,7 @@ const TEMPLATE = `
         <div><b>killed</b><span>Your stake pays whoever killed you, less a 10% house cut.</span></div>
       </div>
 
-      <div class="label">controls</div>
+      <h2 class="section">Controls</h2>
       <div class="keys">
         <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
         <span><kbd>mouse</kbd> look</span>
@@ -865,6 +1076,15 @@ const TEMPLATE = `
         </div>
       </div>
       <p class="needs-keyboard">Solatel is played with a keyboard and mouse. Open it on a computer to play.</p>
+    </section>
+
+    <section class="pane hidden" data-pane="board">
+      <h2>Leaderboard</h2>
+      <p class="sub">The week's biggest winners, by what their kills paid. Counted by the server as each stake settled, and shown under the name each player plays under.</p>
+      <ol id="board-leaders" class="leaders"><li class="dim">reading the board&hellip;</li></ol>
+      <h3 class="section">Latest wins</h3>
+      <ul id="board-recent" class="feed"></ul>
+      <p class="fine" id="board-asof"></p>
     </section>
 
     <section class="pane hidden" data-pane="wallet">
@@ -1041,13 +1261,17 @@ const TEMPLATE = `
         <li>The yard, and the vehicles and props dressing the facility, are from
           a low-poly map pack by ResoForge, repainted by Solatel.</li>
         <li>Soldier and animations from <a href="https://www.mixamo.com" target="_blank" rel="noopener">Adobe Mixamo</a>.
-          Rifle: "Assault Rifle" by Zsky.</li>
+          The rifle is built in code by Solatel.</li>
+        <li>Lettering in <a href="https://github.com/jpt/barlow" target="_blank" rel="noopener">Barlow</a> and
+          <a href="https://github.com/Omnibus-Type/Saira" target="_blank" rel="noopener">Saira Condensed</a>; the
+          wordmark is drawn from <a href="https://github.com/theleagueof/orbitron" target="_blank" rel="noopener">Orbitron</a>
+          (all <a href="https://openfontlicense.org" target="_blank" rel="noopener">SIL Open Font License</a>).</li>
         <li>Photographed surfaces, leaves, grass and sky from
           <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a> (CC0).
           Drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT).
           Payment codes by <a href="https://github.com/kazuhikoarase/qrcode-generator" target="_blank" rel="noopener">qrcode-generator</a>,
           Copyright (c) 2009 Kazuhiko Arase (MIT).</li>
-        <li>The facility, the code and everything else: Solatel.</li>
+        <li>The key art, the facility, the code and everything else: Solatel.</li>
       </ul>
     </section>
 
@@ -1098,6 +1322,5 @@ const TEMPLATE = `
       </div>
     </section>
 
-    <footer id="menu-status"></footer>
   </div>
 `;

@@ -265,7 +265,7 @@ async function boot() {
   menu.setOffer(link.maps, link.tiers);
   menu.bindPlay(
     (mapName, dollars) => {
-      // The click on a table is a real gesture, so it is also where the
+      // The click on play is a real gesture, so it is also where the
       // sound can be started: the match-found chime has to be heard by
       // somebody who has not clicked the world yet.
       audio.resume();
@@ -308,6 +308,7 @@ async function boot() {
     },
   });
   menu.setPlayer(link.playerId, link.inviteCode);
+  menu.setName(link.assignedName || storedName());
   menu.setWallet(link.wallet);
   menu.setSolana(link.solanaPubkey);
   if (link.accountReplaced) {
@@ -615,6 +616,7 @@ async function boot() {
         // A reconnection. The server may have restarted with a different
         // wallet, and a new account may have been made.
         menu.setPlayer(link.playerId, link.inviteCode);
+        menu.setName(link.assignedName || storedName());
         menu.setWallet(link.wallet);
         menu.setSolana(link.solanaPubkey);
       } else if (message.t === 'wallet_challenge') {

@@ -5,6 +5,7 @@
 
 mod account;
 mod admin;
+mod board;
 mod chain;
 mod cold;
 mod config;
@@ -57,6 +58,8 @@ pub struct AppState {
     pub admin: Option<admin::AdminKey>,
     /// The public record of what has been paid, at `/proof`.
     pub proof: proof::Proof,
+    /// Who won what, by name, for the menu, at `/board`.
+    pub board: board::Board,
     /// The cluster, for a page building a deposit. `None` without a wallet.
     pub chain: Option<chain::Chain>,
     /// Which build of the client is being served, for the handshake to
@@ -301,6 +304,7 @@ async fn main() -> Result<()> {
         pool,
         tiers,
         proof,
+        board: board::Board::default(),
         chain,
         wallet: terms,
         wallet_health,
@@ -322,6 +326,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/proof", get(proof::handler))
+        .route("/board", get(board::handler))
         .route("/chain/blockhash", get(chain::blockhash))
         .route("/chain/usdc-account", get(chain::usdc_account))
         .route("/ws", get(ws::handler))

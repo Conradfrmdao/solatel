@@ -165,7 +165,7 @@ they all do it, and what each step is here:
    the click, how full the table is, the player's place, when it starts short
    of full (only when that is a real clock - under the floor it says how many
    more are needed), the price and that nothing is charged yet, and *leave
-   the line*. It is up the moment the table is clicked, before the server
+   the line*. It is up the moment play is pressed, before the server
    has answered, and gives up on a request nobody confirmed after four
    seconds.
 2. **Match found** - `ServerMsg::MatchFound`, sent the instant a line becomes
@@ -175,7 +175,7 @@ they all do it, and what each step is here:
    answers in milliseconds - which costs nothing, because of step 4.
 3. **Loading** - the same card, saying which map, until the world is drawn.
    A map is tens of megabytes, so its files are fetched into the browser's
-   cache the moment its table is picked (`prefetch.js`), while the player
+   cache the moment play is pressed (`prefetch.js`), while the player
    waits in line, and the card counts them in megabytes - in line as a
    footnote, on the loading card as the bar. Which files a map needs is
    read from its glTF's JSON: the material names say which photographs,
@@ -264,11 +264,35 @@ forms - because which map it loads is whichever table the player picked.
 `body.in-menu` hides the canvas and the frame loop draws nothing while there
 is no match.
 
-Five panes: **play** (map, then stake), **wallet**, **profile**, **fair
-play**, **settings**. The settings moved here from the HUD - they belong on a screen you go to
+**It looks like Conrad's key art**, at his asking, laid out after the
+mockup he sent: night navy, the sunset's amber, the wordmark's worn white.
+The art itself (`assets/menu/splash.webp`, cropped from his picture, logo
+and all) is the boot screen, there before any script runs; a band of it
+without the logo heads the play pane and the matchmaking card; its soldier
+is behind the slogan. The wordmark in the top bar is `assets/menu/logo.svg`,
+drawn by `scripts/build-logo.py` from Orbitron's letters with the peaked A
+and its orange triangle, worn by an SVG filter. Headings are Saira Condensed
+and text is Barlow, shipped in `assets/fonts` (OFL, `assets/fonts/OFL.txt`).
+**The page's own styles name files by plain name** - `url(assets/menu/...)`
+- and `client/build.mjs` rewrites each to its published name, failing on one
+it did not publish, which is what lets the splash be in CSS. The map cards
+are our own maps photographed from above (`assets/menu/map-*.webp`), not
+paintings of them.
+
+Six panes: **play**, **deposit** (the wallet), **leaderboard**, **profile**,
+**fair play**, and **settings** behind the gear. Play is "choose your
+battle": a map card, an entry fee, then **Play** - selecting a fee does not
+join a line; the button does, and says what it will join ("Play $1 ·
+arena"). The fee last chosen is remembered per browser. The settings moved here from the HUD - they belong on a screen you go to
 between matches, not over your crosshair - though the wiring stayed in
 `hud.js` and looks them up in the document. The menu is therefore built before
 the HUD, or the HUD looks for sliders that do not exist yet.
+
+**Nothing on it is made up.** The mockup had levels, missions, rewards and a
+store; none exist, so none are drawn - a real-money game that showed
+invented features, or an invented win in its feed, would be lying about
+money. "Most popular" is the map with the most players in line and playing
+right now, when anybody is. The feed and the leaderboard are real (below).
 
 **Only the canvas takes the mouse.** `input.js` used to capture the pointer on
 any click outside a short list of exceptions, which made the menu unusable
@@ -298,10 +322,24 @@ disagree with it - and the answer is cached for a minute, so a crowd costs one
 query. Adding a figure means adding it to that statement and to its test,
 `the_record_moves_by_exactly_what_a_kill_pays`.
 
+**The live feed and the leaderboard name people, so they are a different
+endpoint**: `/board` (`board.rs`), with no cross-origin header, for the
+game's own menu. The feed is the newest lives that won something ("Name won
+$1.80 on yard"), the board the week's biggest winners by what their kills
+paid, both one statement over `match_lives`, cached fifteen seconds. Names
+are display names - chosen by their players and shown to everybody they play
+against already - stored on each life as the match had it when it formed
+(migration 0014, `Life::name`), so an abandon settling after its owner has
+gone still has one; lives from before that read "a player". No id, account
+or wallet is in it. Its test, `the_board_adds_up_what_each_name_won`, takes
+its own lives out again, because their winnings are far above any table's.
+
 `node client/menu.mjs` drives the whole thing in a real browser: that the menu
-is what a player lands on, that every tab opens, that queueing does not steal
-the mouse, and that picking a table drops them into a match on the map they
-chose with the world actually drawn. It needs `SOLATEL_MATCH_FLOOR=1` and a
+is what a player lands on, that every tab opens and the leaderboard loads,
+that the wordmark and the art are there, that picking a fee joins nothing
+and the play button names what it will join, that queueing does not steal
+the mouse, and that playing drops them into a match on the map they chose
+with the world actually drawn. It needs `SOLATEL_MATCH_FLOOR=1` and a
 short `SOLATEL_QUEUE_WAIT`, because one client alone would otherwise sit in
 the queue - correctly - forever.
 
@@ -646,7 +684,7 @@ The wire format is JSON text frames for now, funnelled through `net::encode` /
 
 Three.js, plain JavaScript, bundled by esbuild into `web/dist`. It replaced a
 Bevy/wasm client that was 81 MB and fought us over asset compatibility, visuals
-and mouse look; this one's JavaScript is about 940 KB (210 KB over the
+and mouse look; this one's JavaScript is about 1.2 MB (280 KB over the
 wire), before the wasm and the assets. `./x client` builds it, `./x
 watch` rebuilds the JavaScript on save.
 

@@ -221,6 +221,12 @@ async function writePage(script, names) {
   let html = await readFile(resolve(here, 'index.html'), 'utf8');
   html = once(html, '<script type="module" src="solatel.js"></script>', `<script type="module" src="${script}"></script>`);
   html = once(html, '<link rel="icon" href="favicon.png" />', `<link rel="icon" href="${names['favicon.png']}" />`);
+  // The page's own styles name their pictures and fonts by plain name, as
+  // the code does: the splash has to be there before any script runs.
+  html = html.replace(/url\((assets\/[^)'"\s]+)\)/g, (_, plain) => {
+    if (!names[plain]) throw new Error(`client/index.html asks for ${plain}, which this build did not publish`);
+    return `url(${names[plain]})`;
+  });
   // Escaped so no name can close the script element early.
   const table = JSON.stringify(names).replace(/</g, '\\u003c');
   html = once(

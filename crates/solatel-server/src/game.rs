@@ -1119,9 +1119,18 @@ impl Lobby {
             return;
         };
         let stats = body.stats;
+        // The name the match formed with: by the time a stake settles as an
+        // abandon, its owner's connection may be long gone.
+        let name = game
+            .recorder
+            .borrow()
+            .name_of(player_id)
+            .map(str::to_string)
+            .unwrap_or_else(|| self.name_of(player_id));
         records.send(Life {
             match_id,
             player_id,
+            name,
             map: game.map.name,
             stake: game.stakes.entry(),
             outcome,
