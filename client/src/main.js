@@ -582,6 +582,15 @@ async function boot() {
       } else if (message.t === 'exploded') {
         world.explode(message.at);
         audio.boom(message.at, eye, forward);
+        // Felt as well as heard and seen: the view rolls with it and the
+        // rifle jolts, harder the nearer it went off. A roll only, like a
+        // hit's flinch, so the middle of the screen stays where it was aimed.
+        const near = Math.hypot(message.at[0] - eye.x, message.at[1] - eye.y, message.at[2] - eye.z);
+        const shove = Math.max(0, 1 - near / 18);
+        if (shove > 0) {
+          flinch = (Math.random() < 0.5 ? -1 : 1) * Math.min(1, Math.abs(flinch) + shove * 0.9);
+          viewmodel.onLanded(shove * 7);
+        }
       } else if (message.t === 'killed') {
         hud.addKill(message);
         // This player's own death: kept, with where the killer was as last

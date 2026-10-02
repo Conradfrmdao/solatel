@@ -139,6 +139,11 @@ export class Input {
       if (!event.repeat && (this.locked || !this.requireLock)) {
         this._tapped.add(event.code);
         if (event.code === 'KeyC') this._crouch = !this._crouch;
+        // Jumping from a crouch stands up and jumps, in the one command:
+        // the simulation will not jump a crouched body, and a jump key
+        // that did nothing while crouched read as a jump key that was
+        // broken. Standing is the first half of a jump anyway.
+        if (event.code === 'Space') this._crouch = false;
       }
       // Space scrolls the page and the arrow keys move the caret; neither is
       // wanted while the mouse is captured.

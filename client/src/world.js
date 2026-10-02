@@ -24,6 +24,7 @@ import { SIM } from './sim.js';
 import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
 import { scatterRubbish } from './scatter.js';
+import { Blasts } from './blast.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { asset } from './assets.js';
@@ -863,6 +864,7 @@ function cutSun(data, width, height, peak) {
 export class World {
   constructor(scene, renderer = null) {
     this.scene = scene;
+    this.blasts = new Blasts(scene);
     this.renderer = renderer;
     this.sunOffset = new THREE.Vector3(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
     this.arena = null;
@@ -1496,27 +1498,9 @@ export class World {
     }
   }
 
-  /** A grenade went off here: a flash, a light, and smoke that rises. */
+  /** A grenade went off here (see `blast.js`). */
   explode(at) {
-    this._blasts = this._blasts ?? [];
-    let blast = this._blasts.find((b) => b.age >= BLAST_SECONDS);
-    if (!blast) {
-      blast = makeBlast();
-      this.scene.add(blast.group);
-      this._blasts.push(blast);
-    }
-    blast.group.position.set(at[0], at[1], at[2]);
-    blast.age = 0;
-    blast.group.visible = true;
-    for (const puff of blast.puffs) {
-      puff.mesh.position.set(
-        (Math.random() - 0.5) * 1.6,
-        Math.random() * 0.6,
-        (Math.random() - 0.5) * 1.6,
-      );
-      puff.rise = 0.6 + Math.random() * 0.9;
-      puff.grow = 1.4 + Math.random() * 1.6;
-    }
+    this.blasts.explode(at);
   }
 
   update(dt) {
@@ -1530,25 +1514,7 @@ export class World {
         entry.mesh.rotation.z += dt * 4;
       }
     }
-    for (const blast of this._blasts ?? []) {
-      if (blast.age >= BLAST_SECONDS) continue;
-      blast.age += dt;
-      const t = blast.age;
-      if (t >= BLAST_SECONDS) {
-        blast.group.visible = false;
-        continue;
-      }
-      const flash = Math.max(0, 1 - t / 0.22);
-      blast.fireball.scale.setScalar(0.4 + (1 - flash) * 3.2);
-      blast.fireball.material.opacity = flash;
-      blast.light.intensity = flash * 60;
-      for (const puff of blast.puffs) {
-        puff.mesh.position.y += puff.rise * dt;
-        const life = t / BLAST_SECONDS;
-        puff.mesh.scale.setScalar(0.5 + puff.grow * Math.sqrt(life));
-        puff.mesh.material.opacity = 0.55 * (1 - life) * Math.min(1, t / 0.08);
-      }
-    }
+    this.blasts.update(dt);
     for (const slot of this._tracers) {
       if (slot.remaining <= 0) continue;
       slot.remaining -= dt;
@@ -1577,8 +1543,6 @@ export class World {
   }
 }
 
-/** How long a blast's smoke hangs. */
-const BLAST_SECONDS = 2.6;
 
 function makeGrenade() {
   const group = new THREE.Group();
@@ -1597,26 +1561,3 @@ function makeGrenade() {
   return group;
 }
 
-function makeBlast() {
-  const group = new THREE.Group();
-  const fireball = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 16, 12),
-    new THREE.MeshBasicMaterial({
-      color: 0xffc070,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    }),
-  );
-  const light = new THREE.PointLight(0xffa550, 0, 18, 2);
-  light.position.y = 0.5;
-  const smoke = new THREE.MeshLambertMaterial({ color: 0x55504a, transparent: true, depthWrite: false });
-  const puffs = [];
-  for (let i = 0; i < 7; i += 1) {
-    const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 1), smoke.clone());
-    group.add(mesh);
-    puffs.push({ mesh, rise: 1, grow: 2 });
-  }
-  group.add(fireball, light);
-  return { group, fireball, light, puffs, age: BLAST_SECONDS };
-}

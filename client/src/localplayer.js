@@ -47,12 +47,31 @@ const HIT_MARKER_SECONDS = 0.12;
 /**
  * How fast the eye catches up with the feet, as a time constant.
  *
- * A steady climb ends up lagging by this many seconds of climbing - about
- * 0.18 m going up a ramp at walking pace - and a single step is most of the
- * way resolved in three of these. Longer and the view starts to swim behind
- * the player; shorter and a half-metre step is back to being a jolt.
+ * A single step is most of the way resolved in three of these. Longer and
+ * the view starts to swim behind the player; shorter and a half-metre step
+ * is back to being a jolt.
  */
 const EYE_SMOOTH_TIME = 0.09;
+
+/**
+ * And as a distance: the eye closes the gap per metre walked as well as per
+ * second, so it keeps up with a climb in proportion to how fast it is made.
+ *
+ * On time alone a steady climb lags by the climb rate times the time
+ * constant, and a ramp is a steady climb: up a thirty-degree ramp at full
+ * speed that was 0.42 m, the view sitting most of a crouch low the whole
+ * way up. With this the lag up the same ramp is 0.12 m, and a single step
+ * taken at a run is smoothed over about the third of a metre the body
+ * takes to get over it - which is when a head would rise.
+ */
+const EYE_SMOOTH_DISTANCE = 0.3;
+
+/**
+ * How long the eye takes to go between crouched and standing, as a time
+ * constant - smoothed apart from steps, in the air as on the ground, so a
+ * jump from a crouch rises out of it rather than snapping up first.
+ */
+const CROUCH_EYE_TIME = 0.06;
 
 /** The eye is never allowed further from the feet than this, so that a long
  *  climb cannot bury the camera in the floor. */
@@ -235,6 +254,12 @@ export class LocalPlayer {
      * nothing else.
      */
     this.eyeY = null;
+    /** The feet's height as the eye follows it (steps smoothed), the eye's
+     *  height over the feet (crouching eased), and where the eye was last
+     *  frame across the ground, for how far it has walked since. */
+    this.feetY = null;
+    this.eyeLift = null;
+    this._eyeAt = { x: 0, z: 0, set: false };
   }
 
   get isAlive() {
@@ -730,28 +755,35 @@ export class LocalPlayer {
     this.correction.x *= fade;
     this.correction.y *= fade;
     this.correction.z *= fade;
-    const raw =
-      this.previous.y +
-      (this.current.y - this.previous.y) * alpha +
-      (this.eyeOffset ?? SIM.eyeOffset) +
-      this.correction.y;
+    const x = this.previous.x + (this.current.x - this.previous.x) * alpha + this.correction.x;
+    const z = this.previous.z + (this.current.z - this.previous.z) * alpha + this.correction.z;
+    const feet = this.previous.y + (this.current.y - this.previous.y) * alpha + this.correction.y;
 
-    if (this.eyeY === null || !this.onGround || Math.abs(raw - this.eyeY) > EYE_SNAP) {
+    // Crouching and standing, eased on their own clock and in the air as on
+    // the ground (`CROUCH_EYE_TIME`).
+    const lift = this.eyeOffset ?? SIM.eyeOffset;
+    if (this.eyeLift === null) this.eyeLift = lift;
+    else this.eyeLift += (lift - this.eyeLift) * (1 - Math.exp(-dt / CROUCH_EYE_TIME));
+
+    if (this.feetY === null || !this.onGround || Math.abs(feet - this.feetY) > EYE_SNAP) {
       // Airborne, just spawned, or moved by something that was not a step.
       // All of those should be seen as they are.
-      this.eyeY = raw;
+      this.feetY = feet;
     } else {
-      // Exponential, framerate-independent: the same fraction of the gap is
-      // closed per second however often this runs.
-      this.eyeY += (raw - this.eyeY) * (1 - Math.exp(-dt / EYE_SMOOTH_TIME));
-      this.eyeY = Math.min(Math.max(this.eyeY, raw - EYE_MAX_LAG), raw + EYE_MAX_LAG);
+      // Exponential in time and in distance walked, so framerate-
+      // independent and quicker the faster the climb is being made (see
+      // `EYE_SMOOTH_DISTANCE`).
+      const walked = this._eyeAt.set ? Math.hypot(x - this._eyeAt.x, z - this._eyeAt.z) : 0;
+      const k = 1 - Math.exp(-(dt / EYE_SMOOTH_TIME + walked / EYE_SMOOTH_DISTANCE));
+      this.feetY += (feet - this.feetY) * k;
+      this.feetY = Math.min(Math.max(this.feetY, feet - EYE_MAX_LAG), feet + EYE_MAX_LAG);
     }
+    this._eyeAt.x = x;
+    this._eyeAt.z = z;
+    this._eyeAt.set = true;
+    this.eyeY = this.feetY + this.eyeLift;
 
-    out.set(
-      this.previous.x + (this.current.x - this.previous.x) * alpha + this.correction.x,
-      this.eyeY,
-      this.previous.z + (this.current.z - this.previous.z) * alpha + this.correction.z,
-    );
+    out.set(x, this.eyeY, z);
     return out;
   }
 

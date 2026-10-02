@@ -938,7 +938,12 @@ transparent pixel and filtering dragged each leaf's edge to black.
 Grass is tufts of the scanned grass cards, planted within `GRASS_RADIUS` of
 the eye from the map's `ground` extra (a run-length coded metre grid of
 where grass grows and how high), from a hash of each spot so nothing pops
-when the patch is replanted. `smoke` lists chimneys; birds circle whatever
+when the patch is replanted. It grows in over the last `GRASS_FADE` metres of
+the radius, measured from the eye *every frame* in the vertex shader, and is
+planted out past the radius by as far as the eye walks between replants. It
+used to be sized when it was planted, so for five metres a tuft stayed the
+size it was planted at and then jumped - the whole outer ring growing by half
+in a frame, every five metres: what Conrad saw as grass popping up. `smoke` lists chimneys; birds circle whatever
 map has trees. All of it is marked `scenery`, so the fog is sized without it.
 
 ### Static batching
@@ -1035,8 +1040,10 @@ half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
 covers the same part of the screen. The weapon's own camera narrows by its
 own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view
 axis, so magnifying about the middle of the screen does not move them. The
-crosshair dims with the sights up and never disappears: it is
-where the shot goes, and on real stakes a player should always see it.
+crosshair - four short black lines round a gap and a dot in it, with a thin
+light edge so it shows against a dark wall, as Conrad asked - dims with the
+sights up and never disappears: its middle is where the shot goes, and on
+real stakes a player should always see it.
 
 **None of it changes where a shot goes.** Recoil kicks the weapon and rolls
 the camera around its own axis; a roll leaves the middle of the screen where
@@ -1183,7 +1190,7 @@ deleted, and the rifle is built in code (see *The weapon in your hands*).
 
 **`scripts/extend-arena.py` is the one place geometry is authored**, and it is
 separate from `prepare-assets.py` precisely so that "the download is untouched"
-stays true of everything else. It adds Solatel's own buildings, stairs and
+stays true of everything else. It adds Solatel's own buildings, ramps and
 walls to `arena.glb`, and takes down 40 triangles of the original: the east and
 west walls, so the map can continue past them, and a redundant red-orange floor
 quad that was z-fighting with the grey ground plane over the whole arena. It
@@ -1234,6 +1241,27 @@ is what to check first. And **each tread of a staircase must be its own box**,
 spanning only its own depth: `voxelise` marks the cells a *surface* passes
 through, not the cells inside a volume, so nested boxes stamp every tread's top
 face onto every column below it and the flight comes back as floating slabs.
+
+**The arena's ways up are ramps, not stairs** (`Parts.ramp`), at Conrad's
+asking: thirteen of them, three metres wide, about thirty degrees where the
+lane has room, with a wall a metre high down each side. The flights they
+replaced climbed straight up the middle and nowhere else - eleven degrees off
+line or 0.8 m off centre walked a player off their open side on most of them -
+and read from the side as a zigzag. A ramp is three things in three nodes: the
+slope and its walls drawn and never collided with (`_drawn`, `scenery`); the
+slope's collision, a column of the generator's own grid per cell along the
+run, solid from the ground to the quarter metre nearest the drawn slope,
+never drawn (`_collision`, `collision_only`); and the walls' collision as
+exact boxes, a node each over one unit cube (`_exact`), because voxelised the
+generator's smoothing flattened every sloped wall to the lowest height in
+reach and near the top a wall stood half a metre over the slope - a step onto
+it and off the outside. A column must sit *inside* one cell: a face on a cell
+boundary counts in the cell above it, so a box exactly a cell deep marks two.
+Each roof ramp stands beside its block's door, not in front of it - the
+flights shut those doors. `every_ramp_in_the_arena_takes_a_player_to_the_top`,
+`a_ramp_wall_cannot_be_stepped_onto` and `running_down_a_ramp_keeps_the_
+player_on_it` walk every one, and `ARENA_RAMPS` in `map.rs` has to move with
+the script's tables.
 
 **Map collision is generated, not written.** `./x maps` runs
 `scripts/derive-brushes.py` over every model in `assets/maps` and rewrites the
@@ -1819,7 +1847,11 @@ could walk out of the circle, or off a roof, and deny the winner the stake.
 
 **Crouching** (C, a toggle - Ctrl is Ctrl+W in a browser) caps speed at
 `CROUCH_SPEED`, forbids jumping, and lowers the eye and the top of both hit
-boxes by `CROUCH_DROP` without moving the feet. It is in `PlayerState`
+boxes by `CROUCH_DROP` without moving the feet. Pressing jump while crouched
+stands up and jumps in the one command: the client clears its own toggle on
+the key, so the server sees an uncrouched jump and nothing about the rule
+changes. The eye eases between the two heights on a clock of its own
+(`CROUCH_EYE_TIME`), in the air as well, so the jump rises out of the crouch. It is in `PlayerState`
 because it changes the body, so it is predicted, and the wasm's `adopt`
 takes it. Other players drop to one knee, and it is a *placed* pose rather
 than a squat: `_kneel` lowers the hips until the right knee reaches the
@@ -1850,7 +1882,16 @@ shared so there is one description of how one moves), sets it off after
 `GRENADE_FUSE`, and hurts everybody it can see within `GRENADE_RADIUS` -
 full damage inside two metres, falling to nothing at seven, and nothing
 through a wall. The thrower is hurt too. `Exploded` is sent for the flash
-and the bang; the damage arrives as `Damaged`. `cheat.mjs` presses the
+and the bang; the damage arrives as `Damaged`. `blast.js` draws it: a white
+flash bright enough for the bloom, a fireball cooling from white to orange
+to nothing in half a second, sparks as streaks along their own velocity and
+grit that comes to rest, a ring of dust and the shock along whatever floor is
+under it, then smoke lit by the fire for a moment and by the bake after - pale,
+not black - swelling and thinning for four seconds. Near it the view rolls
+and the rifle jolts (a roll only). Every blast shares **one point light that
+is always in the scene**, dark until something goes off: a light added for
+the first grenade changed how many lights every lit material was compiled
+for, and would have stalled that frame rebuilding the map's shaders. `cheat.mjs` presses the
 button forty times and counts what goes off.
 
 `node client/cheat.mjs` is the adversarial client, over the real wire:
@@ -2007,6 +2048,14 @@ It is still far under the 1.13 m a jump clears, so cover is still cover.
 The two halves of that number live in `collide.rs` and in the generator and
 are kept in step by hand.
 
+**And a walking player is put down on anything within a step below**
+(`MAX_STEP_DOWN`, `collide::step_down`, Source's `StayOnGround`). Without it
+walking off anything was a fall, and a slope - held as quarter-metre steps -
+a run of them: down a thirty-degree ramp at full speed a player left the
+ground 0.4 s and three metres at a time and landed at 9 m/s with the thump
+and the dip of a fall. Only for a body on the ground going into the tick, so
+a jump is never pulled back and a drop taller than a step is still a fall.
+
 A spawn faces the middle of the playable area, and clear sight is only the
 qualification for a direction rather than the thing being maximised.
 Weighing the two against each other does not work: every direction on an
@@ -2038,6 +2087,13 @@ there, and a saturated offset is not a filter - the eye simply tracked the
 feet half a metre lower with every bump intact. A low-pass has no such
 mode: a steady climb settles at climb-rate times the time constant, and it
 is smooth because it is continuous rather than a stack of corrections.
+
+The gap closes per metre walked as well as per second (`EYE_SMOOTH_DISTANCE`).
+On time alone the lag up a ramp is the climb rate times the time constant,
+and up a thirty-degree ramp at full speed that was 0.42 m - the view most of
+a crouch low the whole way up. Per metre as well, it is 0.12 m, and a single
+step at a run is smoothed over the third of a metre the body takes to cross
+it. Crouching is eased apart from all of this (`CROUCH_EYE_TIME`).
 
 Smooth only while grounded. A fall should be seen falling. Detect the step in the fixed tick and
 nowhere else: reconciliation runs twenty times a second and rewinds the

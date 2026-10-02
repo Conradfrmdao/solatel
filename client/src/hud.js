@@ -451,8 +451,9 @@ export class Hud {
     if (note) note.textContent = text;
   }
 
-  /** Fades the crosshair with the sights up. Never to nothing: the dot is
-   *  where the shot goes, and a player on real stakes should always see it. */
+  /** Fades the crosshair with the sights up. Never to nothing: its middle
+   *  is where the shot goes, and a player on real stakes should always see
+   *  it. */
   setCrosshairOpacity(opacity) {
     const value = opacity.toFixed(2);
     if (value === this._crosshairOpacity) return;
@@ -765,7 +766,7 @@ const TEMPLATE = `
   <div id="balance"><span class="amount">$0.00</span><span class="caption">your wallet</span></div>
   <div id="winnings" class="hidden"><span class="amount">$0.00</span><span class="caption">won this match</span></div>
   <div id="matchclock"></div>
-  <div id="crosshair"></div>
+  <div id="crosshair"><i class="n"></i><i class="s"></i><i class="w"></i><i class="e"></i><b></b></div>
   <div id="hitmarker"></div>
   <div id="payouts"></div>
   <div id="killfeed"></div>
