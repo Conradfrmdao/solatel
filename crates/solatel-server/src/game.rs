@@ -229,11 +229,12 @@ const GATHERING_SPACING: f32 = 1.6;
 enum Hold {
     /// Live: everything.
     Free,
-    /// Together on the gathering ground: walk, jump and crouch, and nothing
-    /// that could hurt anybody.
+    /// Together on the gathering ground: walk, jump, crouch and raise the
+    /// rifle, and nothing that could hurt anybody.
     Gathered,
-    /// On their own spawn, for a map with nowhere to gather: look round and
-    /// nothing else, or the warm-up would be a head start.
+    /// On their own spawn, for a map with nowhere to gather: look round -
+    /// along the sights too - and nothing else, or the warm-up would be a
+    /// head start.
     Still,
 }
 
@@ -694,12 +695,14 @@ impl Body {
         match hold {
             Hold::Free => {}
             Hold::Gathered => {
-                command.buttons = Buttons(command.buttons.0 & (Buttons::JUMP | Buttons::CROUCH));
+                command.buttons =
+                    Buttons(command.buttons.0 & (Buttons::JUMP | Buttons::CROUCH | Buttons::AIM));
             }
             Hold::Still => {
+                // Looking round is allowed, and raising the rifle is looking.
                 command.forward = 0.0;
                 command.right = 0.0;
-                command.buttons = Buttons::empty();
+                command.buttons = Buttons(command.buttons.0 & Buttons::AIM);
             }
         }
         self.last_applied_seq = command.seq;
@@ -738,10 +741,11 @@ impl Body {
         guess.ticks = guess.ticks.saturating_add(1);
         let mut carried = self.last_input;
         // A crouch is a posture, not an action: it is held, and a late
-        // packet should not stand anybody up.
-        let crouched = carried.buttons.crouch();
+        // packet should not stand anybody up. Nor lower their rifle.
+        let held = carried.buttons;
         carried.buttons = Buttons::empty();
-        carried.buttons.set(Buttons::CROUCH, crouched);
+        carried.buttons.set(Buttons::CROUCH, held.crouch());
+        carried.buttons.set(Buttons::AIM, held.aim());
         if guess.ticks > MAX_CARRY_FORWARD_TICKS {
             carried.forward = 0.0;
             carried.right = 0.0;
@@ -2902,6 +2906,7 @@ impl Lobby {
                 id: *id,
                 state: body.state,
                 reloading: body.reload_until.is_some(),
+                aiming: body.previous_buttons.aim(),
             })
             .collect();
 

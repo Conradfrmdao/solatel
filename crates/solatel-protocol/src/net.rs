@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 17;
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -215,6 +215,12 @@ pub struct PlayerSnapshot {
     /// but them.
     #[serde(default)]
     pub reloading: bool,
+    /// Holding the rifle up to aim. Sent to everybody for the same reason: a
+    /// rifle at the shoulder is seen, and a body that always looked aimed
+    /// told nobody anything. It is the aim button the server last ran, and
+    /// it changes nothing the server decides.
+    #[serde(default)]
+    pub aiming: bool,
 }
 
 /// One player's match record, as counted by the server.
@@ -741,6 +747,7 @@ mod tests {
                 id: PlayerId::new(),
                 state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
                 reloading: true,
+                aiming: true,
             }],
             ammo: 30,
             reload_ms: 0,

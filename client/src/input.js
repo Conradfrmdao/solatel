@@ -378,8 +378,9 @@ export class Input {
     this._crouch = false;
   }
 
-  /** Whether the aim button is held. Not sent anywhere: aiming down the
-   *  sights changes what this client draws and nothing the server decides. */
+  /** Whether the aim button is held. Sent, so that everybody else sees the
+   *  rifle come up to the shoulder, but it changes nothing the server
+   *  decides: where a shot goes is the same either way. */
   get aiming() {
     if (this.requireLock && !this.locked) return false;
     return this._aim;

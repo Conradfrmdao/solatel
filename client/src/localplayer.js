@@ -19,6 +19,7 @@
 // every time.
 
 import {
+  BUTTON_AIM,
   BUTTON_CROUCH,
   BUTTON_FIRE,
   BUTTON_JUMP,
@@ -297,6 +298,8 @@ export class LocalPlayer {
     if (intent.crouch) buttons |= BUTTON_CROUCH;
     if (intent.reload) buttons |= BUTTON_RELOAD;
     if (intent.throw) buttons |= BUTTON_THROW;
+    // Raised to aim, so everybody else sees the rifle come up.
+    if (this.input.aiming) buttons |= BUTTON_AIM;
 
     const command = {
       seq: this.nextSeq,

@@ -124,6 +124,58 @@ withdrawal, task 4 on Neon, hosting and Plisio, a multisig vault for cold
 storage, invite rewards, deploy refund policy, the movement playtest, the
 yard's licence in writing.
 
+## Status, 2 October 2026: Conrad's first playtest round
+
+Conrad played, said "the game is okay, just a few things to fix", and listed
+them. All of them are done:
+
+- **Countdown** at least sixteen seconds he can see, and **no black screen**:
+  the loading card now stays up until every shader is compiled and a frame
+  drawn behind it; the warm-up waits for everybody's map (`Loaded`, protocol
+  17, `LOAD_WAIT` 30 s) and is twenty seconds.
+- **Everybody gathers during the countdown** - on the yard, the strip behind
+  the south fence where he was put - then is put on their own spawn when it
+  ends. The yard's spawns are all inside its fences now.
+- **The arena's Z stairs are straight ramps**, thirteen of them, three
+  metres wide, walled; walking down one keeps the player on it.
+- **Crosshair** is four black lines and a dot; **C then Space** stands up
+  and jumps in one; **grass and detail no longer pop in**; **grenades
+  explode** - flash, fireball, sparks, grit, a lit smoke column.
+- **Other players** have levels of detail and are culled out of view.
+- **Other players no longer look permanently aimed** (his second message, with
+  eight reference pictures from CoD, PUBG, Fortnite, Battlefield, GTA V, RDR2,
+  The Division 2 and Halo): a relaxed low ready - rifle across the body,
+  muzzle down and left - and the rifle comes up only to aim (`Buttons::AIM`,
+  `PlayerSnapshot.aiming`, protocol 18) or to fire. See *Other players* in
+  CLAUDE.md. The pose was judged in a pose lab (the real `remotes.js` driven
+  with made-up snapshots in a plain scene) and then in a match.
+
+**Next, asked for and researched, not started: more weapons.** Sniper
+rifles, assault rifles, pistols, SMGs and machine guns; 2x and 3x scopes,
+4x at most; "how guns work at different ranges and how scopes work with
+different guns... include all this physics". What the research found, to
+start from:
+
+- *Damage over range.* Counter-Strike scales damage by `RangeModifier ^
+  (distance / 500 units)` - about 0.98 an AK, 0.99 the AWP, 0.87 an MP9 - so
+  an SMG loses most of its punch at range and a sniper almost none. Simple,
+  integer-friendly as a table, and server-side.
+- *Bullets that travel.* PUBG's muzzle velocities: Kar98k 760 m/s, AWM about
+  945, M416 880, Vector 376, Tommy gun 280. At those speeds drop and flight
+  time matter past about 100 m - which the yard and the facility have. A
+  projectile stepped by the server each tick (gravity, then a ray along the
+  step), rewound per step for lag compensation as hitscan is today, with the
+  rewind capped (about 250 ms, the way shipped games do). It would live in
+  `solatel-protocol::sim` so the client draws the same flight.
+- *Scopes.* Magnification is the camera's tangent scaled, as ADS already
+  does (`ads.zoom`); turning scaled by the same factor; a scope only on the
+  weapons that take one, with a glint visible to others for the high powers
+  - information a sniper gives away, as in PUBG and Battlefield.
+- *What each weapon changes about who wins* - damage, fire rate, spread,
+  recoil - is server work first, like everything that decides a fight, and
+  the balance of each is Conrad's decision. Sniper headshots in one hit are
+  the obvious question to ask him: today no single shot kills.
+
 ## Status, end of 1 October 2026
 
 The brief above was worked through in order, PRs #21 to #26: files cached

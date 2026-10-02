@@ -2668,6 +2668,51 @@ fn reloading_by_hand_blocks_the_trigger_until_it_is_done() {
     assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE);
 }
 
+/// Whether the victim's latest snapshot says the shooter is aiming.
+fn seen_aiming(duel: &mut Duel) -> bool {
+    let _ = drain(&mut duel.victim_rx);
+    duel.lobby.broadcast_snapshot(duel.match_id);
+    drain(&mut duel.victim_rx)
+        .into_iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMsg::Snapshot { players, .. } => Some(players),
+            _ => None,
+        })
+        .expect("a snapshot")
+        .iter()
+        .find(|p| p.id == duel.shooter)
+        .expect("the shooter in it")
+        .aiming
+}
+
+#[test]
+fn aiming_is_seen_by_everybody_and_decides_nothing() {
+    // Other players drew everybody shouldered all the time, which told
+    // nobody anything. The aim button is told to them instead, as a reload
+    // is: it is done in plain view.
+    let mut duel = Duel::new();
+    let at = duel.position(duel.victim);
+    assert!(!seen_aiming(&mut duel), "nobody is aiming to begin with");
+    duel.press(Buttons::AIM, at);
+    assert!(seen_aiming(&mut duel), "the rifle came up");
+    // A late packet carries a posture on, as it does a crouch.
+    duel.steps(3);
+    assert!(seen_aiming(&mut duel), "a late packet lowered the rifle");
+    duel.press(0, at);
+    assert!(!seen_aiming(&mut duel), "and went down again");
+
+    // Where a shot lands is the same either way.
+    duel.press(Buttons::FIRE | Buttons::AIM, at);
+    let aimed = MAX_HEALTH - duel.health(duel.victim);
+    duel.body_mut(duel.victim).state.health = MAX_HEALTH;
+    duel.reload();
+    duel.press(Buttons::FIRE, at);
+    let unaimed = MAX_HEALTH - duel.health(duel.victim);
+    assert!(aimed > 0, "test setup: the shot should land");
+    assert_eq!(aimed, unaimed, "aiming changed what a shot did");
+}
+
 #[test]
 fn a_grenade_kill_pays_the_thrower() {
     let mut duel = Duel::new();
@@ -2899,7 +2944,12 @@ fn everything_at_once(lobby: &mut Lobby, player: PlayerId, session: SessionId, s
             yaw,
             pitch: 0.2,
             buttons: Buttons(
-                Buttons::JUMP | Buttons::FIRE | Buttons::CROUCH | Buttons::RELOAD | Buttons::THROW,
+                Buttons::JUMP
+                    | Buttons::FIRE
+                    | Buttons::CROUCH
+                    | Buttons::RELOAD
+                    | Buttons::THROW
+                    | Buttons::AIM,
             ),
         }],
     });
@@ -2959,6 +3009,7 @@ fn the_warm_up_gathers_everybody_and_lets_them_walk_but_not_fight() {
     );
     assert!(game.grenades.is_empty());
     assert!(body.reload_until.is_none(), "nothing reloaded");
+    assert!(body.previous_buttons.aim(), "the rifle may come up");
 
     // The countdown ends: on their own spawn, facing its way.
     for _ in 0..4 {
@@ -3028,6 +3079,7 @@ fn a_map_with_nowhere_to_gather_holds_everybody_still_but_lets_them_look() {
         (body.state.yaw - 1.0).abs() < 1e-4,
         "the aim is theirs to move"
     );
+    assert!(body.previous_buttons.aim(), "and so is the rifle");
 
     // Past it, the same command does what it says.
     for _ in 0..40 {

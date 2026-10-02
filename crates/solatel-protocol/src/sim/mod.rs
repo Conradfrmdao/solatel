@@ -470,6 +470,10 @@ impl Buttons {
     /// Pressed to throw a grenade. The server throws on the press, not while
     /// it is held, so holding it throws one.
     pub const THROW: u8 = 1 << 4;
+    /// Held to aim down the sights. It decides nothing - where a shot goes
+    /// is the same either way - and is told to everybody, because a rifle
+    /// brought up to the shoulder is seen by anybody looking.
+    pub const AIM: u8 = 1 << 5;
 
     pub const fn empty() -> Self {
         Self(0)
@@ -505,6 +509,10 @@ impl Buttons {
 
     pub const fn throw(self) -> bool {
         self.contains(Self::THROW)
+    }
+
+    pub const fn aim(self) -> bool {
+        self.contains(Self::AIM)
     }
 }
 

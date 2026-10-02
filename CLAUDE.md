@@ -1142,19 +1142,52 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
 - **Legs** are idle or run by speed - a walk is the run, slower - turned up
   to 70 degrees toward the way the player moves, with the run played
   backwards when backing off.
-- **Upper body** holds the shouldered pose from the fire clip's first frame,
-  with a little of the run's arm swing at a sprint; the fire clip plays over
-  it on every shot the server reports.
+- **Upper body has two stances, and the rifle is up only when it is being
+  used.** Everybody used to be drawn shouldered and aiming all the time,
+  which is not what anybody looks like and told nobody anything; Conrad
+  asked for the relaxed stance of a modern shooter. At rest it is the **low
+  ready** (`lowReady`, `READY`): lowered across the body, muzzle down and to
+  the left, arms relaxed. Aiming (`Buttons::AIM`, sent as
+  `PlayerSnapshot.aiming`, protocol 18), and on a shot and for 1.4 s after
+  it (`RAISED_AFTER_SHOT`), it comes up to the shoulder - the fire clip's
+  first frame, a little of the run's arm swing at a sprint, the fire clip
+  over it on every shot the server reports. A reload brings it half way up,
+  a throw takes it down. `raise` eases between them, exponentially: up with
+  a time constant of 0.08 s (0.03 on a shot from the low ready, because the
+  round has already left - its tracer leaves from where the shouldered
+  muzzle will be, `SHOULDER_MUZZLE`, and its flash waits for the rifle to
+  arrive), down with 0.25 s. The clip weights always sum to one, because
+  three.js fills a missing share with the bind pose.
+- **The low ready is built, not downloaded.** The idle clip holds the rifle
+  nearly level and pointing straight out to the side. So at load the torso
+  and head are taken from the idle (breathing), the rifle is put where
+  `READY` says - 54 degrees across, 29 down, chosen beside the references
+  Conrad sent - and each arm is solved onto it by two-bone IK, the hands
+  closing on the grip and the handguard exactly as the shouldered pose
+  closes them, fingers included. Shoulders, arms and hands are one still
+  frame over the idle's moving spine, so they ride the breathing together
+  and the hands stay on the rifle. It is a clip like any other, so the two
+  stances blend bone for bone.
 - **Aim is a constraint, not a lean.** After the clips pose the body, the
-  line from the right palm to the left is measured and the spine is turned
-  by exactly the rotation that takes it onto the player's yaw and pitch,
-  shared over three spine bones. That also undoes the leg turn for strafing.
-  An earlier version leaned the spine by the pitch around a fixed axis; on
-  this rig the clip's hands point 55 degrees off the hips, and the lean bent
-  him sideways - measure the rifle against the aim, do not eyeball it.
+  line from the right palm to the left is measured and the spine turned -
+  about the vertical, then about the level axis across it, the two made one
+  rotation and shared over three spine bones about its own axis, with one
+  matrix update for the lot - until it points exactly where the rifle should: along
+  the yaw and pitch at the shoulder, at the low ready's angle to them at
+  rest, in between on the way. That also undoes the leg turn for strafing
+  and the run's hip sway. Two rotations, not the one shortest: the low ready
+  points down, and the shortest turn between two downward lines tips the
+  torso over sideways. An earlier version leaned the spine by the pitch
+  around a fixed axis; on this rig the clip's hands point 55 degrees off the
+  hips, and the lean bent him sideways - measure the rifle against the aim,
+  do not eyeball it.
+- **At the low ready the head says where they look.** The rifle follows a
+  third of the pitch; the face is measured and turned onto the yaw and pitch
+  by the neck and head, because the idle clip turns the head about as it
+  pleases. Raised, the head is down the sights already.
 - **The rifle is not parented to a bone.** Each frame it is put in the right
-  palm and laid along the aim, so it points exactly where the player looks
-  and the left hand is on it.
+  palm and laid along that line, so raised it points exactly where the
+  player looks, and either way the left hand is on it.
 - Death plays the death clip once and leaves the body where it fell for five
   seconds; landing dips the hips; shots flash the muzzle.
 - **Reloads and throws are placed, not played** - there are no clips for
@@ -1899,7 +1932,11 @@ The client runs its ammunition down between snapshots only so the kick stops
 on the round the server will refuse; the count it displays is the server's.
 What is in somebody else's magazine is not sent to anybody else; whether
 they are reloading is (protocol 13), because a reload is done in plain view
-and heard, and it is what a player standing there would know.
+and heard, and it is what a player standing there would know. So is whether
+they are aiming (protocol 18): a rifle at the shoulder is seen. The aim
+button decides nothing on the server - a shot goes where it goes either way,
+`aiming_is_seen_by_everybody_and_decides_nothing` - and a late packet
+carries it on, as it does a crouch.
 
 **Where a shot lands is drawn** (`impacts.js`), from the server's own `to`
 in `ShotFired` - never the prediction: a burst, dust thrown back towards the
