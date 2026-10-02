@@ -311,6 +311,16 @@ async fn read_loop(
                     })
                     .await;
             }
+            ClientMsg::Loaded { match_id } => {
+                state
+                    .game
+                    .send(GameCommand::Loaded {
+                        player_id,
+                        session_id,
+                        match_id,
+                    })
+                    .await;
+            }
             ClientMsg::Withdraw {
                 amount_micro_usd,
                 destination,

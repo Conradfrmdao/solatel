@@ -179,26 +179,54 @@ they all do it, and what each step is here:
    waits in line, and the card counts them in megabytes - in line as a
    footnote, on the loading card as the bar. Which files a map needs is
    read from its glTF's JSON: the material names say which photographs,
-   the scene extras whether it grows trees and grass.
-4. **Warm-up** - `WARMUP`, fifteen seconds (Counter-Strike's freeze time),
-   `SOLATEL_WARMUP` to change it. Everybody is on their spawn and may look
-   round and nothing else: the server zeroes movement and every button for
-   the warm-up (`step_match`), so nothing can be fired, thrown or bought an
-   advantage with, and the client zeroes the same so it never predicts a
-   step the server refuses. `Snapshot::starts_in_ms` counts it down; the
-   match clock and the circle start when it ends (`Match::elapsed` is time
-   since *live*). The HUD shows the count, ticks the last three seconds and
-   says GO - but only when a snapshot says the match is live, never when
-   the local count reaches zero, so a player starts a hair late rather than
-   early and never rubber-bands.
+   the scene extras whether it grows trees and grass. **The card stays up
+   until the map can be drawn, not merely until it is in** (`prepareToDraw`
+   in `main.js`): every shader compiled with `compileAsync`, the other
+   players' soldier and rifle and a grenade's blast put in for the purpose,
+   then one frame drawn behind the card for the shadow map's depth shaders,
+   the post chain and the texture uploads. The first frame used to do all of
+   that - seconds of black canvas through ANGLE on Windows, with the
+   countdown running underneath: Conrad's countdown appeared at five. Then
+   the client sends `Loaded` (protocol 17).
+4. **Waiting for everybody's map** - the warm-up's countdown starts when the
+   last player in the match has said `Loaded`, or after `LOAD_WAIT` (30 s,
+   `SOLATEL_LOAD_WAIT`) so one machine that never finishes cannot hold the
+   rest; nobody who has dropped is waited for, and a `Loaded` counts only
+   from the socket playing that match. `Snapshot::loading` is how many are
+   still loading; while it is above zero `starts_in_ms` is the whole warm-up
+   and does not count, and the HUD says who it is waiting for.
+5. **Warm-up** - `WARMUP`, twenty seconds (Conrad asked for at least
+   sixteen of countdown he could see), `SOLATEL_WARMUP` to change it, and
+   **spent together**: everybody stands on the map's gathering ground
+   (`GATHERINGS`, its most open place - the yard's is the strip behind its
+   south fence, where Conrad was put and asked everybody to be), on a grid
+   1.6 m apart, so a match is seen to be full of people. They may walk, jump
+   and crouch among each other; the server zeroes fire, throw and reload
+   (`Hold::Gathered`), nothing can hurt anybody, and a fall puts a body back
+   rather than ending it. When the countdown ends `disperse_if_live` puts
+   each on their own spawn, facing its way, with no motion, guess or history
+   carried over - so wandering bought nothing - and the client faces the
+   spawn on the first snapshot that has it there. A map with nowhere to
+   gather would hold everybody still on their spawns instead (`Hold::Still`),
+   or the warm-up would be a head start; `Snapshot::gathered` tells the
+   client which, so it predicts what the server will do. Another player who
+   moves further between two snapshots than anybody can run (`TELEPORT`) is
+   drawn there, not slid across the map. `Snapshot::starts_in_ms` counts it
+   down; the match clock and the circle start when it ends
+   (`Match::elapsed` is time since *live*). The HUD shows the count, ticks
+   the last three seconds and says GO - but only when a snapshot says the
+   match is live, never when the local count reaches zero, so a player
+   starts a hair late rather than early and never rubber-bands.
 
 It is also what makes loading fair: a match that went live when its map
 arrived would start with whoever loaded fastest already moving.
 
-The tests run with no warm-up (`free_play` and `Paid` set it to zero) except
-the three about it. Every end-to-end driver waits for `starts_in_ms` to reach
-zero before it does anything, because anything sent in the warm-up is
-discarded - a speed check run during it would prove nothing.
+The tests run with no warm-up and no wait for maps (`free_play` and `Paid`
+set both to zero) except the ones about them; a match with no warm-up does
+not gather. Every end-to-end driver sends `loaded` the moment its match
+starts - it has no map to load - and waits for `starts_in_ms` to reach zero
+before it does anything, because anything sent in the warm-up is discarded
+- a speed check run during it would prove nothing.
 
 ### A table is a map and a stake
 
@@ -1212,7 +1240,11 @@ concrete photograph is warm and halfway left twenty thousand square metres
 of wall cream under a grey sky; they weather like the arena's, rain streaks
 and all. It records each primitive's original colour in its
 `extras.yard_colour`, which keeps it idempotent and which `build-facility.py`
-reads when it borrows the yard's props.
+reads when it borrows the yard's props. It also writes the yard's scene
+extras: the water's colour, and `spawn_exclude` over the strips behind the
+two lines of barriers across the yard's ends (and the barriers themselves) -
+seven spawns were out there, a life starting with the whole yard in front of
+it, until Conrad asked for them inside. Run it, then `derive-maps.py yard`.
 
 It is also where the arena's **colours** live. `PALETTE` repaints every
 primitive of the original, by what the piece is, in weathered concrete,

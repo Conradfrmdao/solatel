@@ -121,6 +121,10 @@ export class Matchmaking {
         const { loaded, total } = view.download;
         this.fill.style.transform = `scaleX(${total > 0 ? Math.min(1, loaded / total) : 0})`;
         this._set(this.status, `downloading ${escapeHtml(view.map ?? 'the map')} &middot; ${megabytes(loaded, total)}`);
+      } else if (view.preparing) {
+        // Compiling the map's shaders, behind this card rather than as a
+        // black first frame: see `prepareToDraw` in main.js.
+        this._set(this.status, `preparing ${escapeHtml(view.map ?? 'the map')}…`);
       } else {
         this._set(this.status, `loading ${escapeHtml(view.map ?? 'the map')}…`);
       }

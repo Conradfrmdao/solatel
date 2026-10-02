@@ -199,9 +199,19 @@ async fn main() -> Result<()> {
             .with_context(|| format!("SOLATEL_WARMUP {raw:?} is not a number of seconds"))?,
         Err(_) => game::WARMUP,
     };
+    // How long a started match waits for everybody's map to load before
+    // counting down without the slowest.
+    let load_wait: f32 = match std::env::var("SOLATEL_LOAD_WAIT") {
+        Ok(raw) => raw
+            .trim()
+            .parse()
+            .with_context(|| format!("SOLATEL_LOAD_WAIT {raw:?} is not a number of seconds"))?,
+        Err(_) => game::LOAD_WAIT,
+    };
     tracing::info!(
         floor,
         warmup_seconds = warmup,
+        load_wait_seconds = load_wait,
         wait_seconds = wait,
         "a match starts when the table fills, or after the window with at least the floor"
     );
@@ -274,6 +284,7 @@ async fn main() -> Result<()> {
             floor,
             wait,
             warmup,
+            load_wait,
         },
     );
     let wallet_health = wallet.map(|w| wallet::spawn(w, pool.clone(), game.clone(), wake));

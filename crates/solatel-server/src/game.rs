@@ -179,17 +179,104 @@ const MATCH_FLOOR: usize = 4;
 /// Overridden by `SOLATEL_QUEUE_WAIT`, in seconds.
 const QUEUE_WAIT: f32 = 120.0;
 
-/// How long a match holds everybody on their spawn before it goes live.
+/// How long a match holds everybody on their spawn before it goes live,
+/// counted from when everybody's map has loaded (see [`LOAD_WAIT`]).
 ///
-/// Fifteen seconds, which is Counter-Strike's freeze time and about what a
-/// Call of Duty lobby counts down. A match that went live the instant its
-/// map finished loading would start with whoever's machine loaded fastest
-/// already moving, and on a slow connection a player's first sight of the
-/// map could be the shot that ends their stake. So everybody is placed,
-/// frozen, and told how long: they may look round and nothing else, and
-/// nobody can hurt anybody. The match clock and the circle start when it
-/// ends. Overridden by `SOLATEL_WARMUP`, in seconds.
-pub const WARMUP: f32 = 15.0;
+/// Twenty seconds: Counter-Strike's freeze time is fifteen, and Conrad
+/// asked for at least sixteen of countdown that a player actually sees. A
+/// match that went live the instant its map finished loading would start
+/// with whoever's machine loaded fastest already moving, and on a slow
+/// connection a player's first sight of the map could be the shot that ends
+/// their stake. So everybody is placed, frozen, and told how long: they may
+/// look round and nothing else, and nobody can hurt anybody. The match clock
+/// and the circle start when it ends. Overridden by `SOLATEL_WARMUP`, in
+/// seconds.
+pub const WARMUP: f32 = 20.0;
+
+/// How long a started match waits for everybody's map to load before its
+/// warm-up starts without the slowest.
+///
+/// The warm-up used to start with the match, and loading a map - what was
+/// not cached, then building it and compiling its shaders - took most of it
+/// on a slow machine: Conrad's countdown appeared at five. Each client now
+/// says when its map is drawn (`ClientMsg::Loaded`) and the countdown waits
+/// for the last of them, or for this, whichever is sooner, so one machine
+/// that never finishes cannot hold everybody. Nobody who has dropped is
+/// waited for. Overridden by `SOLATEL_LOAD_WAIT`, in seconds.
+pub const LOAD_WAIT: f32 = 30.0;
+
+/// Where a match's players stand together while it warms up, map by map:
+/// the middle of a patch of open ground, picked from each map's collision as
+/// the most open place there is - the yard's is the strip behind its south
+/// fence where Conrad was put, and asked that everybody be put.
+///
+/// Gathered, players see that the match is full of people, and may walk and
+/// jump among each other; nothing can be fired, thrown or reloaded, and
+/// nothing can hurt anybody. The countdown's end puts each on their own
+/// spawn (`disperse_if_live`), so where they wandered meanwhile buys nothing.
+const GATHERINGS: [(&str, f32, f32); 3] = [
+    ("arena", -10.2, 13.0),
+    ("yard", -35.0, -114.5),
+    ("facility", -89.2, 17.2),
+];
+
+/// Metres between players in a gathering: room to walk between, close
+/// enough to be a crowd.
+const GATHERING_SPACING: f32 = 1.6;
+
+/// What the warm-up lets a body do.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hold {
+    /// Live: everything.
+    Free,
+    /// Together on the gathering ground: walk, jump and crouch, and nothing
+    /// that could hurt anybody.
+    Gathered,
+    /// On their own spawn, for a map with nowhere to gather: look round and
+    /// nothing else, or the warm-up would be a head start.
+    Still,
+}
+
+/// Where up to `seats` players stand in `map`'s gathering, facing its
+/// middle: a grid spiralling out from the gathering's centre, every place a
+/// standing player fits without touching anything. Empty for a map that has
+/// no gathering.
+fn gathering_spots(map: &map::Map, seats: usize) -> Vec<map::Spawn> {
+    use solatel_protocol::sim::{PLAYER_HALF_EXTENTS, collide::overlaps_any};
+    let Some(&(_, x, z)) = GATHERINGS.iter().find(|(name, _, _)| *name == map.name) else {
+        return Vec::new();
+    };
+    let yaw = x.atan2(z);
+    let standing = solatel_protocol::glam::Vec3::new(0.0, 1.2, 0.0);
+    let mut spots = Vec::new();
+    for ring in 0_i32..12 {
+        for i in -ring..=ring {
+            for j in -ring..=ring {
+                if i.abs().max(j.abs()) != ring {
+                    continue;
+                }
+                let position = solatel_protocol::glam::Vec3::new(
+                    x + i as f32 * GATHERING_SPACING,
+                    standing.y,
+                    z + j as f32 * GATHERING_SPACING,
+                );
+                let clear = !overlaps_any(position, PLAYER_HALF_EXTENTS, map);
+                let floored = overlaps_any(
+                    position - solatel_protocol::glam::Vec3::Y * 1.0,
+                    PLAYER_HALF_EXTENTS,
+                    map,
+                );
+                if clear && floored {
+                    spots.push(map::Spawn { position, yaw });
+                    if spots.len() >= seats {
+                        return spots;
+                    }
+                }
+            }
+        }
+    }
+    spots
+}
 
 /// How long a forming match waits for its entry fees to land.
 ///
@@ -256,6 +343,12 @@ pub enum GameCommand {
     LeaveQueue {
         player_id: PlayerId,
         session_id: SessionId,
+    },
+    /// Their client has the match's map loaded and drawn. See [`LOAD_WAIT`].
+    Loaded {
+        player_id: PlayerId,
+        session_id: SessionId,
+        match_id: MatchId,
     },
     /// Take money out of the wallet, to a Solana address.
     Withdraw {
@@ -449,6 +542,11 @@ struct Body {
     /// they came into sight. Every shot of a burst would otherwise measure
     /// the same exposure again, a little later each time.
     last_reaction: Option<(PlayerId, u32)>,
+    /// Their own spawn, where the match puts them when it goes live.
+    spawn: map::Spawn,
+    /// Where they were put to wait: the gathering, or their spawn. A fall in
+    /// the warm-up puts them back here rather than ending anything.
+    home: map::Spawn,
 }
 
 impl Body {
@@ -473,6 +571,14 @@ impl Body {
             zone_carry: 0.0,
             regen_carry: 0.0,
             last_reaction: None,
+            spawn: map::Spawn {
+                position: state.position,
+                yaw: state.yaw,
+            },
+            home: map::Spawn {
+                position: state.position,
+                yaw: state.yaw,
+            },
         }
     }
 
@@ -507,7 +613,7 @@ impl Body {
         &mut self,
         id: PlayerId,
         tick: u32,
-        frozen: bool,
+        hold: Hold,
         now: f32,
         ground: &map::Map,
         shots: &mut Vec<Shot>,
@@ -548,7 +654,7 @@ impl Body {
                 break;
             };
             let waited = tick.wrapping_sub(arrived);
-            self.run_command(id, command, waited, frozen, now, ground, shots, throws);
+            self.run_command(id, command, waited, hold, now, ground, shots, throws);
         }
         // Still short of this tick: guess the rest from here.
         for _ in run..owed {
@@ -579,16 +685,22 @@ impl Body {
         id: PlayerId,
         mut command: InputCommand,
         waited: u32,
-        frozen: bool,
+        hold: Hold,
         now: f32,
         ground: &map::Map,
         shots: &mut Vec<Shot>,
         throws: &mut Vec<(PlayerId, PlayerState)>,
     ) {
-        if frozen {
-            command.forward = 0.0;
-            command.right = 0.0;
-            command.buttons = Buttons::empty();
+        match hold {
+            Hold::Free => {}
+            Hold::Gathered => {
+                command.buttons = Buttons(command.buttons.0 & (Buttons::JUMP | Buttons::CROUCH));
+            }
+            Hold::Still => {
+                command.forward = 0.0;
+                command.right = 0.0;
+                command.buttons = Buttons::empty();
+            }
         }
         self.last_applied_seq = command.seq;
         self.last_input = command;
@@ -690,9 +802,23 @@ struct Match {
     /// The tick this match started running on. `None` while it is still
     /// forming - that is, while the entry fees are still being taken.
     started_tick: Option<u32>,
-    /// Ticks of warm-up after `started_tick` before the match goes live.
+    /// Ticks of warm-up after `warm_from` before the match goes live.
     /// See [`WARMUP`].
     warmup_ticks: u32,
+    /// The tick the warm-up's countdown began: when the last player in it
+    /// had loaded the map, or `load_wait_ticks` after `started_tick`. `None`
+    /// while it is still waiting for them. See [`LOAD_WAIT`].
+    warm_from: Option<u32>,
+    /// The longest the warm-up waits for anybody's map to load.
+    load_wait_ticks: u32,
+    /// Who has said their map is loaded and drawn.
+    loaded: HashSet<PlayerId>,
+    /// Where its players wait together until it goes live (see
+    /// [`GATHERINGS`]), and whether they are there now. Empty, and never
+    /// gathered, for a match with no warm-up.
+    gathering: Vec<map::Spawn>,
+    next_gathering: usize,
+    gathered: bool,
     /// Game time after which a forming match stops waiting for money.
     forming_until: f32,
     /// Players whose entry fee is still in flight.
@@ -724,7 +850,7 @@ impl Match {
     /// through the warm-up, so the match clock and the circle both start
     /// when the players can first move.
     fn elapsed(&self, tick: u32) -> f32 {
-        match self.started_tick {
+        match self.warm_from {
             Some(start) => {
                 tick.wrapping_sub(start).saturating_sub(self.warmup_ticks) as f32 * TICK_DT
             }
@@ -732,21 +858,36 @@ impl Match {
         }
     }
 
-    /// Whether everybody is still being held on their spawn.
+    /// Whether everybody is still being held on their spawn: waiting for
+    /// maps to load, or counting down.
     fn warming_up(&self, tick: u32) -> bool {
-        self.started_tick
-            .is_some_and(|start| tick.wrapping_sub(start) < self.warmup_ticks)
+        self.running()
+            && self
+                .warm_from
+                .is_none_or(|start| tick.wrapping_sub(start) < self.warmup_ticks)
     }
 
-    /// Milliseconds of warm-up left, for the countdown the client shows.
+    /// Milliseconds of warm-up left, for the countdown the client shows: the
+    /// whole of it, not counting, while maps are still loading.
     fn starts_in_ms(&self, tick: u32) -> u32 {
-        match self.started_tick {
-            Some(start) => {
-                let left = self.warmup_ticks.saturating_sub(tick.wrapping_sub(start));
-                (left as f32 * TICK_DT * 1000.0).round() as u32
-            }
-            None => (self.warmup_ticks as f32 * TICK_DT * 1000.0).round() as u32,
+        let left = match self.warm_from {
+            Some(start) => self.warmup_ticks.saturating_sub(tick.wrapping_sub(start)),
+            None => self.warmup_ticks,
+        };
+        (left as f32 * TICK_DT * 1000.0).round() as u32
+    }
+
+    /// How many players the warm-up is still waiting on to load the map:
+    /// in the match, connected, and not yet said so. Zero once it counts.
+    fn loading(&self, connections: &HashMap<PlayerId, Connection>) -> u32 {
+        if self.warm_from.is_some() || !self.running() {
+            return 0;
         }
+        self.bodies
+            .keys()
+            .filter(|id| !self.loaded.contains(id))
+            .filter(|id| connections.get(id).is_some_and(|c| c.away_since.is_none()))
+            .count() as u32
     }
 
     fn running(&self) -> bool {
@@ -790,6 +931,8 @@ struct Lobby {
     wait: f32,
     /// Seconds a started match holds everybody still. See [`WARMUP`].
     warmup: f32,
+    /// Seconds a started match waits for maps to load. See [`LOAD_WAIT`].
+    load_wait: f32,
     connections: HashMap<PlayerId, Connection>,
     matches: HashMap<MatchId, Match>,
     tick: u32,
@@ -807,6 +950,7 @@ impl Lobby {
             floor: MATCH_FLOOR,
             wait: QUEUE_WAIT,
             warmup: WARMUP,
+            load_wait: LOAD_WAIT,
             connections: HashMap::new(),
             matches: HashMap::new(),
             tick: 0,
@@ -1062,6 +1206,11 @@ impl Lobby {
             value
         });
 
+        let gathering = if self.warmup > 0.0 {
+            gathering_spots(map, seats.max(1))
+        } else {
+            Vec::new()
+        };
         self.matches.insert(
             id,
             Match {
@@ -1069,6 +1218,12 @@ impl Lobby {
                 stakes,
                 started_tick: None,
                 warmup_ticks: (self.warmup / TICK_DT).round() as u32,
+                warm_from: None,
+                load_wait_ticks: (self.load_wait / TICK_DT).round() as u32,
+                loaded: HashSet::new(),
+                gathered: !gathering.is_empty(),
+                gathering,
+                next_gathering: 0,
                 forming_until: self.game_time() + FORMING_TIMEOUT,
                 awaiting: players.iter().copied().collect(),
                 bodies: HashMap::new(),
@@ -1121,9 +1276,20 @@ impl Lobby {
         };
         let spawn = game.spawns[game.next_spawn % game.spawns.len()];
         game.next_spawn += 1;
+        // Gathered with everybody else for the warm-up, when there is one;
+        // on their own spawn when the match goes live.
+        let home = if game.gathered && !game.gathering.is_empty() {
+            let spot = game.gathering[game.next_gathering % game.gathering.len()];
+            game.next_gathering += 1;
+            spot
+        } else {
+            spawn
+        };
         game.awaiting.remove(&player_id);
-        game.bodies
-            .insert(player_id, Body::new(PlayerState::spawned_at(spawn)));
+        let mut body = Body::new(PlayerState::spawned_at(home));
+        body.spawn = spawn;
+        body.home = home;
+        game.bodies.insert(player_id, body);
         if let Some(connection) = self.connections.get_mut(&player_id) {
             connection.at = Whereabouts::Playing(match_id);
         }
@@ -1601,6 +1767,25 @@ impl Lobby {
                 self.broadcast_lobby();
             }
 
+            GameCommand::Loaded {
+                player_id,
+                session_id,
+                match_id,
+            } => {
+                // From the socket playing this match only: a late one from
+                // the last match, or from a tab that has been taken over,
+                // says nothing about this one.
+                let current = self.connections.get(&player_id).is_some_and(|c| {
+                    c.session_id == session_id && c.at == Whereabouts::Playing(match_id)
+                });
+                if current
+                    && let Some(game) = self.matches.get_mut(&match_id)
+                    && game.bodies.contains_key(&player_id)
+                {
+                    game.loaded.insert(player_id);
+                }
+            }
+
             GameCommand::Withdraw {
                 player_id,
                 session_id,
@@ -1776,6 +1961,8 @@ impl Lobby {
             .map(|(id, _)| *id)
             .collect();
         for match_id in running {
+            self.start_countdown_if_loaded(match_id);
+            self.disperse_if_live(match_id);
             self.step_match(match_id, now);
         }
 
@@ -1861,6 +2048,58 @@ impl Lobby {
         }
     }
 
+    /// Starts a match's warm-up countdown once everybody in it has loaded
+    /// the map, or the wait for them is over. See [`LOAD_WAIT`].
+    fn start_countdown_if_loaded(&mut self, match_id: MatchId) {
+        let tick = self.tick;
+        let Some(game) = self.matches.get(&match_id) else {
+            return;
+        };
+        if game.warm_from.is_some() {
+            return;
+        }
+        let waiting = game.loading(&self.connections);
+        let waited = game
+            .started_tick
+            .is_some_and(|start| tick.wrapping_sub(start) >= game.load_wait_ticks);
+        if waiting > 0 && !waited {
+            return;
+        }
+        if waiting > 0 {
+            tracing::info!(%match_id, waiting, "warm-up started without everybody loaded");
+        } else {
+            tracing::debug!(%match_id, "everybody loaded; warm-up started");
+        }
+        if let Some(game) = self.matches.get_mut(&match_id) {
+            game.warm_from = Some(tick);
+        }
+    }
+
+    /// The countdown is over: everybody leaves the gathering for their own
+    /// spawn, facing the way it faces, with nothing of the warm-up carried
+    /// with them - no motion, no guess, no history for a shot to be rewound
+    /// into.
+    fn disperse_if_live(&mut self, match_id: MatchId) {
+        let tick = self.tick;
+        let Some(game) = self.matches.get_mut(&match_id) else {
+            return;
+        };
+        if !game.gathered || game.warming_up(tick) {
+            return;
+        }
+        game.gathered = false;
+        for body in game.bodies.values_mut() {
+            let health = body.state.health;
+            body.state = PlayerState::spawned_at(body.spawn);
+            body.state.health = health;
+            body.home = body.spawn;
+            body.guess = None;
+            body.history.clear();
+            body.last_input = idle_input(body.state);
+        }
+        tracing::debug!(%match_id, "live; everybody from the gathering to their spawn");
+    }
+
     /// One tick of one match.
     fn step_match(&mut self, match_id: MatchId, now: f32) {
         let Some(game) = self.matches.get(&match_id) else {
@@ -1872,7 +2111,13 @@ impl Lobby {
         let zone = game.zone(self.tick);
         let burn = zone_damage_per_second(game.elapsed(self.tick));
         // Held on the spawn: the aim is theirs, nothing else is.
-        let frozen = game.warming_up(self.tick);
+        let hold = if !game.warming_up(self.tick) {
+            Hold::Free
+        } else if game.gathered {
+            Hold::Gathered
+        } else {
+            Hold::Still
+        };
         let ground = game.map;
         let ids: Vec<PlayerId> = game.bodies.keys().copied().collect();
         let mut shots: Vec<Shot> = Vec::new();
@@ -1893,7 +2138,7 @@ impl Lobby {
                     continue;
                 }
 
-                body.advance(*id, tick, frozen, now, ground, &mut shots, &mut throws);
+                body.advance(*id, tick, hold, now, ground, &mut shots, &mut throws);
 
                 if let Some(done) = body.reload_until
                     && now >= done
@@ -1926,8 +2171,15 @@ impl Lobby {
                     }
                 }
 
-                // Falling out of the world is fatal. There is no killer to
-                // credit.
+                // Falling out of the world is fatal, once the match is live.
+                // Before it nothing is: a body that has found a way off the
+                // gathering goes back to it.
+                if hold != Hold::Free && body.state.position.y < -50.0 {
+                    body.state = PlayerState::spawned_at(body.home);
+                    body.guess = None;
+                    body.history.clear();
+                }
+                // There is no killer to credit.
                 if body.state.is_alive() && body.state.position.y < -50.0 {
                     body.state.health = 0;
                     body.stats.deaths = body.stats.deaths.saturating_add(1);
@@ -2637,6 +2889,8 @@ impl Lobby {
         let zone = game.zone(self.tick);
         let remaining_ms = ((MATCH_DURATION - game.elapsed(self.tick)).max(0.0) * 1000.0) as u32;
         let starts_in_ms = game.starts_in_ms(self.tick);
+        let loading = game.loading(&self.connections);
+        let gathered = game.gathered;
         // Only the living are drawn. A body that has been eliminated is kept
         // for the board, not for the map: a corpse lying where somebody died
         // for the rest of the match is scenery nobody asked for.
@@ -2698,6 +2952,8 @@ impl Lobby {
                 grenades: body.grenades,
                 live_grenades: live_grenades.clone(),
                 starts_in_ms,
+                loading,
+                gathered,
             });
         }
     }
@@ -2753,6 +3009,7 @@ pub struct Matchmaking {
     pub floor: usize,
     pub wait: f32,
     pub warmup: f32,
+    pub load_wait: f32,
 }
 
 /// Starts the lobby.
@@ -2778,6 +3035,7 @@ pub fn spawn(
         lobby.floor = rules.floor.max(1);
         lobby.wait = rules.wait.max(0.0);
         lobby.warmup = rules.warmup.max(0.0);
+        lobby.load_wait = rules.load_wait.max(0.0);
         let mut clock = TickClock::new(
             tokio::time::Instant::now(),
             std::time::Duration::from_secs_f32(TICK_DT),

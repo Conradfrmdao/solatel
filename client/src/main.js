@@ -327,7 +327,12 @@ async function boot() {
    * comes out of whichever map the simulation is pointed at.
    */
   let entering = null;
-  async function enterMatch(mapName) {
+  /** The match whose map is loaded, compiled and ready to draw. Until it is
+   *  this one, the loading card stays up and nothing is drawn. */
+  let preparedFor = null;
+  /** Whether the map is in and being compiled, for the card to say so. */
+  let preparing = false;
+  async function enterMatch(mapName, matchId) {
     if (!selectMap(mapName)) {
       link.dropLink(`this build has no map called "${mapName}". Reload the page.`, 0);
       return;
@@ -345,7 +350,50 @@ async function boot() {
     camera.far = Math.hypot(SIM.arenaHalfX, SIM.arenaHalfZ) * 2.2;
     camera.updateProjectionMatrix();
 
+    preparing = true;
+    try {
+      await prepareToDraw();
+    } finally {
+      preparing = false;
+    }
+    preparedFor = matchId;
+    // The server holds the countdown until everybody has said this.
+    link.send({ t: 'loaded', match_id: matchId });
     document.body.classList.add('running');
+  }
+
+  /**
+   * Compiles everything a match draws, behind the loading card, and draws
+   * one frame there as well.
+   *
+   * The first frame of a match used to do all of it: every shader of the
+   * map compiled at once, which through ANGLE on Windows is seconds - the
+   * black screen Conrad sat through with the countdown running underneath
+   * it. `compileAsync` compiles without holding the page where the browser
+   * can (KHR_parallel_shader_compile), with the other players' soldier and
+   * rifle and a grenade's blast put in for the purpose, since each of those
+   * would otherwise compile the first time one appeared. The frame drawn
+   * afterwards, still behind the card, is what compiles the shadow map's
+   * depth shaders and the post chain's own, and uploads every texture.
+   */
+  async function prepareToDraw() {
+    const extras = remotes.prototypes;
+    world.blasts.prime();
+    for (const object of extras) scene.add(object);
+    try {
+      await renderer.compileAsync(scene, camera);
+      await renderer.compileAsync(viewmodel.scene, viewmodel.camera);
+      renderer.clear();
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+      renderer.clearDepth();
+      renderer.render(viewmodel.scene, viewmodel.camera);
+    } catch (error) {
+      // Drawing the first frame the slow way is better than not drawing it.
+      console.warn('could not compile ahead of the first frame', error);
+    } finally {
+      for (const object of extras) scene.remove(object);
+    }
   }
 
   // Browsers will not start an audio device except from a real gesture, so it
@@ -672,7 +720,7 @@ async function boot() {
       // Loading a map compiles shaders for seconds; none of that is a
       // judgement on the machine.
       quality.reset(now);
-      entering = enterMatch(local.mapName).finally(() => {
+      entering = enterMatch(local.mapName, local.matchId).finally(() => {
         entering = null;
       });
     }
@@ -684,7 +732,10 @@ async function boot() {
     // server hears it in the next command, as it would a turn of the mouse.
     if (local.faceSpawn && local.seenSnapshot && local.matchId === enteredMatch) {
       local.faceSpawn = false;
-      const yaw = spawnFacing(local.serverPosition);
+      // On a spawn, its way; gathered for the warm-up, towards the middle
+      // of the map, which is where everybody is about to be sent.
+      const at = local.serverPosition;
+      const yaw = spawnFacing(at) ?? (local.gathered && at ? Math.atan2(at.x, at.z) : null);
       if (yaw !== null) {
         input.yaw = yaw;
         input.pitch = 0;
@@ -725,7 +776,8 @@ async function boot() {
       if (document.pointerLockElement) document.exitPointerLock();
     }
 
-    const playing = Boolean(local.matchId) && world.ready && !link.parked;
+    const playing =
+      Boolean(local.matchId) && world.ready && preparedFor === local.matchId && !link.parked;
 
     // Searching, found, loading: the screens between a click on a table and
     // standing on the map.
@@ -772,6 +824,7 @@ async function boot() {
       } else if (local.matchId && !playing) {
         view = {
           phase: 'loading',
+          preparing,
           map: local.mapName,
           dollars: local.tier?.dollars,
           players: local.matchPlayers,

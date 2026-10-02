@@ -260,6 +260,8 @@
         font-variant-numeric: tabular-nums;
       }
       #warmup .count.beat { animation: beat 420ms ease-out; }
+      /* The whole warm-up, not counting yet: somebody's map is still loading. */
+      #warmup .count.held { opacity: 0.45; }
       @keyframes beat { from { transform: scale(1.25); color: #9fe8b4; } to { transform: scale(1); } }
       #warmup .about { font-size: 14px; color: #d7dde6; text-transform: lowercase; }
       #warmup .hint { font-size: 12px; color: var(--dim); }

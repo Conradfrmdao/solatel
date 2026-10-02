@@ -30,6 +30,7 @@ export class Hud {
     this.grenadeCount = root.querySelector('#weapon .grenades');
     this.zoneWarning = root.querySelector('#zone-warning');
     this.warmup = root.querySelector('#warmup');
+    this.warmupCaption = root.querySelector('#warmup .caption');
     this.warmupCount = root.querySelector('#warmup .count');
     this.warmupAbout = root.querySelector('#warmup .about');
     this.warmupHint = root.querySelector('#warmup .hint');
@@ -625,12 +626,20 @@ export class Hud {
     const warming = local.inMatch && local.warmingUp;
     this.warmup.classList.toggle('hidden', !warming);
     if (warming) {
+      // Held, not counting, while anybody's map is still loading: the
+      // server starts the countdown when the last of them is in.
+      const waiting = local.loadingPlayers ?? 0;
+      const caption = waiting > 0
+        ? `waiting for ${waiting === 1 ? 'one player' : `${waiting} players`} to load`
+        : 'match starts in';
+      if (this.warmupCaption.textContent !== caption) this.warmupCaption.textContent = caption;
+      this.warmupCount.classList.toggle('held', waiting > 0);
       const seconds = Math.max(1, Math.ceil(local.startsInMs / 1000));
       if (this.warmupCount.textContent !== String(seconds)) {
         this.warmupCount.textContent = String(seconds);
         this.warmupCount.classList.remove('beat');
         void this.warmupCount.offsetWidth;
-        this.warmupCount.classList.add('beat');
+        if (!waiting) this.warmupCount.classList.add('beat');
       }
       const about = [
         local.mapName,
@@ -639,9 +648,12 @@ export class Hud {
         local.poolMicroUsd !== null ? `${formatMoney(local.poolMicroUsd)} in play` : null,
       ].filter(Boolean).join(' · ');
       if (this.warmupAbout.textContent !== about) this.warmupAbout.textContent = about;
+      const after = local.gathered
+        ? 'everybody goes to their own spawn when it hits zero'
+        : 'you can move when it hits zero';
       const hint = input.locked || !input.requireLock
-        ? 'look around - you can move when it hits zero'
-        : 'click to take the mouse - you can move when it hits zero';
+        ? `${local.gathered ? 'walk about' : 'look around'} - ${after}`
+        : `click to take the mouse - ${after}`;
       if (this.warmupHint.textContent !== hint) this.warmupHint.textContent = hint;
     }
     if (this._wasWarming && !warming && local.inMatch) {
@@ -755,7 +767,7 @@ const TEMPLATE = `
   <div id="zone-warning" class="hidden">OUTSIDE THE ZONE &middot; get back in</div>
   <div id="warmup" class="hidden">
     <div class="caption">match starts in</div>
-    <div class="count">15</div>
+    <div class="count">20</div>
     <div class="about"></div>
     <div class="hint"></div>
   </div>

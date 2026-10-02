@@ -49,7 +49,11 @@ class Bot {
       this.ws.addEventListener('message', (event) => {
         const msg = JSON.parse(event.data);
         if (msg.t === 'welcome') resolve();
-        if (msg.t === 'match_started') this.matchId = msg.match_id;
+        if (msg.t === 'match_started') {
+          this.matchId = msg.match_id;
+          // No map to load: ready for the countdown at once.
+          this.send({ t: 'loaded', match_id: msg.match_id });
+        }
         if (msg.t === 'snapshot' && msg.match_id === this.matchId && (msg.starts_in_ms ?? 0) === 0) this.live = true;
       });
       this.ws.addEventListener('open', () => {

@@ -90,6 +90,8 @@ class Player {
       case 'match_started':
         this.matchId = msg.match_id;
         this.matchedAt = performance.now();
+        // No map to load: ready for the countdown at once.
+        this.send({ t: 'loaded', match_id: msg.match_id });
         break;
       case 'snapshot':
         if (msg.match_id !== this.matchId) break;

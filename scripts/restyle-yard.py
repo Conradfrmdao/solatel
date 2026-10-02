@@ -162,7 +162,18 @@ def main():
     # The sea sits just under the slab, as before; say so, and in a colour
     # that belongs with the rest.
     scene = js['scenes'][js.get('scene', 0)]
-    scene.setdefault('extras', {}).update({'water_colour': '#34474f'})
+    scene.setdefault('extras', {}).update({
+        'water_colour': '#34474f',
+        # No spawns behind the two fences across the yard's ends, nor in
+        # them: a line of barriers at z -106 to -102 and another at 97 to
+        # 102, with the perimeter and the sea past them. Seven of the yard's
+        # spawns were out there and a life started with the whole yard in
+        # front of it; Conrad asked for them inside. The south strip is
+        # where a match gathers for its warm-up instead (`GATHERINGS` in
+        # game.rs). Rectangles in metres, as x0, z0, x1, z1; the yard is at
+        # scale 1.
+        'spawn_exclude': [[-60.0, -130.0, 60.0, -101.0], [-60.0, 97.0, 60.0, 130.0]],
+    })
 
     size = arena.write_glb(js, bytes(blob), MODEL)
     print(f'yard: {len(materials)} surfaces over {sum(counts.values())} primitives, '

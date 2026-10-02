@@ -277,15 +277,19 @@ export class LocalPlayer {
 
     const intent = this.input.sample();
     if (this.warmingUp) {
-      // Held on the spawn: the server zeroes all of this for the warm-up,
-      // and predicting it would only be a correction a moment later.
-      intent.forward = 0;
-      intent.right = 0;
-      intent.jump = false;
+      // The server zeroes these for the warm-up, and predicting them would
+      // only be a correction a moment later. Gathered, everybody may walk,
+      // jump and crouch among each other and nothing more; on a spawn, not
+      // even that.
       intent.fire = false;
-      intent.crouch = false;
       intent.reload = false;
       intent.throw = false;
+      if (!this.gathered) {
+        intent.forward = 0;
+        intent.right = 0;
+        intent.jump = false;
+        intent.crouch = false;
+      }
     }
     let buttons = 0;
     if (intent.jump) buttons |= BUTTON_JUMP;
@@ -369,7 +373,9 @@ export class LocalPlayer {
     if (this.formingInMs > 0) {
       this.formingInMs = Math.max(0, this.formingInMs - dt * 1000);
     }
-    if (this.startsInMs > 0) {
+    // Not while maps are still loading: the server's countdown has not
+    // begun, and it is the server's that counts.
+    if (this.startsInMs > 0 && !this.loadingPlayers) {
       this.startsInMs = Math.max(0, this.startsInMs - dt * 1000);
     }
   }
@@ -473,9 +479,18 @@ export class LocalPlayer {
         }
         this.liveGrenades = message.live_grenades ?? [];
         if (typeof message.starts_in_ms === 'number') {
+          const wasWarming = this.warmingUp;
           this.startsInMs = message.starts_in_ms;
           this.warmingUp = message.starts_in_ms > 0;
+          // Gone live from the gathering: this snapshot is the first with
+          // this player on their own spawn, so face the way it faces.
+          if (wasWarming && !this.warmingUp && this.gathered) {
+            this.faceSpawn = true;
+            this.seenSnapshot = false;
+          }
         }
+        this.loadingPlayers = message.loading ?? 0;
+        this.gathered = Boolean(message.gathered);
         this._reconcile(message);
         return true;
 
@@ -557,6 +572,10 @@ export class LocalPlayer {
         this.matchPlayers = message.players ?? 0;
         this.startsInMs = message.starts_in_ms ?? 0;
         this.warmingUp = this.startsInMs > 0;
+        // Until a snapshot says otherwise, everybody is still loading, and
+        // waiting where the match put them.
+        this.loadingPlayers = this.warmingUp ? Math.max(1, message.players ?? 1) : 0;
+        this.gathered = false;
         this.found = null;
         this.queueRequested = null;
         this.queuedAt = null;

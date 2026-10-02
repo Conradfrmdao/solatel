@@ -284,7 +284,7 @@ const PERIMETER_BRUSHES: usize = 5;
 /// plane over the whole map. 23 hid `room_0`'s own floor, which did the
 /// same inside that building; the collision tables came out unchanged, so
 /// this bump is for the model alone.
-pub const MAP_VERSION: u32 = 27;
+pub const MAP_VERSION: u32 = 28;
 
 // --- generated: run scripts/derive-maps.py, do not edit by hand ---
 // --- arena -------------------------------------------------------------
@@ -41191,46 +41191,46 @@ static YARD_SPAWNS: &[Spawn] = &[
     // x, y, z then facing in radians.
     spawn(-43.18, 1.20, 38.82, EIGHTH * 6.0), // 29 m of clear ground ahead
     spawn(43.82, 1.20, -93.18, EIGHTH * 3.0), // 45 m of clear ground ahead
-    spawn(46.82, 1.20, 116.82, EIGHTH * 1.0), // 22 m of clear ground ahead
-    spawn(-49.18, 1.20, -117.18, EIGHTH * 4.0), // 15 m of clear ground ahead
-    spawn(40.82, 1.20, -0.18, EIGHTH * 2.0), // 10 m of clear ground ahead
-    spawn(-28.18, 1.20, -39.18, EIGHTH * 5.0), // 27 m of clear ground ahead
-    spawn(-49.18, 1.20, 116.82, EIGHTH * 7.0), // 22 m of clear ground ahead
-    spawn(16.82, 1.20, 59.82, EIGHTH * 2.0), // 45 m of clear ground ahead
-    spawn(-7.18, 1.20, -87.18, EIGHTH * 4.0), // 17 m of clear ground ahead
-    spawn(22.82, 1.20, -48.18, EIGHTH * 3.0), // 37 m of clear ground ahead
-    spawn(-1.18, 1.20, 107.82, EIGHTH * 6.0), // 29 m of clear ground ahead
-    spawn(-7.18, 1.20, 5.82, EIGHTH * 6.0), // 27 m of clear ground ahead
-    spawn(-25.18, 1.20, 74.82, 0.0), // 21 m of clear ground ahead
-    spawn(-43.18, 1.20, -75.18, EIGHTH * 5.0), // 45 m of clear ground ahead
-    spawn(-40.18, 1.20, -6.18, EIGHTH * 6.0), // 18 m of clear ground ahead
-    spawn(43.82, 1.20, 80.82, EIGHTH * 1.0), // 15 m of clear ground ahead
-    spawn(19.82, 1.20, 26.82, EIGHTH * 1.0), // 11 m of clear ground ahead
-    spawn(1.82, 1.20, -24.18, EIGHTH * 4.0), // 38 m of clear ground ahead
-    spawn(43.82, 1.20, 44.82, EIGHTH * 1.0), // 11 m of clear ground ahead
-    spawn(46.82, 1.20, -30.18, EIGHTH * 3.0), // 24 m of clear ground ahead
-    spawn(-13.18, 1.20, 47.82, EIGHTH * 1.0), // 21 m of clear ground ahead
-    spawn(-4.18, 1.20, -57.18, EIGHTH * 6.0), // 43 m of clear ground ahead
-    spawn(19.82, 1.20, -78.18, EIGHTH * 4.0), // 45 m of clear ground ahead
-    spawn(-22.18, 1.20, -114.18, EIGHTH * 3.0), // 17 m of clear ground ahead
-    spawn(16.82, 1.20, 86.82, 0.0), // 28 m of clear ground ahead
-    spawn(-46.18, 1.20, 89.82, 0.0), // 13 m of clear ground ahead
-    spawn(-25.18, 1.20, 104.82, EIGHTH * 6.0), // 14 m of clear ground ahead
-    spawn(16.82, 1.20, -3.18, EIGHTH * 4.0), // 45 m of clear ground ahead
-    spawn(22.82, 1.20, 110.82, EIGHTH * 1.0), // 13 m of clear ground ahead
-    spawn(-25.18, 1.20, 23.82, EIGHTH * 6.0), // 45 m of clear ground ahead
-    spawn(-4.18, 1.20, 68.82, 0.0), // 14 m of clear ground ahead
-    spawn(-46.18, 1.20, -27.18, EIGHTH * 5.0), // 34 m of clear ground ahead
-    spawn(-34.18, 1.20, -96.18, EIGHTH * 4.0), // 45 m of clear ground ahead
-    spawn(-25.18, 1.20, -63.18, EIGHTH * 4.0), // 12 m of clear ground ahead
-    spawn(37.82, 1.20, -66.18, EIGHTH * 3.0), // 19 m of clear ground ahead
-    spawn(-4.18, 1.20, 26.82, 0.0), // 27 m of clear ground ahead
-    spawn(25.82, 1.20, -27.18, EIGHTH * 2.0), // 45 m of clear ground ahead
-    spawn(40.82, 1.20, 23.82, EIGHTH * 1.0), // 22 m of clear ground ahead
-    spawn(-46.18, 1.20, 68.82, EIGHTH * 7.0), // 20 m of clear ground ahead
+    spawn(43.82, 1.20, 83.82, EIGHTH * 1.0), // 19 m of clear ground ahead
+    spawn(-43.18, 1.20, -66.18, EIGHTH * 6.0), // 25 m of clear ground ahead
+    spawn(34.82, 1.20, -6.18, EIGHTH * 4.0), // 41 m of clear ground ahead
+    spawn(-19.18, 1.20, 95.82, 0.0), // 45 m of clear ground ahead
     spawn(-22.18, 1.20, -15.18, EIGHTH * 5.0), // 20 m of clear ground ahead
-    spawn(7.82, 1.20, -99.18, EIGHTH * 4.0), // 29 m of clear ground ahead
-    spawn(7.82, 1.20, 41.82, 0.0), // 22 m of clear ground ahead
+    spawn(10.82, 1.20, 41.82, 0.0), // 22 m of clear ground ahead
+    spawn(10.82, 1.20, -54.18, EIGHTH * 5.0), // 45 m of clear ground ahead
+    spawn(-7.18, 1.20, -99.18, EIGHTH * 4.0), // 29 m of clear ground ahead
+    spawn(-13.18, 1.20, 17.82, EIGHTH * 7.0), // 31 m of clear ground ahead
+    spawn(40.82, 1.20, 26.82, EIGHTH * 1.0), // 10 m of clear ground ahead
+    spawn(-46.18, 1.20, 71.82, EIGHTH * 7.0), // 25 m of clear ground ahead
+    spawn(10.82, 1.20, 80.82, 0.0), // 45 m of clear ground ahead
+    spawn(-16.18, 1.20, 59.82, 0.0), // 27 m of clear ground ahead
+    spawn(7.82, 1.20, -21.18, EIGHTH * 4.0), // 34 m of clear ground ahead
+    spawn(-19.18, 1.20, -45.18, EIGHTH * 4.0), // 24 m of clear ground ahead
+    spawn(34.82, 1.20, -36.18, EIGHTH * 3.0), // 15 m of clear ground ahead
+    spawn(34.82, 1.20, 56.82, EIGHTH * 1.0), // 12 m of clear ground ahead
+    spawn(-34.18, 1.20, -93.18, EIGHTH * 4.0), // 45 m of clear ground ahead
+    spawn(13.82, 1.20, 11.82, EIGHTH * 1.0), // 19 m of clear ground ahead
+    spawn(16.82, 1.20, -81.18, EIGHTH * 4.0), // 36 m of clear ground ahead
+    spawn(-46.18, 1.20, -39.18, EIGHTH * 6.0), // 44 m of clear ground ahead
+    spawn(37.82, 1.20, -63.18, EIGHTH * 3.0), // 45 m of clear ground ahead
+    spawn(-16.18, 1.20, -75.18, EIGHTH * 3.0), // 32 m of clear ground ahead
+    spawn(-19.18, 1.20, 38.82, EIGHTH * 1.0), // 12 m of clear ground ahead
+    spawn(-40.18, 1.20, -6.18, EIGHTH * 6.0), // 18 m of clear ground ahead
+    spawn(22.82, 1.20, 95.82, 0.0), // 36 m of clear ground ahead
+    spawn(-40.18, 1.20, 89.82, EIGHTH * 6.0), // 24 m of clear ground ahead
+    spawn(-25.18, 1.20, 77.82, 0.0), // 24 m of clear ground ahead
+    spawn(1.82, 1.20, -3.18, EIGHTH * 4.0), // 17 m of clear ground ahead
+    spawn(4.82, 1.20, 59.82, 0.0), // 39 m of clear ground ahead
+    spawn(-7.18, 1.20, 77.82, EIGHTH * 7.0), // 31 m of clear ground ahead
+    spawn(-37.18, 1.20, -24.18, EIGHTH * 5.0), // 24 m of clear ground ahead
+    spawn(-37.18, 1.20, 56.82, 0.0), // 45 m of clear ground ahead
+    spawn(-28.18, 1.20, 8.82, EIGHTH * 6.0), // 45 m of clear ground ahead
+    spawn(-10.18, 1.20, -30.18, EIGHTH * 4.0), // 10 m of clear ground ahead
+    spawn(-7.18, 1.20, -60.18, EIGHTH * 6.0), // 45 m of clear ground ahead
+    spawn(1.82, 1.20, 26.82, EIGHTH * 1.0), // 45 m of clear ground ahead
+    spawn(16.82, 1.20, -36.18, EIGHTH * 3.0), // 24 m of clear ground ahead
+    spawn(22.82, 1.20, 26.82, EIGHTH * 1.0), // 36 m of clear ground ahead
+    spawn(25.82, 1.20, -96.18, EIGHTH * 6.0), // 21 m of clear ground ahead
 ];
 
 /// yard: 116 by 252 metres.

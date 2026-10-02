@@ -410,6 +410,13 @@ export class Remotes {
     return this.template;
   }
 
+  /** What every other player in a match is drawn with - the soldier and
+   *  the rifle every copy is made from - for compiling before the first of
+   *  them appears (`prepareToDraw` in main.js). */
+  get prototypes() {
+    return [this.template, this.weapon].filter(Boolean);
+  }
+
   /**
    * Records a snapshot for later interpolation, by when the server took it
    * rather than when it arrived (see `snapclock.js`).
@@ -948,7 +955,6 @@ export class Remotes {
     action.setEffectiveTimeScale(reverse ? -rate : rate);
   }
 
-  /** Finds the two snapshots bracketing `atMs` and blends between them. */
   /** Where somebody else's reload started since the last call, for the
    *  sound - as [x, y, z], the way positions cross the wire. */
   takeReloads() {
@@ -958,6 +964,7 @@ export class Remotes {
     return started;
   }
 
+  /** Finds the two snapshots bracketing `atMs` and blends between them. */
   _sample(atMs) {
     if (this.history.length === 0) return null;
 
@@ -983,6 +990,10 @@ export class Remotes {
 }
 
 const EMPTY = [];
+
+/** Metres between two snapshots past which a player was put somewhere, not
+ *  moved there: a twentieth of a second at a run is 0.4 m. */
+const TELEPORT = 4;
 
 /**
  * Whose hand a grenade that has just appeared left: the living player, not
@@ -1114,8 +1125,15 @@ function snapshotToEntries(older, newer, alpha) {
 
   for (const old of older) {
     const fresh = byId.get(old.id) ?? old;
-    const a = old.state;
+    let a = old.state;
     const b = fresh.state;
+    // Moved further between two snapshots than anybody can run or fall: put
+    // there by the server - from the gathering to a spawn as a match goes
+    // live - and drawn there, not slid across the map to it.
+    const dx = b.position[0] - a.position[0];
+    const dy = b.position[1] - a.position[1];
+    const dz = b.position[2] - a.position[2];
+    if (dx * dx + dy * dy + dz * dz > TELEPORT * TELEPORT) a = b;
     const velocity = b.velocity;
     entries.push({
       id: old.id,

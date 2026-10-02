@@ -449,6 +449,12 @@ export class Blasts {
     this._at = null;
   }
 
+  /** Makes the first blast now, out of sight, so its materials are there
+   *  to be compiled with the map's rather than on the first grenade. */
+  prime() {
+    if (!this.pool.length) this.pool.push(new Blast(this.scene, this.textures));
+  }
+
   explode(at) {
     let blast = this.pool.find((b) => b.age >= LIFE);
     if (!blast) {
