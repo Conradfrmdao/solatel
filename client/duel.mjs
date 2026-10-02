@@ -137,6 +137,8 @@ class Client {
         this.matchId = msg.match_id;
         this.tier = msg.tier;
         this.playersInMatch = msg.players;
+        // No map to load: ready for the countdown at once.
+        this.send({ t: 'loaded', match_id: msg.match_id });
         break;
       case 'lobby':
         this.tables = msg.tables;
@@ -169,10 +171,6 @@ class Client {
         // this the driver keeps answering "which match are you in" with the
         // one it was just thrown out of.
         this.matchId = null;
-        break;
-      case 'match_started':
-        this.matchStarted = (this.matchStarted ?? 0) + 1;
-        this.entered = false;
         break;
       case 'scoreboard':
         this.board = msg.entries;

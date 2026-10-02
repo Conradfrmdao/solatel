@@ -41,6 +41,18 @@ const GRASS_STEP = 0.6;
 const GRASS_REPLANT = 5;
 
 /**
+ * Over how many metres short of the radius a tuft grows from nothing to its
+ * full size, measured from the eye every frame in the vertex shader.
+ *
+ * It used to be worked out when the patch was planted, from where the eye
+ * was then - so for the five metres walked before the next replant a tuft
+ * stayed the size it had been planted at, and at the replant it jumped:
+ * the outer tufts grew by half in a frame, all round, every five metres.
+ * That was the grass "popping up" as a player walked towards it.
+ */
+const GRASS_FADE = 7;
+
+/**
  * How much of the scenery is drawn, from the graphics quality: `grass` is
  * the share of `GRASS_RADIUS` planted and `sky` whether birds and chimney
  * smoke are. Nothing here changes what a player can see of another player -
@@ -650,7 +662,11 @@ function hash2(x, z) {
 class Grass {
   constructor(ground, parent, textures) {
     this.ground = decodeGround(ground);
-    const capacity = Math.ceil((Math.PI * GRASS_RADIUS * GRASS_RADIUS) / (GRASS_STEP * GRASS_STEP));
+    // Planted out past the radius by as far as the eye can walk before the
+    // next replant, so wherever the eye is there is grass all the way out to
+    // where the shader has grown it back to nothing.
+    const reach = GRASS_RADIUS + GRASS_REPLANT;
+    const capacity = Math.ceil((Math.PI * reach * reach) / (GRASS_STEP * GRASS_STEP));
     const material = lightMaterial(windy(
       new THREE.MeshStandardMaterial({
         map: textures.grass.albedo,
@@ -662,6 +678,31 @@ class Grass {
       { flutter: 0.0, lean: 0.12 },
     ));
     material.alphaToCoverage = true;
+    // Grown in by distance from the eye, every frame (see `GRASS_FADE`).
+    this.fade = {
+      grassEye: { value: new THREE.Vector3() },
+      grassFade: { value: new THREE.Vector2(GRASS_RADIUS - GRASS_FADE, GRASS_RADIUS) },
+    };
+    const fade = this.fade;
+    const before = material.onBeforeCompile;
+    material.onBeforeCompile = function onBeforeCompile(shader, renderer) {
+      before.call(this, shader, renderer);
+      Object.assign(shader.uniforms, fade);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 grassEye;\nuniform vec2 grassFade;')
+        .replace(
+          '#include <project_vertex>',
+          `#ifdef USE_INSTANCING
+            transformed *= 1.0 - smoothstep(grassFade.x, grassFade.y,
+              distance(vec2(instanceMatrix[3][0], instanceMatrix[3][2]), grassEye.xz));
+          #endif
+          #include <project_vertex>`,
+        );
+    };
+    const key = material.customProgramCacheKey;
+    material.customProgramCacheKey = function customProgramCacheKey() {
+      return `${key.call(this)}|grass-fade`;
+    };
     // One mesh per kind of clump, sharing the material: three draws, and a
     // field that does not repeat one clump to the horizon.
     this.meshes = GRASS_CLUMPS.map((clump) => {
@@ -693,6 +734,9 @@ class Grass {
   /** Plant round `eye` (in the map's own units) if it has moved far enough,
    *  or if the quality setting has changed how far out to plant. */
   plant(eye) {
+    const radius = GRASS_RADIUS * detail.grass;
+    this.fade.grassEye.value.set(eye.x, eye.y, eye.z);
+    this.fade.grassFade.value.set(Math.max(0, radius - GRASS_FADE), radius);
     const moved = !this.at || Math.hypot(eye.x - this.at.x, eye.z - this.at.z) >= GRASS_REPLANT;
     if (!moved && this._detail === detail.version) return;
     this.at = { x: eye.x, z: eye.z };
@@ -700,12 +744,12 @@ class Grass {
     const m = this._matrix;
     const counts = this.meshes.map(() => 0);
     const capacity = this.meshes[0].instanceMatrix.count;
-    const radius = GRASS_RADIUS * detail.grass;
-    const r2 = radius * radius;
-    const i0 = Math.floor((eye.x - radius) / GRASS_STEP);
-    const i1 = Math.ceil((eye.x + radius) / GRASS_STEP);
-    const j0 = Math.floor((eye.z - radius) / GRASS_STEP);
-    const j1 = Math.ceil((eye.z + radius) / GRASS_STEP);
+    const r2 = (radius + GRASS_REPLANT) ** 2;
+    const reach = radius + GRASS_REPLANT;
+    const i0 = Math.floor((eye.x - reach) / GRASS_STEP);
+    const i1 = Math.ceil((eye.x + reach) / GRASS_STEP);
+    const j0 = Math.floor((eye.z - reach) / GRASS_STEP);
+    const j1 = Math.ceil((eye.z + reach) / GRASS_STEP);
     for (let i = i0; i <= i1; i += 1) {
       for (let j = j0; j <= j1; j += 1) {
         const h = hash2(i, j);
@@ -718,9 +762,8 @@ class Grass {
         if (h > 0.55 + patch * 0.4) continue;
         const y = this.heightAt(x, z);
         if (y < 0) continue;
-        // Shrink to nothing at the edge of the patch rather than stopping.
-        const edge = 1 - Math.sqrt(d2) / radius;
-        const size = Math.min(1, edge * 5) * (0.7 + hash2(x, z) * 0.7);
+        // Full size: the shader shrinks it to nothing towards the edge.
+        const size = 0.7 + hash2(x, z) * 0.7;
         this._q.setFromAxisAngle(this._up, h * 6.28);
         m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(size, size * (0.8 + patch * 0.35), size));
         const kind = Math.floor(hash2(z * 1.7, x * 0.9) * this.meshes.length) % this.meshes.length;

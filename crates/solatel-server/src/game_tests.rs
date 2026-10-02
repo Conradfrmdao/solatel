@@ -90,9 +90,11 @@ fn free_play() -> Lobby {
     let mut lobby = Lobby::new();
     lobby.floor = 1;
     lobby.wait = TEST_WAIT;
-    // Live the moment it starts. The warm-up has tests of its own; every
-    // other test is about what happens once a match is being played.
+    // Live the moment it starts. The warm-up and the wait for maps to load
+    // have tests of their own; every other test is about what happens once a
+    // match is being played.
     lobby.warmup = 0.0;
+    lobby.load_wait = 0.0;
     lobby
 }
 
@@ -1319,6 +1321,7 @@ impl Paid {
         lobby.ledger = Some(handle);
         lobby.floor = 2;
         lobby.warmup = 0.0;
+        lobby.load_wait = 0.0;
         Self { lobby, ledger }
     }
 
@@ -2510,9 +2513,12 @@ impl Duel {
     fn late_in_the_match(&mut self) {
         let late = (solatel_protocol::sim::ZONE_STEP * 4.5 / TICK_DT) as u32;
         let game = self.lobby.matches.get_mut(&self.match_id).unwrap();
-        let start = game.started_tick.unwrap();
+        let start = game.warm_from.or(game.started_tick).unwrap();
         // Wrapping, as `elapsed` counts: early in a test the tick is small.
+        // The clock runs from when the countdown began, so that is what
+        // moves back; the start goes with it.
         game.started_tick = Some(start.wrapping_sub(late));
+        game.warm_from = Some(start.wrapping_sub(late));
         // And the victim out on the east side of the arena, on open ground
         // well beyond where the circle has closed to.
         let victim = self.victim;
@@ -2662,6 +2668,51 @@ fn reloading_by_hand_blocks_the_trigger_until_it_is_done() {
     assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE);
 }
 
+/// Whether the victim's latest snapshot says the shooter is aiming.
+fn seen_aiming(duel: &mut Duel) -> bool {
+    let _ = drain(&mut duel.victim_rx);
+    duel.lobby.broadcast_snapshot(duel.match_id);
+    drain(&mut duel.victim_rx)
+        .into_iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMsg::Snapshot { players, .. } => Some(players),
+            _ => None,
+        })
+        .expect("a snapshot")
+        .iter()
+        .find(|p| p.id == duel.shooter)
+        .expect("the shooter in it")
+        .aiming
+}
+
+#[test]
+fn aiming_is_seen_by_everybody_and_decides_nothing() {
+    // Other players drew everybody shouldered all the time, which told
+    // nobody anything. The aim button is told to them instead, as a reload
+    // is: it is done in plain view.
+    let mut duel = Duel::new();
+    let at = duel.position(duel.victim);
+    assert!(!seen_aiming(&mut duel), "nobody is aiming to begin with");
+    duel.press(Buttons::AIM, at);
+    assert!(seen_aiming(&mut duel), "the rifle came up");
+    // A late packet carries a posture on, as it does a crouch.
+    duel.steps(3);
+    assert!(seen_aiming(&mut duel), "a late packet lowered the rifle");
+    duel.press(0, at);
+    assert!(!seen_aiming(&mut duel), "and went down again");
+
+    // Where a shot lands is the same either way.
+    duel.press(Buttons::FIRE | Buttons::AIM, at);
+    let aimed = MAX_HEALTH - duel.health(duel.victim);
+    duel.body_mut(duel.victim).state.health = MAX_HEALTH;
+    duel.reload();
+    duel.press(Buttons::FIRE, at);
+    let unaimed = MAX_HEALTH - duel.health(duel.victim);
+    assert!(aimed > 0, "test setup: the shot should land");
+    assert_eq!(aimed, unaimed, "aiming changed what a shot did");
+}
+
 #[test]
 fn a_grenade_kill_pays_the_thrower() {
     let mut duel = Duel::new();
@@ -2690,6 +2741,169 @@ fn a_grenade_kill_pays_the_thrower() {
         },
         killer: duel.shooter,
     }));
+}
+
+// --- Waiting for everybody's map ------------------------------------------
+
+/// A match that has just started, who is in it and what each of them is told.
+type Loading = (
+    Lobby,
+    MatchId,
+    Vec<(PlayerId, SessionId)>,
+    Vec<mpsc::Receiver<ServerMsg>>,
+);
+
+/// `n` players in a match that has just started, with a one second warm-up
+/// and `load_wait` seconds of patience for their maps.
+fn loading(n: usize, load_wait: f32) -> Loading {
+    let mut lobby = free_play();
+    lobby.warmup = 1.0;
+    lobby.load_wait = load_wait;
+    let mut players = Vec::new();
+    let mut receivers = Vec::new();
+    for i in 0..n {
+        let (tx, rx) = mpsc::channel(8192);
+        let (joined, session) = join(&mut lobby, &format!("Loader {i}"), None, tx);
+        queue(&mut lobby, joined.player_id, session, 1);
+        players.push((joined.player_id, session));
+        receivers.push(rx);
+    }
+    run_matchmaker(&mut lobby);
+    let match_id = *lobby
+        .matches
+        .iter()
+        .find(|(_, m)| m.running())
+        .expect("a match")
+        .0;
+    assert_eq!(
+        lobby.matches[&match_id].bodies.len(),
+        n,
+        "test setup: everybody in"
+    );
+    (lobby, match_id, players, receivers)
+}
+
+fn loaded(lobby: &mut Lobby, (player, session): (PlayerId, SessionId), match_id: MatchId) {
+    lobby.handle(GameCommand::Loaded {
+        player_id: player,
+        session_id: session,
+        match_id,
+    });
+}
+
+/// The last snapshot's countdown and how many it said were still loading.
+fn countdown(rx: &mut mpsc::Receiver<ServerMsg>) -> (u32, u32) {
+    drain(rx)
+        .into_iter()
+        .filter_map(|m| match m {
+            ServerMsg::Snapshot {
+                starts_in_ms,
+                loading,
+                ..
+            } => Some((starts_in_ms, loading)),
+            _ => None,
+        })
+        .next_back()
+        .expect("snapshots")
+}
+
+#[test]
+fn the_countdown_waits_for_everybodys_map() {
+    // Conrad's countdown appeared at five: the warm-up started with the
+    // match, and his map took ten seconds to load and draw. It now starts
+    // when the last player in the match says their map is drawn.
+    let (mut lobby, match_id, players, mut rx) = loading(2, 30.0);
+    for _ in 0..200 {
+        lobby.step();
+    }
+    let (left, waiting) = countdown(&mut rx[0]);
+    assert_eq!(waiting, 2, "both still loading");
+    assert_eq!(left, 1000, "and the countdown not counting: {left} ms");
+    assert!(lobby.matches[&match_id].warming_up(lobby.tick));
+
+    loaded(&mut lobby, players[0], match_id);
+    for _ in 0..100 {
+        lobby.step();
+    }
+    let (left, waiting) = countdown(&mut rx[0]);
+    assert_eq!((left, waiting), (1000, 1), "one is enough to wait for");
+
+    loaded(&mut lobby, players[1], match_id);
+    for _ in 0..20 {
+        lobby.step();
+    }
+    let (left, waiting) = countdown(&mut rx[1]);
+    assert_eq!(waiting, 0);
+    assert!(
+        left < 1000 && left > 0,
+        "counting down once both are in: {left} ms"
+    );
+
+    for _ in 0..80 {
+        lobby.step();
+    }
+    assert!(
+        !lobby.matches[&match_id].warming_up(lobby.tick),
+        "and live after it"
+    );
+}
+
+#[test]
+fn a_map_that_never_loads_holds_nobody_past_the_wait() {
+    // One machine that never finishes - or a client too old to say so -
+    // must not hold everybody else on their spawns for the whole match.
+    let (mut lobby, match_id, players, mut rx) = loading(2, 0.5);
+    loaded(&mut lobby, players[0], match_id);
+    for _ in 0..20 {
+        lobby.step();
+    }
+    assert_eq!(countdown(&mut rx[0]), (1000, 1), "waiting, for now");
+    for _ in 0..((0.5 + 0.2) / TICK_DT) as usize {
+        lobby.step();
+    }
+    let (left, waiting) = countdown(&mut rx[0]);
+    assert_eq!(waiting, 0, "no longer waiting");
+    assert!(left < 1000, "counting down without the last one: {left} ms");
+}
+
+#[test]
+fn a_player_who_dropped_is_not_waited_for() {
+    let (mut lobby, match_id, players, mut rx) = loading(2, 30.0);
+    lobby.handle(GameCommand::Leave {
+        player_id: players[1].0,
+        session_id: players[1].1,
+    });
+    loaded(&mut lobby, players[0], match_id);
+    for _ in 0..20 {
+        lobby.step();
+    }
+    let (left, waiting) = countdown(&mut rx[0]);
+    assert_eq!(waiting, 0);
+    assert!(left < 1000, "counting down: {left} ms");
+}
+
+#[test]
+fn a_loaded_for_another_match_or_from_another_socket_counts_for_nothing() {
+    let (mut lobby, match_id, players, mut rx) = loading(1, 30.0);
+    loaded(&mut lobby, players[0], MatchId::new());
+    lobby.handle(GameCommand::Loaded {
+        player_id: players[0].0,
+        session_id: SessionId::new(),
+        match_id,
+    });
+    for _ in 0..20 {
+        lobby.step();
+    }
+    assert_eq!(
+        countdown(&mut rx[0]),
+        (1000, 1),
+        "still waiting for the real one"
+    );
+    loaded(&mut lobby, players[0], match_id);
+    for _ in 0..20 {
+        lobby.step();
+    }
+    assert!(countdown(&mut rx[0]).0 < 1000);
 }
 
 // --- The warm-up -----------------------------------------------------------
@@ -2730,15 +2944,105 @@ fn everything_at_once(lobby: &mut Lobby, player: PlayerId, session: SessionId, s
             yaw,
             pitch: 0.2,
             buttons: Buttons(
-                Buttons::JUMP | Buttons::FIRE | Buttons::CROUCH | Buttons::RELOAD | Buttons::THROW,
+                Buttons::JUMP
+                    | Buttons::FIRE
+                    | Buttons::CROUCH
+                    | Buttons::RELOAD
+                    | Buttons::THROW
+                    | Buttons::AIM,
             ),
         }],
     });
 }
 
 #[test]
-fn the_warm_up_holds_everybody_on_their_spawn_but_lets_them_look() {
+fn the_warm_up_gathers_everybody_and_lets_them_walk_but_not_fight() {
+    // Conrad asked for it: everybody together while the countdown runs, so
+    // a match is seen to be full of people, and on their own spawns when it
+    // ends. Walking about is allowed - it buys nothing, since everybody is
+    // moved anyway - and anything that could hurt anybody is not.
     let (mut lobby, match_id, player, session, _rx) = warming_up();
+    let game = &lobby.matches[&match_id];
+    assert!(game.gathered, "a match with a warm-up gathers");
+    let (_, gx, gz) = *GATHERINGS
+        .iter()
+        .find(|(name, _, _)| *name == game.map.name)
+        .expect("this map has a gathering");
+    let body = &game.bodies[&player];
+    let from_gathering = Vec3::new(body.state.position.x - gx, 0.0, body.state.position.z - gz);
+    assert!(
+        from_gathering.length() < 6.0,
+        "waiting on the gathering ground, not {from_gathering:?} from it"
+    );
+    let spawn = body.spawn;
+    assert!(
+        (spawn.position - body.state.position).length() > 3.0,
+        "test setup: the spawn should be somewhere else"
+    );
+
+    for _ in 0..20 {
+        lobby.step();
+    }
+    let start = lobby.matches[&match_id].bodies[&player].state.position;
+    let warmup_ticks = lobby.matches[&match_id].warmup_ticks;
+    let mut seq = 0;
+    for _ in 20..warmup_ticks.saturating_sub(2) {
+        seq += 1;
+        everything_at_once(&mut lobby, player, session, seq, 1.0);
+        lobby.step();
+    }
+    let game = &lobby.matches[&match_id];
+    let body = &game.bodies[&player];
+    let walked = Vec3::new(
+        body.state.position.x - start.x,
+        0.0,
+        body.state.position.z - start.z,
+    );
+    assert!(
+        walked.length() > 0.5,
+        "free to walk in the gathering: {walked:?}"
+    );
+    assert_eq!(body.stats.shots_fired, 0, "nothing is fired in the warm-up");
+    assert_eq!(
+        body.grenades, GRENADES_PER_LIFE,
+        "nothing is thrown in the warm-up"
+    );
+    assert!(game.grenades.is_empty());
+    assert!(body.reload_until.is_none(), "nothing reloaded");
+    assert!(body.previous_buttons.aim(), "the rifle may come up");
+
+    // The countdown ends: on their own spawn, facing its way.
+    for _ in 0..4 {
+        lobby.step();
+    }
+    let game = &lobby.matches[&match_id];
+    assert!(!game.gathered && !game.warming_up(lobby.tick));
+    let body = &game.bodies[&player];
+    let off = Vec3::new(
+        body.state.position.x - spawn.position.x,
+        0.0,
+        body.state.position.z - spawn.position.z,
+    );
+    assert!(off.length() < 0.6, "put on their spawn, but {off:?} off it");
+    assert!(
+        body.history
+            .iter()
+            .all(|(_, s)| (s.position - spawn.position).length() < 2.0),
+        "no history from the gathering for a shot to be rewound into"
+    );
+}
+
+#[test]
+fn a_map_with_nowhere_to_gather_holds_everybody_still_but_lets_them_look() {
+    let (mut lobby, match_id, player, session, _rx) = warming_up();
+    // As on a map with no gathering ground: on their own spawn, held.
+    {
+        let game = lobby.matches.get_mut(&match_id).unwrap();
+        game.gathered = false;
+        let body = game.bodies.get_mut(&player).unwrap();
+        body.state = PlayerState::spawned_at(body.spawn);
+        body.home = body.spawn;
+    }
     // Onto the floor first: gravity is not held, only the player is.
     for _ in 0..20 {
         lobby.step();
@@ -2775,6 +3079,7 @@ fn the_warm_up_holds_everybody_on_their_spawn_but_lets_them_look() {
         (body.state.yaw - 1.0).abs() < 1e-4,
         "the aim is theirs to move"
     );
+    assert!(body.previous_buttons.aim(), "and so is the rifle");
 
     // Past it, the same command does what it says.
     for _ in 0..40 {
@@ -2796,6 +3101,30 @@ fn the_warm_up_holds_everybody_on_their_spawn_but_lets_them_look() {
         body.stats.shots_fired > 0,
         "live, and the trigger does nothing"
     );
+}
+
+#[test]
+fn every_map_has_room_to_gather_a_full_match() {
+    for map in solatel_protocol::sim::map::MAPS {
+        let spots = gathering_spots(map, map.max_players);
+        assert_eq!(
+            spots.len(),
+            map.max_players,
+            "{} gathers {} of its {} seats",
+            map.name,
+            spots.len(),
+            map.max_players
+        );
+        for (i, a) in spots.iter().enumerate() {
+            for b in &spots[i + 1..] {
+                assert!(
+                    (a.position - b.position).length() > 1.0,
+                    "{}: two players on one spot",
+                    map.name
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -327,7 +327,12 @@ async function boot() {
    * comes out of whichever map the simulation is pointed at.
    */
   let entering = null;
-  async function enterMatch(mapName) {
+  /** The match whose map is loaded, compiled and ready to draw. Until it is
+   *  this one, the loading card stays up and nothing is drawn. */
+  let preparedFor = null;
+  /** Whether the map is in and being compiled, for the card to say so. */
+  let preparing = false;
+  async function enterMatch(mapName, matchId) {
     if (!selectMap(mapName)) {
       link.dropLink(`this build has no map called "${mapName}". Reload the page.`, 0);
       return;
@@ -345,7 +350,50 @@ async function boot() {
     camera.far = Math.hypot(SIM.arenaHalfX, SIM.arenaHalfZ) * 2.2;
     camera.updateProjectionMatrix();
 
+    preparing = true;
+    try {
+      await prepareToDraw();
+    } finally {
+      preparing = false;
+    }
+    preparedFor = matchId;
+    // The server holds the countdown until everybody has said this.
+    link.send({ t: 'loaded', match_id: matchId });
     document.body.classList.add('running');
+  }
+
+  /**
+   * Compiles everything a match draws, behind the loading card, and draws
+   * one frame there as well.
+   *
+   * The first frame of a match used to do all of it: every shader of the
+   * map compiled at once, which through ANGLE on Windows is seconds - the
+   * black screen Conrad sat through with the countdown running underneath
+   * it. `compileAsync` compiles without holding the page where the browser
+   * can (KHR_parallel_shader_compile), with the other players' soldier and
+   * rifle and a grenade's blast put in for the purpose, since each of those
+   * would otherwise compile the first time one appeared. The frame drawn
+   * afterwards, still behind the card, is what compiles the shadow map's
+   * depth shaders and the post chain's own, and uploads every texture.
+   */
+  async function prepareToDraw() {
+    const extras = remotes.prototypes;
+    world.blasts.prime();
+    for (const object of extras) scene.add(object);
+    try {
+      await renderer.compileAsync(scene, camera);
+      await renderer.compileAsync(viewmodel.scene, viewmodel.camera);
+      renderer.clear();
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+      renderer.clearDepth();
+      renderer.render(viewmodel.scene, viewmodel.camera);
+    } catch (error) {
+      // Drawing the first frame the slow way is better than not drawing it.
+      console.warn('could not compile ahead of the first frame', error);
+    } finally {
+      for (const object of extras) scene.remove(object);
+    }
   }
 
   // Browsers will not start an audio device except from a real gesture, so it
@@ -400,6 +448,9 @@ async function boot() {
           programs: info.programs ? info.programs.length : null,
           geometries: info.memory.geometries,
           textures: info.memory.textures,
+          updateMs: cpu.update,
+          drawMs: cpu.draw,
+          players: remotes.players.size,
         };
       },
     };
@@ -494,8 +545,15 @@ async function boot() {
   let accumulator = 0;
   let previous = performance.now();
 
+  /** Main-thread milliseconds a drawn frame spends before drawing (the
+   *  network, the simulation, everybody's animation) and on drawing (three's
+   *  own work handing the scene to the GPU), smoothed - for perf.mjs, which
+   *  reads them to tell a frame the CPU is holding up from one the GPU is. */
+  const cpu = { update: 0, draw: 0 };
+
   function frame(now) {
     requestAnimationFrame(frame);
+    const frameStart = performance.now();
 
     const dt = Math.min((now - previous) / 1000, 0.25);
     previous = now;
@@ -572,6 +630,15 @@ async function boot() {
       } else if (message.t === 'exploded') {
         world.explode(message.at);
         audio.boom(message.at, eye, forward);
+        // Felt as well as heard and seen: the view rolls with it and the
+        // rifle jolts, harder the nearer it went off. A roll only, like a
+        // hit's flinch, so the middle of the screen stays where it was aimed.
+        const near = Math.hypot(message.at[0] - eye.x, message.at[1] - eye.y, message.at[2] - eye.z);
+        const shove = Math.max(0, 1 - near / 18);
+        if (shove > 0) {
+          flinch = (Math.random() < 0.5 ? -1 : 1) * Math.min(1, Math.abs(flinch) + shove * 0.9);
+          viewmodel.onLanded(shove * 7);
+        }
       } else if (message.t === 'killed') {
         hud.addKill(message);
         // This player's own death: kept, with where the killer was as last
@@ -653,7 +720,7 @@ async function boot() {
       // Loading a map compiles shaders for seconds; none of that is a
       // judgement on the machine.
       quality.reset(now);
-      entering = enterMatch(local.mapName).finally(() => {
+      entering = enterMatch(local.mapName, local.matchId).finally(() => {
         entering = null;
       });
     }
@@ -665,7 +732,10 @@ async function boot() {
     // server hears it in the next command, as it would a turn of the mouse.
     if (local.faceSpawn && local.seenSnapshot && local.matchId === enteredMatch) {
       local.faceSpawn = false;
-      const yaw = spawnFacing(local.serverPosition);
+      // On a spawn, its way; gathered for the warm-up, towards the middle
+      // of the map, which is where everybody is about to be sent.
+      const at = local.serverPosition;
+      const yaw = spawnFacing(at) ?? (local.gathered && at ? Math.atan2(at.x, at.z) : null);
       if (yaw !== null) {
         input.yaw = yaw;
         input.pitch = 0;
@@ -706,7 +776,8 @@ async function boot() {
       if (document.pointerLockElement) document.exitPointerLock();
     }
 
-    const playing = Boolean(local.matchId) && world.ready && !link.parked;
+    const playing =
+      Boolean(local.matchId) && world.ready && preparedFor === local.matchId && !link.parked;
 
     // Searching, found, loading: the screens between a click on a table and
     // standing on the map.
@@ -753,6 +824,7 @@ async function boot() {
       } else if (local.matchId && !playing) {
         view = {
           phase: 'loading',
+          preparing,
           map: local.mapName,
           dollars: local.tier?.dollars,
           players: local.matchPlayers,
@@ -784,7 +856,7 @@ async function boot() {
       impacts.update(slow);
       world.followWithShadows(dying.position);
       world.positionSky(dying.position, camera.far);
-      remotes.update(now, slow, local.id, dying.position);
+      remotes.update(now, slow, local.id, dying.position, camera);
       camera.position.copy(dying.position);
       camera.rotation.set(dying.pitch, dying.yaw, dying.roll, 'YXZ');
       const fov = verticalFov(horizontalFov, camera.aspect, 1);
@@ -815,7 +887,7 @@ async function boot() {
     world.positionSky(viewer, camera.far);
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
-    remotes.update(now, dt, local.id, camera.position);
+    remotes.update(now, dt, local.id, camera.position, camera);
     for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     lightHere(eye, here);
@@ -847,6 +919,7 @@ async function boot() {
     // ever counted, and a map of a thousand meshes reported three draw calls.
     // A diagnostic that cannot see the expensive half of the frame is worse
     // than none, because it is believed.
+    const drawStart = performance.now();
     renderer.info.reset();
     renderer.clear();
     if (composer) composer.render();
@@ -860,6 +933,9 @@ async function boot() {
     renderer.render(viewmodel.scene, viewmodel.camera);
     // While the canvas still holds the frame.
     clips.capture(renderer.domElement, now);
+    const frameEnd = performance.now();
+    cpu.update += (drawStart - frameStart - cpu.update) * 0.1;
+    cpu.draw += (frameEnd - drawStart - cpu.draw) * 0.1;
 
     // Only frames of a match being drawn say anything about the machine.
     quality.sample(now, dt * 1000);

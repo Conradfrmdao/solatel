@@ -470,6 +470,10 @@ impl Buttons {
     /// Pressed to throw a grenade. The server throws on the press, not while
     /// it is held, so holding it throws one.
     pub const THROW: u8 = 1 << 4;
+    /// Held to aim down the sights. It decides nothing - where a shot goes
+    /// is the same either way - and is told to everybody, because a rifle
+    /// brought up to the shoulder is seen by anybody looking.
+    pub const AIM: u8 = 1 << 5;
 
     pub const fn empty() -> Self {
         Self(0)
@@ -505,6 +509,10 @@ impl Buttons {
 
     pub const fn throw(self) -> bool {
         self.contains(Self::THROW)
+    }
+
+    pub const fn aim(self) -> bool {
+        self.contains(Self::AIM)
     }
 }
 
@@ -673,6 +681,9 @@ fn apply_gravity(state: &mut PlayerState, dt: f32) {
 }
 
 fn integrate(state: &mut PlayerState, map: &Map, dt: f32) {
+    // On the ground going into this tick and not leaving it on purpose: a
+    // jump clears `on_ground` before this runs.
+    let walking = state.on_ground;
     let result = collide::move_and_slide(
         state.position,
         PLAYER_HALF_EXTENTS,
@@ -682,6 +693,17 @@ fn integrate(state: &mut PlayerState, map: &Map, dt: f32) {
 
     state.position = result.position;
     state.on_ground = result.on_ground;
+
+    // Walked off something no higher than a step: down onto what is below,
+    // rather than a fall. See `collide::MAX_STEP_DOWN`.
+    if walking
+        && !state.on_ground
+        && state.velocity.y <= 0.0
+        && let Some(lower) = collide::step_down(state.position, PLAYER_HALF_EXTENTS, map)
+    {
+        state.position = lower;
+        state.on_ground = true;
+    }
 
     // Velocity into a surface has to be discarded, or it accumulates while the
     // player is pressed against a wall and fires them off when they step clear.

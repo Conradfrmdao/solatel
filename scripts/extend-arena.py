@@ -75,6 +75,32 @@ RAIL_H = 0.35   # low enough to step over, high enough to read as an edge
 # as 0.75 and turn the flight into a wall.
 MAX_RISE = 0.50
 
+# Ramps, which are what a way up is in the arena now (see `Parts.ramp`). The
+# slope is light like the treads were, so a way up still reads from across
+# the map, and its side walls are the plain concrete of the arena's own.
+RAMP = 'concrete_light'
+RAMP_WALL = 'concrete'
+RAMP_WIDTH = 3.0
+# How far a ramp's side walls stand over it: under the 1.13 m a jump
+# clears, so leaving over one is a choice, and well over the 0.65 m a
+# player steps up, so nobody walks off the side by accident.
+PARAPET = 1.0
+# How high the slope gets before its walls are at their full height. Below
+# it they rise from nothing, so the low end can be stepped onto from the
+# side as well as walked onto from the foot.
+PARAPET_FROM = 0.75
+
+# The generator's grid: cells a quarter of a metre on a side, starting at
+# the lowest x and z of the structure - which is the outer walls this file
+# builds, so it is known here. A hidden collision column has to sit inside
+# one cell to be exactly one cell; see `Parts.ramp`.
+CELL = 0.25
+
+
+def grid_origin(axis):
+    return -NEW_EDGE - 1.0 if axis == 'x' else -ENDS
+
+
 # How far our geometry is held off the original's, wherever the two would
 # otherwise share a plane. Two faces at exactly the same depth z-fight: the
 # renderer has no way to choose between them and the surface flickers in
@@ -131,15 +157,232 @@ def scale_of(name):
 class Parts:
     """Boxes in game metres, grouped by material.
 
-    Only boxes. That is not a limitation worth fixing: the collision is a
-    table of axis-aligned boxes, so a sloped surface would be voxelised into
-    steps anyway, and building the steps explicitly means what the player
-    sees is exactly what they climb.
+    Boxes, with one exception: a ramp (`ramp`), whose slope is drawn as the
+    plane it is while its collision is built separately as the steps the
+    generator would have made of it anyway. The collision is a table of
+    axis-aligned boxes, so what collides is always boxes; a staircase built
+    of them looked like one, and Conrad wanted ways up that read as one
+    plane and could be walked up off line.
     """
 
     def __init__(self):
         self.groups = {}
         self.log = []
+        # Geometry that is drawn and never collided with, and geometry that
+        # is collided with and never drawn - each a `Parts` of its own when
+        # something here needs one (`main` gives them), written to a node of
+        # its own by `attach`.
+        self.drawn = None
+        self.hidden = None
+        # Boxes the generator must take exactly as they are: each is written
+        # as a node of its own (`attach`), which it judges as a prop and
+        # collides with as precisely its box - never voxelised, never
+        # smoothed. See `ramp` for why a ramp's walls need that.
+        self.exact = []
+
+    def face(self, points, material, outward):
+        """A flat convex polygon, wound to face `outward`.
+
+        The winding is not cosmetic. The light bake takes the back of a face
+        for the inside of something solid, so a face wound the wrong way
+        darkens the air in front of it.
+        """
+        verts, faces = self.groups.setdefault(material, ([], []))
+        p = np.asarray(points, dtype=np.float64)
+        normal = np.cross(p[1] - p[0], p[2] - p[0])
+        if np.dot(normal, outward) < 0:
+            p = p[::-1]
+        base = len(verts)
+        verts.extend(tuple(float(v) for v in q) for q in p)
+        for i in range(1, len(p) - 1):
+            faces.append((base, base + i, base + i + 1))
+        return self
+
+    def column(self, axis, at, cross0, cross1, top):
+        """One cell of the generator's grid along `axis`, from `at`, solid
+        from the ground to `top` across `cross0`..`cross1`.
+
+        Held a centimetre inside the cell on every side. A face lying on a
+        cell boundary is counted in the cell above it, so a box exactly a
+        cell deep marks two, and a ramp built of those is a step deeper
+        than it was drawn everywhere.
+        """
+        a, b = at + 0.01, at + CELL - 0.01
+        c, d = cross0 + 0.01, cross1 - 0.01
+        if axis == 'x':
+            return self.box(a, 0.0, c, b, top + 0.01, d, material=RAMP)
+        return self.box(c, 0.0, a, d, top + 0.01, b, material=RAMP)
+
+    def ramp(self, axis, foot, edge, cross0, y_to, into=0.5, walls=(True, True),
+             width=RAMP_WIDTH):
+        """A straight slope from the ground at `foot` to `y_to` at `edge`.
+
+        What replaced the flights of stairs, at Conrad's asking: a staircase
+        seen from the side is a zigzag, and walked up a few degrees off its
+        line it put players off its open side. A ramp is one plane, wider,
+        with a wall down each side.
+
+        What is drawn and what collides are different things here, on
+        purpose. The collision is boxes and cannot slope, so the slope is
+        drawn (`self.drawn`, never collided with) and the collision is a
+        column of the generator's own grid for every cell along the run
+        (`self.hidden`, never drawn), each solid from the ground to the
+        quarter metre nearest the drawn slope over its middle. A player
+        walking up climbs quarter-metre steps a cell apart - well under
+        `MAX_STEP_UP`, and smoothed out of the view by the eye's own filter
+        - with their feet never more than an eighth of a metre and a bit off
+        the slope they see. Solid from the ground, because a slope with air
+        under it is a place to hide under.
+
+        The walls collide as exact boxes, a cell long each, their tops on the
+        drawn wall's (`self.hidden.exact`). Voxelised with everything else
+        they were taken for walls by the generator's smoothing, which votes a
+        cell to the level most common round it - and along a sloped wall
+        every level is different, so each was voted down to the lowest in
+        reach, and near the top the wall stood half a metre over the slope:
+        a step, onto it and off the outside.
+
+        `cross0` is where the slope's own width starts on the cross axis,
+        and is snapped to the grid; the walls stand a cell either side of
+        it. The collision carries on `into` past `edge` at full height, so
+        the top overlaps whatever it lands on - a seam at the top of a way
+        up is the whole way up wasted. `walls` says, per side, whether it
+        has one: True to the edge, a run coordinate to stop it sooner, or
+        False for none.
+        """
+        if self.drawn is None or self.hidden is None:
+            raise ValueError('a ramp needs parts.drawn and parts.hidden')
+        sign = 1.0 if edge > foot else -1.0
+        run = abs(edge - foot)
+        cells = width / CELL
+        if abs(cells - round(cells)) > 1e-6:
+            raise ValueError(f'a ramp {width} m wide is not a whole number of cells')
+        cross_axis = 'z' if axis == 'x' else 'x'
+        c_origin = grid_origin(cross_axis)
+        c0 = c_origin + round((cross0 - c_origin) / CELL) * CELL
+        c1 = c0 + width
+
+        def surface(r):
+            t = (r - foot) / (edge - foot)
+            return y_to * min(max(t, 0.0), 1.0)
+
+        def wall_top(r):
+            v = surface(r)
+            return v + PARAPET * min(1.0, v / PARAPET_FROM)
+
+        def at(r, y, c):
+            return (r, y, c) if axis == 'x' else (c, y, r)
+
+        stops = []
+        for side in walls:
+            if side is False:
+                stops.append(None)
+            elif side is True:
+                stops.append(edge)
+            else:
+                stops.append(float(side))
+
+        # The collision: a column a cell along the run, for every cell whose
+        # middle the ramp covers.
+        origin = grid_origin(axis)
+        lo, hi = sorted((foot, edge + sign * into))
+        first = int(np.floor((lo - origin) / CELL))
+        last = int(np.ceil((hi - origin) / CELL))
+        for k in range(first, last):
+            start = origin + k * CELL
+            middle = start + CELL / 2.0
+            if not lo <= middle <= hi:
+                continue
+            height = round(surface(middle) / CELL) * CELL
+            if height > 0:
+                self.hidden.column(axis, start, c0, c1, height)
+            for stop, (w0, w1) in zip(stops, ((c0 - CELL, c0), (c1, c1 + CELL))):
+                if stop is None:
+                    continue
+                a, b = max(start, min(foot, stop)), min(start + CELL, max(foot, stop))
+                if b - a < 0.01:
+                    continue
+                top = wall_top(middle)
+                if axis == 'x':
+                    self.hidden.exact.append((a, 0.0, w0, b, top, w1))
+                else:
+                    self.hidden.exact.append((w0, 0.0, a, w1, top, b))
+
+        # What is drawn: the slope, carried a few centimetres into the walls
+        # either side so that no face of it shares a plane with one. Its back
+        # and its underside are never seen - against a wall, on the ground -
+        # and would share planes with both, so they are left out.
+        d = self.drawn
+        e0, e1 = c0 - 0.05, c1 + 0.05
+        up = np.array(at(0.0, 1.0, 0.0))
+        across = np.array(at(0.0, 0.0, 1.0))
+        d.face([at(foot, 0.0, e0), at(foot, 0.0, e1),
+                at(edge, y_to, e1), at(edge, y_to, e0)], RAMP, up)
+        d.face([at(foot, 0.0, e0), at(edge, y_to, e0), at(edge, 0.0, e0)],
+               RAMP, -across)
+        d.face([at(foot, 0.0, e1), at(edge, 0.0, e1), at(edge, y_to, e1)],
+               RAMP, across)
+
+        # The walls: their top follows the slope a parapet's height over it,
+        # rising from nothing at the foot until the slope is `PARAPET_FROM`
+        # up. Each is drawn as its two long faces and its top; its end is
+        # drawn only where it stops short of the edge, since otherwise it is
+        # against a wall.
+        rise = foot + sign * min(PARAPET_FROM / y_to, 1.0) * run
+        for stop, (w0, w1), out in zip(stops, ((c0 - CELL, c0), (c1, c1 + CELL)),
+                                       (-across, across)):
+            if stop is None:
+                continue
+            profile = [foot]
+            if (rise - foot) * sign < (stop - foot) * sign:
+                profile.append(rise)
+            profile.append(stop)
+            for c, facing in ((w0, -across), (w1, across)):
+                points = [at(foot, 0.0, c), at(stop, 0.0, c)]
+                points += [at(r, wall_top(r), c) for r in reversed(profile[1:])]
+                d.face(points, RAMP_WALL, facing)
+            for r0, r1 in zip(profile, profile[1:]):
+                d.face([at(r0, wall_top(r0), w0), at(r1, wall_top(r1), w0),
+                        at(r1, wall_top(r1), w1), at(r0, wall_top(r0), w1)],
+                       RAMP_WALL, up)
+            if stop != edge:
+                d.face([at(stop, 0.0, w0), at(stop, 0.0, w1),
+                        at(stop, wall_top(stop), w1), at(stop, wall_top(stop), w0)],
+                       RAMP_WALL, np.array(at(sign, 0.0, 0.0)))
+        self.log.append(
+            f'    a ramp {width:.1f} m wide, 0 to {y_to:.2f} m over {run:.2f} m '
+            f'({np.degrees(np.arctan2(y_to, run)):.0f} degrees)')
+        return self
+
+    def solid(self, x0, z0, x1, z1, top, material=RAMP, walls=()):
+        """A block standing on the ground - a landing - drawn whole and
+        collided with as a column of the grid in every cell it covers.
+
+        Built as its own box it would be a shell to the generator, which
+        marks surfaces and not volumes: a lid over hollow columns. `walls`
+        are sides (`'x0'`, `'x1'`, `'z0'`, `'z1'`) to put a parapet along,
+        a cell outside it, colliding exactly as a ramp's walls do.
+        """
+        self.drawn.box(x0, 0.0, z0, x1, top, z1, material)
+        ox = grid_origin('x')
+        for i in range(int(np.floor((x0 - ox) / CELL)), int(np.ceil((x1 - ox) / CELL))):
+            start = ox + i * CELL
+            if x0 <= start + CELL / 2.0 <= x1:
+                self.hidden.column('x', start, z0, z1, round(top / CELL) * CELL)
+        for side in walls:
+            if side in ('z0', 'z1'):
+                z = z0 - CELL if side == 'z0' else z1
+                wall = (x0, 0.0, z, x1, top + PARAPET, z + CELL)
+            else:
+                # Along x, and round the corner of any wall along z, so the
+                # two meet rather than leaving a notch between them.
+                x = x0 - CELL if side == 'x0' else x1
+                a = z0 - (CELL if 'z0' in walls else 0.0)
+                b = z1 + (CELL if 'z1' in walls else 0.0)
+                wall = (x, 0.0, a, x + CELL, top + PARAPET, b)
+            self.drawn.box(*wall, RAMP_WALL)
+            self.hidden.exact.append(wall)
+        return self
 
     def box(self, x0, y0, z0, x1, y1, z1, material=STAIR):
         if x1 <= x0 or y1 <= y0 or z1 <= z0:
@@ -313,6 +556,21 @@ class Parts:
             self.flight('z', start, into, middle - width / 2.0,
                         middle + width / 2.0, 0.0, roof - SKIN)
         return self
+
+    def roof_ramp(self, side, x0, z0, x1, z1, roof, run, corner):
+        """A ramp up the outside of a block onto its roof (see `ramp`).
+
+        It goes beside the block's door on that side, at the `corner`
+        ('-' or '+' along the cross axis) - the flights it replaced stood in
+        front of the doors and shut them. The walls stay inside the block's
+        width, so a ramp is no wider than the building it climbs.
+        """
+        if side not in ('z0', 'z1'):
+            raise ValueError('roof ramps run along z: the lanes are that way')
+        edge = z1 if side == 'z1' else z0
+        foot = edge + run if side == 'z1' else edge - run
+        cross0 = x0 + CELL if corner == '-' else x1 - CELL - RAMP_WIDTH
+        return self.ramp('z', foot, edge, cross0, roof - SKIN)
 
     def cover(self, x, z, low=0.55, high=1.05, size=1.2):
         """A pair of crates: one to walk onto, one to climb from it.
@@ -491,31 +749,85 @@ def attach(js, blob, parts, scale, before, repointed, repainted, surfaces):
         buffer.extend(data.tobytes())
         return len(js['bufferViews']) - 1
 
-    primitives = []
-    for material, verts, faces in parts.arrays(scale):
+    def node(name, layer, extras):
+        primitives = []
+        for material, verts, faces in layer.arrays(scale):
+            js['accessors'].append({
+                'bufferView': add(verts, 34962), 'componentType': 5126,
+                'count': len(verts), 'type': 'VEC3',
+                'min': verts.min(0).tolist(), 'max': verts.max(0).tolist(),
+            })
+            position = len(js['accessors']) - 1
+            flat = faces.reshape(-1)
+            js['accessors'].append({
+                'bufferView': add(flat, 34963), 'componentType': 5125,
+                'count': len(flat), 'type': 'SCALAR',
+            })
+            primitives.append({
+                'attributes': {'POSITION': position},
+                'indices': len(js['accessors']) - 1,
+                'material': surfaces[material],
+            })
+        if not primitives:
+            return
+        js['meshes'].append({'name': name, 'primitives': primitives})
+        js['nodes'].append({'name': name, 'mesh': len(js['meshes']) - 1})
+        if extras:
+            js['nodes'][-1]['extras'] = extras
+        # A scene root of its own, with no transform. The download's root
+        # carries a Z-up to Y-up rotation; sitting outside it means these
+        # coordinates are the world's, which is the whole point of authoring
+        # in metres.
+        js['scenes'][js.get('scene', 0)]['nodes'].append(len(js['nodes']) - 1)
+
+    def exact(boxes):
+        """Boxes the generator takes as they are: one unit cube, placed by
+        a node per box under one hidden parent, as `build-facility.py`
+        places its racks."""
+        if not boxes:
+            return
+        cube = Parts()
+        cube.box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, RAMP_WALL)
+        verts, faces = cube.groups[RAMP_WALL]
+        verts = np.asarray(verts, dtype=np.float32)
+        flat = np.asarray(faces, dtype=np.uint32).reshape(-1)
         js['accessors'].append({
             'bufferView': add(verts, 34962), 'componentType': 5126,
             'count': len(verts), 'type': 'VEC3',
             'min': verts.min(0).tolist(), 'max': verts.max(0).tolist(),
         })
-        position = len(js['accessors']) - 1
-        flat = faces.reshape(-1)
         js['accessors'].append({
             'bufferView': add(flat, 34963), 'componentType': 5125,
             'count': len(flat), 'type': 'SCALAR',
         })
-        primitives.append({
-            'attributes': {'POSITION': position},
+        js['meshes'].append({'name': MARKER + '_exact', 'primitives': [{
+            'attributes': {'POSITION': len(js['accessors']) - 2},
             'indices': len(js['accessors']) - 1,
-            'material': surfaces[material],
-        })
+            'material': surfaces[RAMP_WALL],
+        }]})
+        mesh = len(js['meshes']) - 1
+        children = []
+        for i, (x0, y0, z0, x1, y1, z1) in enumerate(boxes):
+            js['nodes'].append({
+                'name': f'{MARKER}_exact.{i:03d}', 'mesh': mesh,
+                'translation': [x0 / scale, y0 / scale, z0 / scale],
+                'scale': [(x1 - x0) / scale, (y1 - y0) / scale, (z1 - z0) / scale],
+            })
+            children.append(len(js['nodes']) - 1)
+        js['nodes'].append({'name': MARKER + '_exact', 'children': children,
+                            'extras': {'collision_only': True}})
+        js['scenes'][js.get('scene', 0)]['nodes'].append(len(js['nodes']) - 1)
 
-    js['meshes'].append({'name': MARKER, 'primitives': primitives})
-    js['nodes'].append({'name': MARKER, 'mesh': len(js['meshes']) - 1})
-    # A scene root of its own, with no transform. The download's root carries
-    # a Z-up to Y-up rotation; sitting outside it means these coordinates are
-    # the world's, which is the whole point of authoring in metres.
-    js['scenes'][js.get('scene', 0)]['nodes'].append(len(js['nodes']) - 1)
+    node(MARKER, parts, None)
+    # The ramps: drawn and never collided with, and their collision, never
+    # drawn. Two nodes because those are properties of a node - the
+    # generator skips `scenery`, and the client, the light bake and the
+    # scatter all skip `collision_only`.
+    if parts.drawn is not None:
+        node(MARKER + '_drawn', parts.drawn, {'scenery': True})
+    if parts.hidden is not None:
+        node(MARKER + '_collision', parts.hidden, {'collision_only': True})
+        exact(parts.hidden.exact)
     return bytes(buffer)
 
 
@@ -671,16 +983,21 @@ def east_district(parts):
     # side. Roofs alternate between one and two storeys so the rooflines
     # give something to fight over rather than one flat plane.
     #
-    # (x0, z0, x1, z1, roof, the side its stair goes on)
+    # (x0, z0, x1, z1, roof, the side its ramp goes on, its run, and which
+    # corner of that side). About thirty degrees where the lane has the room,
+    # which is most of them. Two ramps that face each other across a lane
+    # are put at opposite corners, so both get their length; the one in
+    # front of a block three metres off is shorter and steeper, because a
+    # ramp that ends nose to a wall is a ramp nobody walks down.
     blocks = [
-        (23.0, -32.0, 33.0, -22.0, 3.60, 'z1'),
-        (37.0, -30.0, 47.0, -20.0, 6.00, 'z1'),
-        (22.0, -12.0, 32.0, -2.0, 6.00, 'z1'),
-        (36.0, -6.0, 46.0, 6.0, 3.60, 'z0'),
-        (23.0, 12.0, 33.0, 22.0, 3.60, 'z0'),
-        (37.0, 18.0, 47.0, 30.0, 6.00, 'z0'),
+        (23.0, -32.0, 33.0, -22.0, 3.60, 'z1', 6.2, '+'),
+        (37.0, -30.0, 47.0, -20.0, 6.00, 'z1', 10.3, '+'),
+        (22.0, -12.0, 32.0, -2.0, 6.00, 'z1', 10.3, '+'),
+        (36.0, -6.0, 46.0, 6.0, 3.60, 'z0', 6.2, '-'),
+        (23.0, 12.0, 33.0, 22.0, 3.60, 'z0', 6.2, '-'),
+        (37.0, 18.0, 47.0, 30.0, 6.00, 'z0', 9.0, '+'),
     ]
-    for i, (x0, z0, x1, z1, roof, side) in enumerate(blocks):
+    for i, (x0, z0, x1, z1, roof, side, run, corner) in enumerate(blocks):
         middle_x = (x0 + x1) / 2.0
         middle_z = (z0 + z1) / 2.0
         parts.block(x0, z0, x1, z1, roof, material=BLOCK_WALLS[i % len(BLOCK_WALLS)], doors=(
@@ -689,8 +1006,8 @@ def east_district(parts):
             ('z0', ((middle_x - 1.3, middle_x + 1.3),)),
             ('z1', ((middle_x - 1.3, middle_x + 1.3),)),
         ))
-        parts.roof_stair(side, x0, z0, x1, z1, roof)
-    parts.log.append(f'  east district: {len(blocks)} blocks with stairs, '
+        parts.roof_ramp(side, x0, z0, x1, z1, roof, run, corner)
+    parts.log.append(f'  east district: {len(blocks)} blocks with ramps, '
                      f'ground and walls out to x {NEW_EDGE:.0f}')
 
     # Cover in the lanes, so crossing them is not a walk down a bowling
@@ -723,15 +1040,18 @@ def west_district(parts):
     parts.box(-NEW_EDGE, 0.0, -ENDS + SKIN, -19.00, WALL_TOP, -ENDS + 1.0, WALL)
     parts.box(-NEW_EDGE, 0.0, ENDS - 1.0, -19.00, WALL_TOP, ENDS - SKIN, WALL)
 
+    # As in the east. The first is short because the block in front of it
+    # is ten metres off; the fourth goes at the outer corner, clear of the
+    # cover beside its inner one.
     blocks = [
-        (-33.0, -30.0, -23.0, -20.0, 6.00, 'z1'),
-        (-47.0, -34.0, -37.0, -24.0, 3.60, 'z1'),
-        (-32.0, -10.0, -22.0, 0.0, 3.60, 'z1'),
-        (-46.0, -4.0, -36.0, 8.0, 6.00, 'z0'),
-        (-33.0, 14.0, -23.0, 24.0, 6.00, 'z0'),
-        (-47.0, 20.0, -37.0, 32.0, 3.60, 'z0'),
+        (-33.0, -30.0, -23.0, -20.0, 6.00, 'z1', 7.5, '-'),
+        (-47.0, -34.0, -37.0, -24.0, 3.60, 'z1', 6.2, '-'),
+        (-32.0, -10.0, -22.0, 0.0, 3.60, 'z1', 6.2, '-'),
+        (-46.0, -4.0, -36.0, 8.0, 6.00, 'z0', 10.3, '-'),
+        (-33.0, 14.0, -23.0, 24.0, 6.00, 'z0', 10.3, '+'),
+        (-47.0, 20.0, -37.0, 32.0, 3.60, 'z0', 6.2, '+'),
     ]
-    for i, (x0, z0, x1, z1, roof, side) in enumerate(blocks):
+    for i, (x0, z0, x1, z1, roof, side, run, corner) in enumerate(blocks):
         middle_x = (x0 + x1) / 2.0
         middle_z = (z0 + z1) / 2.0
         parts.block(x0, z0, x1, z1, roof, material=BLOCK_WALLS[i % len(BLOCK_WALLS)], doors=(
@@ -740,8 +1060,8 @@ def west_district(parts):
             ('z0', ((middle_x - 1.3, middle_x + 1.3),)),
             ('z1', ((middle_x - 1.3, middle_x + 1.3),)),
         ))
-        parts.roof_stair(side, x0, z0, x1, z1, roof)
-    parts.log.append(f'  west district: {len(blocks)} blocks with stairs, '
+        parts.roof_ramp(side, x0, z0, x1, z1, roof, run, corner)
+    parts.log.append(f'  west district: {len(blocks)} blocks with ramps, '
                      f'ground and walls out to x -{NEW_EDGE:.0f}')
 
     for x, z in ((-36.2, -34.0), (-36.2, -14.0), (-36.2, 10.0), (-36.2, 28.0),
@@ -779,17 +1099,27 @@ def build(parts):
     # flight along the building's south face, climbing west onto the roof.
     # Ground-resting, so the rule above does not apply to it: a staircase is
     # its own obstacle and has nothing above it to be welded to.
-    parts.log.append('  north-west corner: external stair to the 4.85 m roof')
-    parts.flight('x', -5.10, -10.60, 24.35, 26.15, 0.0, 4.85 - 2 * SKIN)
+    #
+    # It is a ramp now, the whole width of that strip of yard: from the
+    # ground at x -3 up to a landing at x -11.5, about thirty degrees - the
+    # slope of the art's own ramp along the west wall, which is what Conrad
+    # pointed at when he asked for these. The strip is 4 m between the
+    # building and the block south of it; the ramp takes 3 and a wall a cell
+    # thick either side, and the half metre left against the block is too
+    # narrow to walk into. The wall on the building's side stops where the
+    # building's own wall starts.
+    parts.log.append('  north-west corner: a ramp to the 4.85 m roof')
+    parts.ramp('x', -3.00, -11.50, 24.28, 4.85 - SKIN, into=0.0,
+               walls=(-10.50, True))
+    # The landing, solid from the ground, walled on its two open sides. It
+    # tops out beside the roof - the roof's south edge is at z 24.0 - and
+    # meets it cell to cell in the collision; the drawn sliver under the
+    # roof's edge only closes the 3 cm between the two.
+    parts.solid(-13.00, 24.03, -11.50, 27.28, 4.85 - SKIN, walls=('z1', 'x0'))
+    parts.drawn.box(-13.00, 4.85 - SKIN - DECK, 23.99, -11.50, 4.85 - SKIN,
+                    24.03, RAMP)
     east_district(parts)
     west_district(parts)
-    # The flight tops out beside the roof rather than on it - the roof's
-    # south edge is at z 24.0 and the stair is in the yard south of that -
-    # so a landing carries the last stride north far enough to overlap it.
-    # Two and a bit metres wide, not the metre it needs: the audit will not
-    # stand a player in the outermost cell of a deck, because the cell past
-    # it is open air, so a narrow landing is narrower than it looks.
-    parts.deck(-12.40, 23.60, -10.20, 26.15, 4.85 - SKIN)
 
 
 # The arena's own colours were a toy's: flat orange walls, red-orange, amber
@@ -1031,6 +1361,8 @@ def main():
           f'z-fighting with the ground inside the building')
 
     parts = Parts()
+    parts.drawn = Parts()
+    parts.hidden = Parts()
     build(parts)
     for line in parts.log:
         print(line)

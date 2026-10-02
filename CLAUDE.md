@@ -179,26 +179,54 @@ they all do it, and what each step is here:
    waits in line, and the card counts them in megabytes - in line as a
    footnote, on the loading card as the bar. Which files a map needs is
    read from its glTF's JSON: the material names say which photographs,
-   the scene extras whether it grows trees and grass.
-4. **Warm-up** - `WARMUP`, fifteen seconds (Counter-Strike's freeze time),
-   `SOLATEL_WARMUP` to change it. Everybody is on their spawn and may look
-   round and nothing else: the server zeroes movement and every button for
-   the warm-up (`step_match`), so nothing can be fired, thrown or bought an
-   advantage with, and the client zeroes the same so it never predicts a
-   step the server refuses. `Snapshot::starts_in_ms` counts it down; the
-   match clock and the circle start when it ends (`Match::elapsed` is time
-   since *live*). The HUD shows the count, ticks the last three seconds and
-   says GO - but only when a snapshot says the match is live, never when
-   the local count reaches zero, so a player starts a hair late rather than
-   early and never rubber-bands.
+   the scene extras whether it grows trees and grass. **The card stays up
+   until the map can be drawn, not merely until it is in** (`prepareToDraw`
+   in `main.js`): every shader compiled with `compileAsync`, the other
+   players' soldier and rifle and a grenade's blast put in for the purpose,
+   then one frame drawn behind the card for the shadow map's depth shaders,
+   the post chain and the texture uploads. The first frame used to do all of
+   that - seconds of black canvas through ANGLE on Windows, with the
+   countdown running underneath: Conrad's countdown appeared at five. Then
+   the client sends `Loaded` (protocol 17).
+4. **Waiting for everybody's map** - the warm-up's countdown starts when the
+   last player in the match has said `Loaded`, or after `LOAD_WAIT` (30 s,
+   `SOLATEL_LOAD_WAIT`) so one machine that never finishes cannot hold the
+   rest; nobody who has dropped is waited for, and a `Loaded` counts only
+   from the socket playing that match. `Snapshot::loading` is how many are
+   still loading; while it is above zero `starts_in_ms` is the whole warm-up
+   and does not count, and the HUD says who it is waiting for.
+5. **Warm-up** - `WARMUP`, twenty seconds (Conrad asked for at least
+   sixteen of countdown he could see), `SOLATEL_WARMUP` to change it, and
+   **spent together**: everybody stands on the map's gathering ground
+   (`GATHERINGS`, its most open place - the yard's is the strip behind its
+   south fence, where Conrad was put and asked everybody to be), on a grid
+   1.6 m apart, so a match is seen to be full of people. They may walk, jump
+   and crouch among each other; the server zeroes fire, throw and reload
+   (`Hold::Gathered`), nothing can hurt anybody, and a fall puts a body back
+   rather than ending it. When the countdown ends `disperse_if_live` puts
+   each on their own spawn, facing its way, with no motion, guess or history
+   carried over - so wandering bought nothing - and the client faces the
+   spawn on the first snapshot that has it there. A map with nowhere to
+   gather would hold everybody still on their spawns instead (`Hold::Still`),
+   or the warm-up would be a head start; `Snapshot::gathered` tells the
+   client which, so it predicts what the server will do. Another player who
+   moves further between two snapshots than anybody can run (`TELEPORT`) is
+   drawn there, not slid across the map. `Snapshot::starts_in_ms` counts it
+   down; the match clock and the circle start when it ends
+   (`Match::elapsed` is time since *live*). The HUD shows the count, ticks
+   the last three seconds and says GO - but only when a snapshot says the
+   match is live, never when the local count reaches zero, so a player
+   starts a hair late rather than early and never rubber-bands.
 
 It is also what makes loading fair: a match that went live when its map
 arrived would start with whoever loaded fastest already moving.
 
-The tests run with no warm-up (`free_play` and `Paid` set it to zero) except
-the three about it. Every end-to-end driver waits for `starts_in_ms` to reach
-zero before it does anything, because anything sent in the warm-up is
-discarded - a speed check run during it would prove nothing.
+The tests run with no warm-up and no wait for maps (`free_play` and `Paid`
+set both to zero) except the ones about them; a match with no warm-up does
+not gather. Every end-to-end driver sends `loaded` the moment its match
+starts - it has no map to load - and waits for `starts_in_ms` to reach zero
+before it does anything, because anything sent in the warm-up is discarded
+- a speed check run during it would prove nothing.
 
 ### A table is a map and a stake
 
@@ -891,7 +919,13 @@ the same test.
 
 `node client/perf.mjs` queues into a match and measures each level in turn on
 a real GPU; run with `PERF_HEADLESS=1` it only checks that the script works,
-since a software rasteriser's frame rate means nothing.
+since a software rasteriser's frame rate means nothing. `--crowd N` fills the
+match first with N players over the wire who run, jump and fire at the sky -
+everything a full match costs to draw, with nobody hurt; run the server in
+free play for it. Each row also has the main thread's milliseconds before a
+frame is drawn and while drawing it (`stats().updateMs`, `drawMs`), which
+tell a frame rate the CPU holds down from one the graphics card does - and
+those, unlike the frame rate, mean something on the software renderer too.
 
 `node client/tour.mjs --map yard` takes the same pictures of a map every
 time - from its spawns at eye height, from above, and through the player's
@@ -932,7 +966,12 @@ transparent pixel and filtering dragged each leaf's edge to black.
 Grass is tufts of the scanned grass cards, planted within `GRASS_RADIUS` of
 the eye from the map's `ground` extra (a run-length coded metre grid of
 where grass grows and how high), from a hash of each spot so nothing pops
-when the patch is replanted. `smoke` lists chimneys; birds circle whatever
+when the patch is replanted. It grows in over the last `GRASS_FADE` metres of
+the radius, measured from the eye *every frame* in the vertex shader, and is
+planted out past the radius by as far as the eye walks between replants. It
+used to be sized when it was planted, so for five metres a tuft stayed the
+size it was planted at and then jumped - the whole outer ring growing by half
+in a frame, every five metres: what Conrad saw as grass popping up. `smoke` lists chimneys; birds circle whatever
 map has trees. All of it is marked `scenery`, so the fog is sized without it.
 
 ### Static batching
@@ -1029,8 +1068,10 @@ half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
 covers the same part of the screen. The weapon's own camera narrows by its
 own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view
 axis, so magnifying about the middle of the screen does not move them. The
-crosshair dims with the sights up and never disappears: it is
-where the shot goes, and on real stakes a player should always see it.
+crosshair - four short black lines round a gap and a dot in it, with a thin
+light edge so it shows against a dark wall, as Conrad asked - dims with the
+sights up and never disappears: its middle is where the shot goes, and on
+real stakes a player should always see it.
 
 **None of it changes where a shot goes.** Recoil kicks the weapon and rolls
 the camera around its own axis; a roll leaves the middle of the screen where
@@ -1101,19 +1142,52 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
 - **Legs** are idle or run by speed - a walk is the run, slower - turned up
   to 70 degrees toward the way the player moves, with the run played
   backwards when backing off.
-- **Upper body** holds the shouldered pose from the fire clip's first frame,
-  with a little of the run's arm swing at a sprint; the fire clip plays over
-  it on every shot the server reports.
+- **Upper body has two stances, and the rifle is up only when it is being
+  used.** Everybody used to be drawn shouldered and aiming all the time,
+  which is not what anybody looks like and told nobody anything; Conrad
+  asked for the relaxed stance of a modern shooter. At rest it is the **low
+  ready** (`lowReady`, `READY`): lowered across the body, muzzle down and to
+  the left, arms relaxed. Aiming (`Buttons::AIM`, sent as
+  `PlayerSnapshot.aiming`, protocol 18), and on a shot and for 1.4 s after
+  it (`RAISED_AFTER_SHOT`), it comes up to the shoulder - the fire clip's
+  first frame, a little of the run's arm swing at a sprint, the fire clip
+  over it on every shot the server reports. A reload brings it half way up,
+  a throw takes it down. `raise` eases between them, exponentially: up with
+  a time constant of 0.08 s (0.03 on a shot from the low ready, because the
+  round has already left - its tracer leaves from where the shouldered
+  muzzle will be, `SHOULDER_MUZZLE`, and its flash waits for the rifle to
+  arrive), down with 0.25 s. The clip weights always sum to one, because
+  three.js fills a missing share with the bind pose.
+- **The low ready is built, not downloaded.** The idle clip holds the rifle
+  nearly level and pointing straight out to the side. So at load the torso
+  and head are taken from the idle (breathing), the rifle is put where
+  `READY` says - 54 degrees across, 29 down, chosen beside the references
+  Conrad sent - and each arm is solved onto it by two-bone IK, the hands
+  closing on the grip and the handguard exactly as the shouldered pose
+  closes them, fingers included. Shoulders, arms and hands are one still
+  frame over the idle's moving spine, so they ride the breathing together
+  and the hands stay on the rifle. It is a clip like any other, so the two
+  stances blend bone for bone.
 - **Aim is a constraint, not a lean.** After the clips pose the body, the
-  line from the right palm to the left is measured and the spine is turned
-  by exactly the rotation that takes it onto the player's yaw and pitch,
-  shared over three spine bones. That also undoes the leg turn for strafing.
-  An earlier version leaned the spine by the pitch around a fixed axis; on
-  this rig the clip's hands point 55 degrees off the hips, and the lean bent
-  him sideways - measure the rifle against the aim, do not eyeball it.
+  line from the right palm to the left is measured and the spine turned -
+  about the vertical, then about the level axis across it, the two made one
+  rotation and shared over three spine bones about its own axis, with one
+  matrix update for the lot - until it points exactly where the rifle should: along
+  the yaw and pitch at the shoulder, at the low ready's angle to them at
+  rest, in between on the way. That also undoes the leg turn for strafing
+  and the run's hip sway. Two rotations, not the one shortest: the low ready
+  points down, and the shortest turn between two downward lines tips the
+  torso over sideways. An earlier version leaned the spine by the pitch
+  around a fixed axis; on this rig the clip's hands point 55 degrees off the
+  hips, and the lean bent him sideways - measure the rifle against the aim,
+  do not eyeball it.
+- **At the low ready the head says where they look.** The rifle follows a
+  third of the pitch; the face is measured and turned onto the yaw and pitch
+  by the neck and head, because the idle clip turns the head about as it
+  pleases. Raised, the head is down the sights already.
 - **The rifle is not parented to a bone.** Each frame it is put in the right
-  palm and laid along the aim, so it points exactly where the player looks
-  and the left hand is on it.
+  palm and laid along that line, so raised it points exactly where the
+  player looks, and either way the left hand is on it.
 - Death plays the death clip once and leaves the body where it fell for five
   seconds; landing dips the hips; shots flash the muzzle.
 - **Reloads and throws are placed, not played** - there are no clips for
@@ -1131,7 +1205,18 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
   hand kept last frame's posing and built on it: the arm stayed at the
   magazine after a reload, and the aim then turned the whole torso to put
   the hands back on a rifle the arm had left.
-- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth.
+- Beyond 35 m the mixer runs every other frame, beyond 70 m every fourth,
+  and every fourth out of view.
+- **Fewer triangles further away** (`DETAIL`): the soldier and rifle are
+  simplified at load with meshoptimizer to 30% beyond 15 m and 10% beyond
+  40 m, each level an index list over the same vertices so the skin still
+  works, never further off the full shape than a couple of pixels where it
+  is first used. A crowd photographed both ways is the same picture.
+- **Players are culled**, by a sphere `POSE_REACH` times their resting
+  bounds. They never were - bounds from the bind pose lost a player whose
+  clip carried them outside it - so every player in a match was drawn every
+  frame, and again into the shadow map, wherever they stood. Together that
+  took a twelve-player arena from 1.39 to 0.73 million triangles.
 
 The rifle is a clone of the viewmodel's, which carries that rig's offset and
 scale. Both are reset on the copy - inheriting them is what once made every
@@ -1166,7 +1251,7 @@ deleted, and the rifle is built in code (see *The weapon in your hands*).
 
 **`scripts/extend-arena.py` is the one place geometry is authored**, and it is
 separate from `prepare-assets.py` precisely so that "the download is untouched"
-stays true of everything else. It adds Solatel's own buildings, stairs and
+stays true of everything else. It adds Solatel's own buildings, ramps and
 walls to `arena.glb`, and takes down 40 triangles of the original: the east and
 west walls, so the map can continue past them, and a redundant red-orange floor
 quad that was z-fighting with the grey ground plane over the whole arena. It
@@ -1188,7 +1273,11 @@ concrete photograph is warm and halfway left twenty thousand square metres
 of wall cream under a grey sky; they weather like the arena's, rain streaks
 and all. It records each primitive's original colour in its
 `extras.yard_colour`, which keeps it idempotent and which `build-facility.py`
-reads when it borrows the yard's props.
+reads when it borrows the yard's props. It also writes the yard's scene
+extras: the water's colour, and `spawn_exclude` over the strips behind the
+two lines of barriers across the yard's ends (and the barriers themselves) -
+seven spawns were out there, a life starting with the whole yard in front of
+it, until Conrad asked for them inside. Run it, then `derive-maps.py yard`.
 
 It is also where the arena's **colours** live. `PALETTE` repaints every
 primitive of the original, by what the piece is, in weathered concrete,
@@ -1217,6 +1306,27 @@ is what to check first. And **each tread of a staircase must be its own box**,
 spanning only its own depth: `voxelise` marks the cells a *surface* passes
 through, not the cells inside a volume, so nested boxes stamp every tread's top
 face onto every column below it and the flight comes back as floating slabs.
+
+**The arena's ways up are ramps, not stairs** (`Parts.ramp`), at Conrad's
+asking: thirteen of them, three metres wide, about thirty degrees where the
+lane has room, with a wall a metre high down each side. The flights they
+replaced climbed straight up the middle and nowhere else - eleven degrees off
+line or 0.8 m off centre walked a player off their open side on most of them -
+and read from the side as a zigzag. A ramp is three things in three nodes: the
+slope and its walls drawn and never collided with (`_drawn`, `scenery`); the
+slope's collision, a column of the generator's own grid per cell along the
+run, solid from the ground to the quarter metre nearest the drawn slope,
+never drawn (`_collision`, `collision_only`); and the walls' collision as
+exact boxes, a node each over one unit cube (`_exact`), because voxelised the
+generator's smoothing flattened every sloped wall to the lowest height in
+reach and near the top a wall stood half a metre over the slope - a step onto
+it and off the outside. A column must sit *inside* one cell: a face on a cell
+boundary counts in the cell above it, so a box exactly a cell deep marks two.
+Each roof ramp stands beside its block's door, not in front of it - the
+flights shut those doors. `every_ramp_in_the_arena_takes_a_player_to_the_top`,
+`a_ramp_wall_cannot_be_stepped_onto` and `running_down_a_ramp_keeps_the_
+player_on_it` walk every one, and `ARENA_RAMPS` in `map.rs` has to move with
+the script's tables.
 
 **Map collision is generated, not written.** `./x maps` runs
 `scripts/derive-brushes.py` over every model in `assets/maps` and rewrites the
@@ -1802,7 +1912,11 @@ could walk out of the circle, or off a roof, and deny the winner the stake.
 
 **Crouching** (C, a toggle - Ctrl is Ctrl+W in a browser) caps speed at
 `CROUCH_SPEED`, forbids jumping, and lowers the eye and the top of both hit
-boxes by `CROUCH_DROP` without moving the feet. It is in `PlayerState`
+boxes by `CROUCH_DROP` without moving the feet. Pressing jump while crouched
+stands up and jumps in the one command: the client clears its own toggle on
+the key, so the server sees an uncrouched jump and nothing about the rule
+changes. The eye eases between the two heights on a clock of its own
+(`CROUCH_EYE_TIME`), in the air as well, so the jump rises out of the crouch. It is in `PlayerState`
 because it changes the body, so it is predicted, and the wasm's `adopt`
 takes it. Other players drop to one knee, and it is a *placed* pose rather
 than a squat: `_kneel` lowers the hips until the right knee reaches the
@@ -1818,7 +1932,11 @@ The client runs its ammunition down between snapshots only so the kick stops
 on the round the server will refuse; the count it displays is the server's.
 What is in somebody else's magazine is not sent to anybody else; whether
 they are reloading is (protocol 13), because a reload is done in plain view
-and heard, and it is what a player standing there would know.
+and heard, and it is what a player standing there would know. So is whether
+they are aiming (protocol 18): a rifle at the shoulder is seen. The aim
+button decides nothing on the server - a shot goes where it goes either way,
+`aiming_is_seen_by_everybody_and_decides_nothing` - and a late packet
+carries it on, as it does a crouch.
 
 **Where a shot lands is drawn** (`impacts.js`), from the server's own `to`
 in `ShotFired` - never the prediction: a burst, dust thrown back towards the
@@ -1833,7 +1951,16 @@ shared so there is one description of how one moves), sets it off after
 `GRENADE_FUSE`, and hurts everybody it can see within `GRENADE_RADIUS` -
 full damage inside two metres, falling to nothing at seven, and nothing
 through a wall. The thrower is hurt too. `Exploded` is sent for the flash
-and the bang; the damage arrives as `Damaged`. `cheat.mjs` presses the
+and the bang; the damage arrives as `Damaged`. `blast.js` draws it: a white
+flash bright enough for the bloom, a fireball cooling from white to orange
+to nothing in half a second, sparks as streaks along their own velocity and
+grit that comes to rest, a ring of dust and the shock along whatever floor is
+under it, then smoke lit by the fire for a moment and by the bake after - pale,
+not black - swelling and thinning for four seconds. Near it the view rolls
+and the rifle jolts (a roll only). Every blast shares **one point light that
+is always in the scene**, dark until something goes off: a light added for
+the first grenade changed how many lights every lit material was compiled
+for, and would have stalled that frame rebuilding the map's shaders. `cheat.mjs` presses the
 button forty times and counts what goes off.
 
 `node client/cheat.mjs` is the adversarial client, over the real wire:
@@ -1990,6 +2117,14 @@ It is still far under the 1.13 m a jump clears, so cover is still cover.
 The two halves of that number live in `collide.rs` and in the generator and
 are kept in step by hand.
 
+**And a walking player is put down on anything within a step below**
+(`MAX_STEP_DOWN`, `collide::step_down`, Source's `StayOnGround`). Without it
+walking off anything was a fall, and a slope - held as quarter-metre steps -
+a run of them: down a thirty-degree ramp at full speed a player left the
+ground 0.4 s and three metres at a time and landed at 9 m/s with the thump
+and the dip of a fall. Only for a body on the ground going into the tick, so
+a jump is never pulled back and a drop taller than a step is still a fall.
+
 A spawn faces the middle of the playable area, and clear sight is only the
 qualification for a direction rather than the thing being maximised.
 Weighing the two against each other does not work: every direction on an
@@ -2021,6 +2156,13 @@ there, and a saturated offset is not a filter - the eye simply tracked the
 feet half a metre lower with every bump intact. A low-pass has no such
 mode: a steady climb settles at climb-rate times the time constant, and it
 is smooth because it is continuous rather than a stack of corrections.
+
+The gap closes per metre walked as well as per second (`EYE_SMOOTH_DISTANCE`).
+On time alone the lag up a ramp is the climb rate times the time constant,
+and up a thirty-degree ramp at full speed that was 0.42 m - the view most of
+a crouch low the whole way up. Per metre as well, it is 0.12 m, and a single
+step at a run is smoothed over the third of a metre the body takes to cross
+it. Crouching is eased apart from all of this (`CROUCH_EYE_TIME`).
 
 Smooth only while grounded. A fall should be seen falling. Detect the step in the fixed tick and
 nowhere else: reconciliation runs twenty times a second and rewinds the

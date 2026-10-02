@@ -93,6 +93,8 @@ class Client {
         break;
       case 'match_started':
         this.matchId = msg.match_id;
+        // No map to load: ready for the countdown at once.
+        this.send({ t: 'loaded', match_id: msg.match_id });
         break;
       case 'funds':
         this.balance = msg.balance_micro_usd;
@@ -129,7 +131,10 @@ class Client {
     if (!this.at || (this.startsInMs ?? 0) > 0) return this.command(0, 0);
     const now = Date.now();
     const [x, y, z] = this.at;
-    if (!this.route) this.route = routeToMiddle([x, y, z]);
+    if (!this.route) {
+      this.route = routeToMiddle([x, y, z]);
+      console.log(`>> ${this.name} walks ${this.route.length} m into the final circle`);
+    }
     while (this.route.length > 0 && Math.hypot(this.route[0][0] - x, this.route[0][1] - z) < 0.35) {
       this.route.shift();
     }
@@ -138,10 +143,17 @@ class Client {
     if (!this.checkAt || now - this.checkAt > 2000) {
       if (this.checkPos && Math.hypot(x - this.checkPos[0], z - this.checkPos[2]) < 0.3) {
         this.route = routeToMiddle([x, y, z]);
+        if (this.route.length === 0) {
+          // Either already inside the final circle, short of a waypoint it
+          // cannot quite reach, or nowhere to go from here: stand.
+          const inside = Math.hypot(x, z) <= SIM.zoneFinalRadius - 3;
+          if (!inside) console.log(`>> ${this.name} is stuck at ${[x, y, z].map((n) => n.toFixed(1)).join(', ')}`);
+        }
       }
       this.checkAt = now;
       this.checkPos = [x, y, z];
     }
+    if (this.route.length === 0) return this.command(0, 0);
     const [tx, tz, jump] = this.route[0];
     return this.command(0.6, Math.atan2(x - tx, z - tz), jump ? 1 : 0);
   }

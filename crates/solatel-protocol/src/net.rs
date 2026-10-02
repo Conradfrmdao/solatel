@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 16;
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -152,6 +152,12 @@ pub enum ClientMsg {
     },
     /// Give up the place in line. No money has moved, so nothing is returned.
     LeaveQueue,
+    /// This client has the match's map loaded and drawn - shaders compiled,
+    /// the first frame ready - and is ready for the countdown. The match's
+    /// warm-up does not start counting until everybody in it has said so,
+    /// or until the server has waited long enough. Naming the match means
+    /// one sent late for the last match counts for nothing in this one.
+    Loaded { match_id: MatchId },
     /// Take money out of the wallet, to a Solana address.
     ///
     /// An amount in micro-USD, because that is what the wallet holds. The
@@ -209,6 +215,12 @@ pub struct PlayerSnapshot {
     /// but them.
     #[serde(default)]
     pub reloading: bool,
+    /// Holding the rifle up to aim. Sent to everybody for the same reason: a
+    /// rifle at the shoulder is seen, and a body that always looked aimed
+    /// told nobody anything. It is the aim button the server last ran, and
+    /// it changes nothing the server decides.
+    #[serde(default)]
+    pub aiming: bool,
 }
 
 /// One player's match record, as counted by the server.
@@ -452,6 +464,18 @@ pub enum ServerMsg {
         /// this reaches zero, not when the players were placed.
         #[serde(default)]
         starts_in_ms: u32,
+        /// How many players in this match are still loading its map. While
+        /// any are, the warm-up has not begun: `starts_in_ms` is the whole of
+        /// it and does not count down. The server waits for the last of them
+        /// or for its `LOAD_WAIT`, whichever comes first.
+        #[serde(default)]
+        loading: u32,
+        /// Whether this match's players are waiting together on its
+        /// gathering ground rather than on their own spawns: free to walk
+        /// and jump until the countdown ends, when each is put on their
+        /// spawn. While it is false a warm-up holds everybody still.
+        #[serde(default)]
+        gathered: bool,
     },
     /// A shot was fired, for drawing tracers. Purely cosmetic: the damage it
     /// did, if any, arrives as [`ServerMsg::Damaged`].
@@ -723,6 +747,7 @@ mod tests {
                 id: PlayerId::new(),
                 state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
                 reloading: true,
+                aiming: true,
             }],
             ammo: 30,
             reload_ms: 0,
@@ -732,6 +757,8 @@ mod tests {
                 position: Vec3::new(1.0, 0.1, 2.0),
             }],
             starts_in_ms: 15_000,
+            loading: 3,
+            gathered: true,
         };
         let wire = encode(&snapshot).unwrap();
         assert!(matches!(

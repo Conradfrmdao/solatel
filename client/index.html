@@ -260,6 +260,8 @@
         font-variant-numeric: tabular-nums;
       }
       #warmup .count.beat { animation: beat 420ms ease-out; }
+      /* The whole warm-up, not counting yet: somebody's map is still loading. */
+      #warmup .count.held { opacity: 0.45; }
       @keyframes beat { from { transform: scale(1.25); color: #9fe8b4; } to { transform: scale(1); } }
       #warmup .about { font-size: 14px; color: #d7dde6; text-transform: lowercase; }
       #warmup .hint { font-size: 12px; color: var(--dim); }
@@ -394,13 +396,27 @@
         transform: translate(-50%, -50%);
       }
 
+      /* Four short lines round a gap and a dot in it, the way modern
+         shooters draw one: black, as Conrad asked, with a thin light edge
+         so it still shows against a dark wall. The box itself has no size,
+         so its corner is the middle of the screen and every part is placed
+         from there. */
       #crosshair {
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.92);
-        box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+        width: 0;
+        height: 0;
+        transform: none;
       }
+      #crosshair i,
+      #crosshair b {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.92);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45);
+      }
+      #crosshair .n { left: -1px; top: -12px; width: 2px; height: 8px; }
+      #crosshair .s { left: -1px; top: 4px; width: 2px; height: 8px; }
+      #crosshair .w { left: -12px; top: -1px; width: 8px; height: 2px; }
+      #crosshair .e { left: 4px; top: -1px; width: 8px; height: 2px; }
+      #crosshair b { left: -1px; top: -1px; width: 2px; height: 2px; }
 
       /* Four strokes forming an X, drawn only when a shot connects. */
       #hitmarker {

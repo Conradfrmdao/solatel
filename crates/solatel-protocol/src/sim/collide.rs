@@ -36,6 +36,17 @@ const MAX_STEP: f32 = 0.2;
 /// cover and a crate is still something to vault.
 pub const MAX_STEP_UP: f32 = 0.65;
 
+/// How far a walking player is put down onto the ground below them rather
+/// than left to fall: the height they step up, so a ramp or a flight is
+/// walked down the way it is walked up.
+///
+/// Without it, walking off anything was a fall, and a slope - which the
+/// collision holds as quarter-metre steps - was a run of them. Running down
+/// a thirty-degree ramp at full speed left the ground for 0.4 s and three
+/// metres at a time, landing at 9 m/s, with the thump and the dip of a fall
+/// every time. Source does the same (`StayOnGround`).
+pub const MAX_STEP_DOWN: f32 = MAX_STEP_UP;
+
 /// How far below the feet to look when deciding whether the player is standing
 /// on something. Large enough to survive the skin gap, small enough that it
 /// does not grab a surface the player has genuinely left.
@@ -246,6 +257,22 @@ fn move_axis(position: &mut Vec3, half_extents: Vec3, axis: Axis, amount: f32, m
 fn probe_ground(position: Vec3, half_extents: Vec3, map: &Map) -> bool {
     let probe = position - Vec3::new(0.0, GROUND_PROBE, 0.0);
     overlaps_any(probe, half_extents, map)
+}
+
+/// Puts a player who was walking, and has just walked off something no
+/// higher than a step, back down on what is under them.
+///
+/// Returns where they stand, or `None` when nothing is within
+/// `MAX_STEP_DOWN` below - a real ledge, which they fall from as before.
+pub fn step_down(position: Vec3, half_extents: Vec3, map: &Map) -> Option<Vec3> {
+    let mut lower = position;
+    if move_axis(&mut lower, half_extents, Axis::Y, -MAX_STEP_DOWN, map)
+        && !overlaps_any(lower, half_extents, map)
+    {
+        Some(lower)
+    } else {
+        None
+    }
 }
 
 /// Tries to climb a small obstacle: rise, move across, settle back down.

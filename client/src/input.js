@@ -139,6 +139,11 @@ export class Input {
       if (!event.repeat && (this.locked || !this.requireLock)) {
         this._tapped.add(event.code);
         if (event.code === 'KeyC') this._crouch = !this._crouch;
+        // Jumping from a crouch stands up and jumps, in the one command:
+        // the simulation will not jump a crouched body, and a jump key
+        // that did nothing while crouched read as a jump key that was
+        // broken. Standing is the first half of a jump anyway.
+        if (event.code === 'Space') this._crouch = false;
       }
       // Space scrolls the page and the arrow keys move the caret; neither is
       // wanted while the mouse is captured.
@@ -373,8 +378,9 @@ export class Input {
     this._crouch = false;
   }
 
-  /** Whether the aim button is held. Not sent anywhere: aiming down the
-   *  sights changes what this client draws and nothing the server decides. */
+  /** Whether the aim button is held. Sent, so that everybody else sees the
+   *  rifle come up to the shoulder, but it changes nothing the server
+   *  decides: where a shot goes is the same either way. */
   get aiming() {
     if (this.requireLock && !this.locked) return false;
     return this._aim;
