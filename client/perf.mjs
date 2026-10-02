@@ -141,7 +141,10 @@ const crowd = crowdSize > 0 ? await gather(crowdSize) : [];
 // Clicked from inside the page: the list is redrawn whenever the line
 // changes, which with a crowd joining is constantly, and a handle taken
 // from outside can be gone by the time it is clicked.
-await page.evaluate(() => document.querySelector('#menu-tables .table').click());
+await page.evaluate(() => {
+  document.querySelector('#menu-tables .table').click();
+  document.querySelector('#menu-play').click();
+});
 await page.waitForFunction(
   () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
   { timeout: 240000, polling: 250 },

@@ -103,6 +103,11 @@ impl Recorder {
     }
 
     /// A player in this match, by the name they had when it formed.
+    /// The name `id` was introduced under, if they were.
+    pub fn name_of(&self, id: PlayerId) -> Option<&str> {
+        self.names.get(&id).map(String::as_str)
+    }
+
     pub fn introduce(&mut self, id: PlayerId, name: String) {
         self.who(id);
         self.names.insert(id, name);

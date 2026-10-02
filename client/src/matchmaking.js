@@ -109,7 +109,7 @@ export class Matchmaking {
       this.fill.style.transform = 'scaleX(1)';
       this._set(this.seats, '');
       this._set(this.status, view.entry ? `taking your ${view.entry} entry…` : 'getting ready…');
-      this._set(this.fine, 'the match starts with a short countdown on your spawn');
+      this._set(this.fine, 'a countdown first, everybody together, then your own spawn');
     } else {
       this._set(this.title, 'match found');
       this._set(this.clock, '');
@@ -128,7 +128,7 @@ export class Matchmaking {
       } else {
         this._set(this.status, `loading ${escapeHtml(view.map ?? 'the map')}…`);
       }
-      this._set(this.fine, 'the match starts with a short countdown on your spawn');
+      this._set(this.fine, 'a countdown first, everybody together, then your own spawn');
     }
     return true;
   }

@@ -166,7 +166,7 @@ if (wallet.terms) {
 }
 
 // 3. The tabs work.
-for (const pane of ['wallet', 'profile', 'fair', 'settings', 'play']) {
+for (const pane of ['wallet', 'board', 'profile', 'fair', 'settings', 'play']) {
   await page.click(`#menu-tabs [data-pane="${pane}"]`);
   const shown = await page.$eval(`.pane[data-pane="${pane}"]`, (e) =>
     !e.classList.contains('hidden'),
@@ -179,8 +179,23 @@ for (const pane of ['wallet', 'profile', 'fair', 'settings', 'play']) {
       .waitForSelector('#proof-figures .figure', { timeout: 10000 })
       .catch(() => fail('the fair play pane never showed the payout record'));
   }
+  if (pane === 'board') {
+    // The same for the leaderboard: what the server counted, or a plain
+    // statement that nobody has won anything this week.
+    await page
+      .waitForFunction(() => !document.querySelector('#board-leaders').textContent.includes('reading'), { timeout: 10000 })
+      .catch(() => fail('the leaderboard never loaded'));
+  }
 }
-console.log('>> every tab opens its pane, and the payout record loads');
+console.log('>> every tab opens its pane, and the payout record and the leaderboard load');
+
+// The look is the art's: the wordmark and the pictures are there.
+const art = await page.evaluate(() => ({
+  logo: document.querySelector('.brand img')?.naturalWidth ?? 0,
+  hero: getComputedStyle(document.querySelector('.hero')).backgroundImage,
+}));
+if (!art.logo) fail('the wordmark did not load');
+if (!/assets\/menu\/hero\.[0-9a-f]+\.webp/.test(art.hero)) fail(`the header has no picture: ${art.hero}`);
 
 // 4. Pick the cheapest table on the first map and get in line - watching
 //    every file the page fetches from here on.
@@ -194,6 +209,14 @@ page.on('response', (response) => {
 const stake = Math.min(...stakes);
 await page.click(`#menu-maps [data-map="${maps[0]}"]`);
 await page.click(`#menu-tables [data-stake="${stake}"]`);
+// Picking is not joining: the play button says what it will do, and does it.
+const label = await page.$eval('#menu-play', (e) => e.textContent);
+if (!label.includes(`$${stake}`) || !label.toLowerCase().includes(maps[0])) {
+  fail(`the play button says "${label}" for ${maps[0]} $${stake}`);
+}
+const early = await page.evaluate(() => window.solatel.local.queuedFor);
+if (early !== null && early !== undefined) fail('picking a table joined the line before play was pressed');
+await page.click('#menu-play');
 await page.waitForFunction(
   () => document.querySelector('#menu-status').textContent.includes('in line'),
   { timeout: 20000 },

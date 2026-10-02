@@ -157,6 +157,8 @@ pub struct Counts {
 pub struct Life {
     pub match_id: MatchId,
     pub player_id: PlayerId,
+    /// The name it was played under, as the match had it when it formed.
+    pub name: String,
     pub map: &'static str,
     pub stake: MicroUsd,
     pub outcome: Outcome,
@@ -405,6 +407,12 @@ async fn write_replay(pool: &PgPool, pending: PendingReplay) -> Result<()> {
     Ok(())
 }
 
+/// `write`, for other modules' database tests.
+#[cfg(test)]
+pub async fn write_for_test(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> {
+    write(pool, life).await
+}
+
 /// Write one life, then judge the record it is now part of. Answers the
 /// reasons a review was opened for, if one was.
 async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> {
@@ -418,9 +426,9 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
          INSERT INTO match_lives
              (match_id, player_id, map, stake_micro_usd, outcome, killer_id,
               kills, shots_fired, shots_hit, headshots, damage_dealt, snap_hits,
-              winnings_micro_usd, alive_ms, reactions, quick_reactions)
+              winnings_micro_usd, alive_ms, reactions, quick_reactions, name)
          VALUES ($1, $2, $3, $4, $5::life_outcome, $6,
-                 $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          ON CONFLICT (match_id, player_id) DO NOTHING",
     )
     .bind(life.match_id.as_uuid())
@@ -439,6 +447,7 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
     .bind(life.alive_ms as i32)
     .bind(c.reactions as i32)
     .bind(c.quick_reactions.min(c.reactions) as i32)
+    .bind(&life.name)
     .execute(pool)
     .await
     .context("writing a life")?;
@@ -635,6 +644,7 @@ mod tests {
         let life = |player_id, counts| Life {
             match_id: MatchId::new(),
             player_id,
+            name: "Tester".to_string(),
             map: "arena",
             stake: MicroUsd::from_usd(1),
             outcome: Outcome::Survived,
@@ -755,6 +765,7 @@ mod tests {
         let life = Life {
             match_id: evidence,
             player_id: suspect,
+            name: "Suspect".to_string(),
             map: "arena",
             stake: MicroUsd::from_usd(1),
             outcome: Outcome::Survived,

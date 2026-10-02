@@ -175,12 +175,29 @@ one and re-encodes it; nothing else is done to them.
   disc over a few degrees before blurring the HDR, which changes no total
   light and is noted here only because it is a change to the data.
 
+## Menu art and lettering — `assets/menu/`, `assets/fonts/`
+
+- **Key art** - `splash.webp`, `hero.webp` and `banner.webp` are crops of the
+  Solatel key art Conrad supplied for the game (the soldier over the island,
+  with the wordmark). Solatel's own.
+- **Map cards** - `map-*.webp` are screenshots of Solatel's own maps, taken
+  in the game.
+- **Wordmark** - `logo.svg` is drawn by `scripts/build-logo.py`: the letters
+  S, O, L, T and E are outlines of [Orbitron](https://github.com/theleagueof/orbitron)
+  Black, Copyright 2018 The Orbitron Project Authors, used under the
+  [SIL Open Font License 1.1](https://openfontlicense.org) as artwork (the
+  font itself is not shipped); the peaked A and its triangle are ours.
+- **Fonts** - [Barlow](https://github.com/jpt/barlow) (Copyright 2017 The
+  Barlow Project Authors) and [Saira Condensed](https://github.com/Omnibus-Type/Saira)
+  (Copyright 2016 The Saira Project Authors), both SIL Open Font License 1.1,
+  the Latin subsets Google Fonts serves, unmodified. The licence travels with
+  them as `assets/fonts/OFL.txt`.
+
 ## Credit in the product
 
 CC-BY-4.0 requires the credit to reach players, not just this repository. It
 does: the menu's **fair play** pane (`client/src/menu.js`) ends with the
 credits, and they carry the arena's CC-BY-4.0 notice as it is given above,
 with its links, and what Solatel changed. The same list credits the yard's
-pack, Mixamo, the rifle's author, Poly Haven and three.js, none of which
-requires it. A new CC-BY asset is not cleared to ship until its notice is in
+pack, Mixamo, Poly Haven, three.js and the fonts, none of which requires it. A new CC-BY asset is not cleared to ship until its notice is in
 that list too.

@@ -6,12 +6,36 @@
     <title>Solatel</title>
     <link rel="icon" href="favicon.png" />
     <style>
+      /* The look outside a match is Conrad's key art's: night navy, the
+         sunset's amber, the wordmark's worn white. Saira Condensed for
+         anything shouted, Barlow for what is read; both ship with the game
+         (assets/fonts, SIL Open Font License). */
+      @font-face { font-family: 'Saira Condensed'; font-weight: 600; font-display: swap; src: url(assets/fonts/saira-condensed-600.woff2) format('woff2'); }
+      @font-face { font-family: 'Saira Condensed'; font-weight: 800; font-display: swap; src: url(assets/fonts/saira-condensed-800.woff2) format('woff2'); }
+      @font-face { font-family: 'Barlow'; font-weight: 400; font-display: swap; src: url(assets/fonts/barlow-400.woff2) format('woff2'); }
+      @font-face { font-family: 'Barlow'; font-weight: 500; font-display: swap; src: url(assets/fonts/barlow-500.woff2) format('woff2'); }
+      @font-face { font-family: 'Barlow'; font-weight: 600; font-display: swap; src: url(assets/fonts/barlow-600.woff2) format('woff2'); }
+
       :root {
         --ink: #dfe7f2;
         --dim: #8ea0b8;
         --warn: #ffb648;
         --bad: #ff6b5e;
         --bg: #0b0e13;
+        /* outside a match */
+        --night: #080b10;
+        --deck: #0f141c;
+        --well: #0b1017;
+        --rule: #243041;
+        --chalk: #f3f1ec;
+        --amber: #f6a21b;
+        --amber-hot: #ffbe45;
+        --amber-ink: #1d1203;
+        --go: #23a14d;
+        --go-hot: #2fc05e;
+        --money: #9fe8b4;
+        --shout: 'Saira Condensed', 'Arial Narrow', 'Roboto Condensed', sans-serif;
+        --read: 'Barlow', 'Segoe UI', system-ui, -apple-system, sans-serif;
       }
 
       * { box-sizing: border-box; }
@@ -294,37 +318,48 @@
         display: grid;
         place-items: center;
         padding: 16px;
-        background: rgba(6, 9, 13, 0.72);
-        backdrop-filter: blur(3px);
+        background: rgba(5, 7, 11, 0.78);
+        backdrop-filter: blur(4px);
+        font-family: var(--read);
       }
+      /* The card wears the key art across its top, as the menu does. */
       .mm-card {
-        width: min(100%, 460px);
+        width: min(100%, 480px);
         display: grid;
         gap: 10px;
-        padding: 26px 26px 22px;
-        border-radius: 16px;
-        background: linear-gradient(180deg, rgba(22, 30, 42, 0.96), rgba(12, 16, 22, 0.96));
-        border: 1px solid rgba(190, 210, 240, 0.18);
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+        padding: 0 26px 22px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
         text-align: center;
+      }
+      .mm-card::before {
+        content: '';
+        height: 112px;
+        margin: 0 -26px 4px;
+        background:
+          linear-gradient(0deg, var(--deck), rgba(15, 20, 28, 0) 75%),
+          url(assets/menu/hero.webp) left 42% / cover no-repeat;
       }
       .mm-card[data-phase='found'],
       .mm-card[data-phase='loading'] {
-        border-color: rgba(159, 232, 180, 0.55);
-        box-shadow: 0 0 0 1px rgba(159, 232, 180, 0.2), 0 24px 60px rgba(0, 0, 0, 0.55);
+        border-color: rgba(246, 162, 27, 0.7);
+        box-shadow: 0 0 0 1px rgba(246, 162, 27, 0.25), 0 0 40px rgba(246, 162, 27, 0.15), 0 24px 60px rgba(0, 0, 0, 0.6);
       }
       .mm-head { display: flex; justify-content: center; align-items: baseline; gap: 14px; }
       .mm-title {
-        font-size: 22px;
-        font-weight: 700;
-        letter-spacing: 0.22em;
+        font: 800 30px/1 var(--shout);
+        letter-spacing: 0.08em;
         text-transform: uppercase;
+        color: var(--chalk);
       }
       .mm-card[data-phase='found'] .mm-title,
-      .mm-card[data-phase='loading'] .mm-title { color: #9fe8b4; }
-      .mm-clock { font-size: 20px; color: var(--dim); font-variant-numeric: tabular-nums; }
-      .mm-table { font-size: 16px; color: #d7dde6; }
-      .mm-table b { text-transform: capitalize; color: #eaf1fb; }
+      .mm-card[data-phase='loading'] .mm-title { color: var(--amber-hot); text-shadow: 0 0 22px rgba(246, 162, 27, 0.45); }
+      .mm-clock { font: 600 22px/1 var(--shout); color: var(--dim); font-variant-numeric: tabular-nums; }
+      .mm-table { font: 600 18px/1.2 var(--shout); letter-spacing: 0.06em; text-transform: uppercase; color: #d7dde6; }
+      .mm-table b { text-transform: uppercase; color: var(--chalk); }
       .mm-bar {
         height: 6px;
         border-radius: 3px;
@@ -334,7 +369,7 @@
       .mm-bar .fill {
         display: block;
         height: 100%;
-        background: linear-gradient(90deg, #5fae78, #9fe8b4);
+        background: linear-gradient(90deg, #c77a0c, var(--amber-hot));
         transform-origin: left center;
         transition: transform 300ms ease;
       }
@@ -348,10 +383,11 @@
       .mm-leave {
         justify-self: center;
         margin-top: 6px;
-        font: inherit;
-        font-size: 13px;
-        padding: 8px 18px;
-        border-radius: 8px;
+        font: 600 14px/1 var(--shout);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 10px 20px;
+        border-radius: 6px;
         color: #ffd9d4;
         background: rgba(255, 107, 94, 0.12);
         border: 1px solid rgba(255, 107, 94, 0.4);
@@ -371,7 +407,7 @@
         position: absolute;
         inset: 0;
         border-radius: 50%;
-        border: 1px solid rgba(159, 232, 180, 0.35);
+        border: 1px solid rgba(246, 162, 27, 0.45);
         animation: ping 2.4s ease-out infinite;
       }
       .mm-radar span:nth-child(2) { animation-delay: 0.8s; }
@@ -380,8 +416,8 @@
         position: absolute;
         inset: 27px;
         border-radius: 50%;
-        background: #9fe8b4;
-        box-shadow: 0 0 14px rgba(159, 232, 180, 0.9);
+        background: var(--amber-hot);
+        box-shadow: 0 0 14px rgba(246, 162, 27, 0.9);
       }
       @keyframes ping { from { transform: scale(0.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
       .mm-card[data-phase='found'] .mm-radar span,
@@ -617,26 +653,97 @@
         text-align: center;
       }
 
+      /* The first thing anybody sees: the key art, wordmark and all, with
+         what is loading under it. It is in the page's own styles, so it is
+         there before a line of script has run. */
       #boot {
         position: fixed;
         inset: 0;
+        isolation: isolate;
+        overflow: hidden;
         display: grid;
-        place-content: center;
-        gap: 12px;
+        align-content: end;
+        justify-items: center;
+        gap: 14px;
+        padding: 0 16px max(7vh, 36px);
         text-align: center;
-        background: var(--bg);
+        background: var(--night);
         transition: opacity 240ms ease;
+        font-family: var(--read);
       }
       body.running #boot { opacity: 0; pointer-events: none; }
-
-      #boot h1 {
-        margin: 0;
-        font-size: 30px;
-        letter-spacing: 0.34em;
-        font-weight: 600;
+      /* The art whole, wordmark and all, over a blur of itself that fills
+         whatever shape the window is. */
+      #boot::before {
+        content: '';
+        position: absolute;
+        inset: -40px;
+        z-index: -2;
+        background: url(assets/menu/splash.webp) center / cover no-repeat;
+        filter: blur(28px) brightness(0.45) saturate(1.1);
       }
-      #boot-status { color: var(--dim); font-size: 13px; min-height: 1.2em; }
-      #boot-status.error { color: var(--bad); max-width: 560px; }
+      /* The art carries the name, so the heading is the art: its text is
+         for whatever cannot see it. */
+      #boot h1 {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(100vw, 177.8vh);
+        aspect-ratio: 1254 / 705;
+        z-index: -1;
+        margin: 0;
+        font-size: 0;
+        color: transparent;
+        background: url(assets/menu/splash.webp) center / cover no-repeat;
+        -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+        mask-image: linear-gradient(to bottom, #000 70%, transparent);
+      }
+      /* Wider than the art, its sides fade into the blur as well. */
+      @media (min-aspect-ratio: 16/9) {
+        #boot h1 {
+          -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+          mask-image:
+            linear-gradient(to bottom, #000 70%, transparent),
+            linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+          mask-composite: intersect;
+        }
+      }
+      /* What is loading reads over whatever is under it. */
+      #boot-status,
+      #boot::after { position: relative; }
+      #boot { background: linear-gradient(to bottom, rgba(8, 11, 16, 0) 60%, rgba(8, 11, 16, 0.85)), var(--night); }
+      #boot-status {
+        font: 600 15px/1.3 var(--shout);
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--chalk);
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+        min-height: 1.3em;
+      }
+      #boot-status.error {
+        color: var(--bad);
+        max-width: 560px;
+        letter-spacing: 0.04em;
+        text-transform: none;
+        font: 500 15px/1.45 var(--read);
+      }
+      /* A bar that says something is happening, not how much. */
+      #boot::after {
+        content: '';
+        width: min(280px, 70vw);
+        height: 3px;
+        border-radius: 2px;
+        background:
+          linear-gradient(90deg, transparent, var(--amber), transparent) 0 0 / 40% 100% no-repeat,
+          rgba(243, 241, 236, 0.14);
+        animation: boot-sweep 1.4s ease-in-out infinite;
+      }
+      @keyframes boot-sweep {
+        0% { background-position: -60% 0, 0 0; }
+        100% { background-position: 160% 0, 0 0; }
+      }
+      @media (prefers-reduced-motion: reduce) { #boot::after { animation: none; } }
 
       /* ---- the menu ---------------------------------------------------
          The screen before the game. There is no world behind it: until a
@@ -648,12 +755,14 @@
         z-index: 20;
         overflow: auto;
         background:
-          radial-gradient(120% 90% at 50% -20%, #16202e 0%, rgba(11, 14, 19, 0) 70%),
-          var(--bg);
-        display: grid;
-        place-items: start center;
-        padding: 40px 16px;
+          radial-gradient(90% 60% at 75% -10%, #1b2433 0%, rgba(8, 11, 16, 0) 65%),
+          var(--night);
+        color: var(--ink);
+        font: 400 15px/1.45 var(--read);
       }
+      #menu button { font-family: inherit; }
+      #menu svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      #menu svg .dot, #menu svg .fill { fill: currentColor; stroke: none; }
       body.in-menu #solatel-canvas { visibility: hidden; }
 
       /* A life ending: see death.js. The colour drains out of the world, the
@@ -704,129 +813,527 @@
       #death-card .dc-skip { font-size: 12px; opacity: 0; margin-top: 18px; transition: opacity 0.4s; letter-spacing: 0.12em; }
       #death-card.dc-skippable .dc-skip { opacity: 0.6; }
 
-      .menu-shell {
-        width: min(100%, 820px);
-        display: grid;
-        gap: 18px;
-        align-content: start;
+      /* ---- the top bar: the wordmark, where to go, who you are, what you
+         have ---------------------------------------------------------- */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: linear-gradient(180deg, rgba(6, 8, 12, 0.97), rgba(8, 11, 16, 0.9));
+        border-bottom: 1px solid var(--rule);
+        backdrop-filter: blur(6px);
       }
-
-      .menu-shell header {
+      .topbar .bar {
+        width: min(100%, 1280px);
+        margin: 0 auto;
+        padding: 0 20px;
         display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 16px;
+        align-items: center;
+        gap: 10px 18px;
+        flex-wrap: wrap;
+        min-height: 74px;
       }
-      .menu-shell .brand {
-        font-size: 26px;
-        letter-spacing: 0.34em;
-        font-weight: 600;
-      }
-      #purse { display: flex; align-items: baseline; gap: 8px; }
-      #purse .amount { font-size: 20px; font-weight: 600; color: #9fe8b4; }
-      #purse .caption {
-        font-size: 11px;
-        color: var(--dim);
-        text-transform: uppercase;
-        letter-spacing: 1.2px;
-      }
-
-      #menu-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-      #menu-tabs button {
-        font: inherit;
-        font-size: 13px;
-        padding: 8px 16px;
-        border-radius: 8px;
-        color: var(--dim);
-        background: rgba(190, 210, 240, 0.06);
-        border: 1px solid rgba(190, 210, 240, 0.14);
-        cursor: pointer;
-        text-transform: lowercase;
-      }
-      #menu-tabs button:hover { color: #eaf1fb; }
-      #menu-tabs button.on {
-        color: #06210f;
-        background: #9fe8b4;
-        border-color: rgba(255, 255, 255, 0.3);
-      }
-
-      .pane {
+      .brand {
         display: grid;
-        gap: 10px;
-        padding: 20px;
-        border-radius: 12px;
-        background: rgba(10, 14, 20, 0.7);
-        border: 1px solid rgba(190, 210, 240, 0.14);
+        justify-items: center;
+        gap: 5px;
+        padding: 10px 4px;
+        background: none;
+        border: 0;
+        cursor: pointer;
       }
-      .pane .label {
-        font-size: 11px;
-        color: var(--dim);
+      .brand img { display: block; height: 30px; width: auto; }
+      .brand .motto {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font: 600 10.5px/1 var(--shout);
+        letter-spacing: 0.42em;
         text-transform: uppercase;
-        letter-spacing: 1.3px;
+        color: #cfd4db;
       }
-      .pane .big { font-size: 34px; font-weight: 600; color: #9fe8b4; }
+      .brand .motto b { color: var(--amber); font-weight: 600; }
+      .brand .motto i { width: 16px; height: 1px; background: var(--amber); opacity: 0.85; }
+      #menu-tabs { display: flex; flex-wrap: wrap; align-self: stretch; margin-left: 8px; }
+      #menu-tabs button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        min-height: 74px;
+        font: 600 16px/1 var(--shout);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #aab4c2;
+        background: none;
+        border: 0;
+        border-bottom: 3px solid transparent;
+        cursor: pointer;
+      }
+      #menu-tabs button:hover { color: var(--chalk); }
+      #menu-tabs button.on {
+        color: var(--amber);
+        border-bottom-color: var(--amber);
+        text-shadow: 0 0 18px rgba(246, 162, 27, 0.45);
+      }
+      #menu-tabs button:focus-visible,
+      #menu button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+      #menu-tabs .gear svg { width: 22px; height: 22px; }
+      .me {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .me .avatar {
+        width: 40px;
+        height: 40px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        font: 800 20px/1 var(--shout);
+        color: var(--chalk);
+        background: radial-gradient(circle at 35% 30%, #2a3546, #121821);
+        box-shadow: 0 0 0 2px var(--amber), 0 0 14px rgba(246, 162, 27, 0.35);
+      }
+      .me .who { display: grid; gap: 2px; min-width: 0; }
+      .me .who b { font: 600 16px/1.1 var(--read); color: var(--chalk); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16ch; }
+      .me .who span { font-size: 12px; color: var(--dim); white-space: nowrap; }
+      #purse {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 7px 7px 11px;
+        border-radius: 6px;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid var(--rule);
+        cursor: pointer;
+      }
+      #purse svg { color: var(--amber); }
+      #purse .amount { font: 600 16px/1 var(--read); font-variant-numeric: tabular-nums; }
+      #purse .plus {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: 4px;
+        font: 800 19px/1 var(--shout);
+        color: var(--amber-ink);
+        background: linear-gradient(180deg, var(--amber-hot), var(--amber));
+      }
+      #purse:hover { border-color: rgba(246, 162, 27, 0.6); }
 
-      #menu-result {
+      /* What the player is in the middle of: a line, another tab, no money. */
+      #menu-status {
+        width: min(calc(100% - 40px), 1240px);
+        margin: 16px auto 0;
         padding: 10px 14px;
         border-radius: 8px;
-        background: rgba(60, 16, 16, 0.5);
-        border: 1px solid rgba(255, 107, 94, 0.35);
         font-size: 14px;
-        color: var(--ink);
+        color: var(--chalk);
+        background: rgba(246, 162, 27, 0.1);
+        border: 1px solid rgba(246, 162, 27, 0.35);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
       }
-      #menu-result .who { color: var(--bad); }
-
-      /* Maps and tables are the same shape of card: a big name, what it is
-         worth, and how busy it is. */
-      #menu-maps,
-      #menu-tables {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-        gap: 8px;
-      }
-      .map,
-      .table {
-        display: grid;
-        gap: 4px;
-        font: inherit;
-        text-align: center;
-        padding: 14px 10px;
-        border-radius: 10px;
-        color: var(--ink);
-        background: rgba(190, 210, 240, 0.06);
-        border: 1px solid rgba(190, 210, 240, 0.16);
+      #menu-status b { color: var(--amber-hot); font-weight: 600; text-transform: capitalize; }
+      #menu-status .warn { color: var(--bad); }
+      #menu-status #leave-queue,
+      #menu-status #play-here {
+        font: 600 14px/1 var(--shout);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 8px 14px;
+        border-radius: 5px;
+        color: var(--chalk);
+        background: rgba(243, 241, 236, 0.08);
+        border: 1px solid rgba(243, 241, 236, 0.22);
         cursor: pointer;
       }
-      .map:hover,
-      .table:hover {
-        background: rgba(159, 232, 180, 0.14);
-        border-color: rgba(159, 232, 180, 0.45);
-      }
-      .map.on {
-        background: rgba(120, 170, 255, 0.18);
-        border-color: rgba(120, 170, 255, 0.55);
-      }
-      .map .name { font-size: 19px; font-weight: 600; text-transform: capitalize; }
-      .map .seats { font-size: 12px; color: var(--ink); }
-      .table .stake { font-size: 24px; font-weight: 600; color: #9fe8b4; }
-      .table .pays { font-size: 12px; }
-      .map .busy,
-      .table .busy { font-size: 11px; color: var(--dim); }
-      .map .blurb { font-size: 11px; color: var(--dim); }
-      .table .caption {
-        font-size: 10px;
-        color: var(--dim);
-        text-transform: uppercase;
-        letter-spacing: 1.2px;
-      }
-      .table:hover .stake { color: #c3f5d0; }
+      #menu-status #leave-queue:hover,
+      #menu-status #play-here:hover { border-color: var(--amber); }
 
-      .menu-shell .tagline {
-        margin-top: 6px;
-        font-size: 11px;
-        color: var(--dim);
-        letter-spacing: 0.18em;
+      /* ---- the screen under it ---------------------------------------- */
+      .menu-shell {
+        width: min(100%, 1280px);
+        margin: 0 auto;
+        padding: 20px 20px 56px;
+        display: grid;
+        gap: 22px;
+        align-content: start;
+      }
+      .pane { display: grid; gap: 18px; align-content: start; min-width: 0; }
+      .pane:not([data-pane='play']) {
+        padding: 24px;
+        border-radius: 10px;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+      }
+      .pane h2,
+      .pane h3 {
+        margin: 0;
+        font: 800 26px/1.05 var(--shout);
+        letter-spacing: 0.03em;
         text-transform: uppercase;
+        color: var(--chalk);
+        text-wrap: balance;
+      }
+      .pane h3 { font-size: 19px; font-weight: 600; letter-spacing: 0.08em; }
+      .pane h2.section, .pane h3.section { margin-top: 10px; }
+      .pane .sub { margin: -10px 0 0; font-size: 15px; color: var(--dim); max-width: 70ch; }
+      .pane .label {
+        font: 600 13px/1.2 var(--shout);
+        color: var(--dim);
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+      }
+      .pane .big { font: 800 46px/1 var(--shout); color: var(--money); font-variant-numeric: tabular-nums; }
+      .pane .fine { font-size: 13px; color: var(--dim); margin: 0; }
+
+      #menu-result {
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: linear-gradient(90deg, rgba(120, 20, 18, 0.55), rgba(60, 16, 16, 0.25));
+        border: 1px solid rgba(255, 107, 94, 0.4);
+        font-size: 15px;
+        color: var(--chalk);
+      }
+      #menu-result .who { color: #ff8c80; font-weight: 600; }
+
+      /* "Choose your battle": the key art, the soldier looking out over the
+         island, and the line under the title. */
+      .hero {
+        position: relative;
+        min-height: 230px;
+        display: grid;
+        align-content: center;
+        gap: 6px;
+        padding: 28px 36px 28px max(34%, 290px);
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--rule);
+        background:
+          linear-gradient(90deg, rgba(8, 11, 16, 0) 22%, rgba(8, 11, 16, 0.5) 46%, rgba(8, 11, 16, 0.25) 100%),
+          linear-gradient(0deg, rgba(8, 11, 16, 0.55), rgba(8, 11, 16, 0) 50%),
+          url(assets/menu/hero.webp) left 38% / cover no-repeat,
+          var(--deck);
+      }
+      .hero h1 {
+        margin: 0;
+        font: 800 clamp(40px, 5.6vw, 68px)/0.95 var(--shout);
+        letter-spacing: 0.01em;
+        text-transform: uppercase;
+        color: var(--chalk);
+        text-shadow: 0 3px 22px rgba(0, 0, 0, 0.7);
+        text-wrap: balance;
+      }
+      .hero p {
+        margin: 0;
+        font: 600 clamp(14px, 1.6vw, 19px)/1.25 var(--shout);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #dfe3e8;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+      }
+      @media (max-width: 760px) {
+        .hero {
+          padding: 120px 18px 20px;
+          background:
+            linear-gradient(0deg, rgba(8, 11, 16, 0.92), rgba(8, 11, 16, 0) 75%),
+            url(assets/menu/hero.webp) left 30% / cover no-repeat,
+            var(--deck);
+        }
+      }
+
+      /* A map is a picture of it, its name and two lines about the ground. */
+      #menu-maps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+      }
+      .map {
+        position: relative;
+        display: grid;
+        align-content: end;
+        justify-items: start;
+        gap: 6px;
+        min-height: 250px;
+        padding: 18px 20px;
+        border-radius: 8px;
+        overflow: hidden;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--deck);
+        border: 1px solid var(--rule);
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .map > * { position: relative; }
+      .map .art {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, #1a2433, #0d1219) center / cover no-repeat;
+        transition: transform 0.5s ease;
+      }
+      .map .art::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(5, 7, 10, 0) 30%, rgba(5, 7, 10, 0.55) 62%, rgba(5, 7, 10, 0.92) 100%);
+      }
+      .map[data-map='arena'] .art { background-image: url(assets/menu/map-arena.webp); }
+      .map[data-map='yard'] .art { background-image: url(assets/menu/map-yard.webp); }
+      .map[data-map='facility'] .art { background-image: url(assets/menu/map-facility.webp); }
+      .map:hover .art { transform: scale(1.035); }
+      .map:hover { border-color: rgba(246, 162, 27, 0.5); }
+      .map.on {
+        border: 2px solid var(--amber);
+        box-shadow: 0 0 0 1px rgba(246, 162, 27, 0.3), 0 0 30px rgba(246, 162, 27, 0.18);
+      }
+      .map .badge {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font: 600 13px/1 var(--shout);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--amber-hot);
+        background: rgba(8, 10, 14, 0.85);
+        border: 1px solid rgba(246, 162, 27, 0.5);
+      }
+      .map .badge svg { width: 15px; height: 15px; color: var(--amber); }
+      .map .name {
+        font: 800 42px/0.92 var(--shout);
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7);
+      }
+      .map .blurb { font-size: 15px; line-height: 1.35; color: #dde2e8; }
+      .map .seats {
+        position: absolute;
+        right: 18px;
+        bottom: 18px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font: 600 14px/1 var(--shout);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .map .busy { font-size: 12px; color: #b5bfcc; font-variant-numeric: tabular-nums; }
+
+      /* The entry fee, the button that plays, and the way to fund it. */
+      .play-row {
+        display: grid;
+        grid-template-columns: minmax(0, 2.15fr) minmax(280px, 1fr);
+        gap: 18px;
+      }
+      .lower-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+        gap: 18px;
+      }
+      @media (max-width: 920px) {
+        .play-row,
+        .lower-row { grid-template-columns: minmax(0, 1fr); }
+      }
+      .fees,
+      .side,
+      .activity {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+        padding: 20px 22px;
+        border-radius: 10px;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+        min-width: 0;
+      }
+      .fees .sub, .side .sub { margin-top: -8px; }
+      #menu-tables {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+      }
+      .table {
+        position: relative;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: center;
+        column-gap: 10px;
+        row-gap: 3px;
+        padding: 14px 16px;
+        border-radius: 6px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+      }
+      .table .coin { grid-row: 1 / 3; color: #aab4c2; }
+      .table .coin svg { width: 30px; height: 30px; }
+      .table .stake { font: 800 32px/1 var(--shout); font-variant-numeric: tabular-nums; }
+      .table .pays { font-size: 13px; color: var(--money); }
+      .table .busy { grid-column: 1 / -1; font-size: 12px; color: var(--dim); margin-top: 4px; }
+      .table:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .table.on {
+        border: 2px solid var(--amber);
+        background: linear-gradient(180deg, rgba(246, 162, 27, 0.2), rgba(246, 162, 27, 0.05));
+      }
+      .table.on .stake { color: var(--amber-hot); }
+      .table.on .coin { color: var(--amber); }
+      .table.on::after {
+        content: '';
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        width: 13px;
+        height: 7px;
+        border-left: 3px solid var(--amber);
+        border-bottom: 3px solid var(--amber);
+        transform: rotate(-45deg);
+      }
+      .go { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; margin-top: 4px; }
+      #menu-play {
+        padding: 15px 34px;
+        border-radius: 6px;
+        font: 800 25px/1 var(--shout);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--amber-ink);
+        background: linear-gradient(180deg, var(--amber-hot), var(--amber) 60%, #e08a0b);
+        border: 0;
+        box-shadow: 0 10px 26px rgba(246, 162, 27, 0.25), inset 0 -3px 0 rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+      }
+      #menu-play span { font-weight: 600; letter-spacing: 0.05em; opacity: 0.8; margin-left: 6px; }
+      #menu-play:hover:not(:disabled) { filter: brightness(1.07); }
+      #menu-play:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+      .go .fine { max-width: 44ch; }
+      .side .deposit {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 18px;
+        border-radius: 6px;
+        font: 800 26px/1 var(--shout);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #fff;
+        background: linear-gradient(180deg, var(--go-hot), var(--go));
+        border: 1px solid rgba(80, 230, 130, 0.35);
+        box-shadow: 0 8px 22px rgba(35, 161, 77, 0.22);
+        cursor: pointer;
+      }
+      .side .deposit svg { width: 30px; height: 30px; }
+      .side i { margin-left: auto; font: 600 26px/1 var(--shout); font-style: normal; }
+      .side .links { display: grid; gap: 8px; }
+      .side .links button {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 14px;
+        border-radius: 6px;
+        font: 600 16px/1 var(--shout);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid var(--rule);
+        cursor: pointer;
+      }
+      .side .links button:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .side .links svg { color: var(--amber); }
+      .side .links i { font-size: 20px; color: var(--dim); }
+
+      /* The key art's soldier again, and what the game is in three words. */
+      .slogan {
+        display: grid;
+        align-content: center;
+        justify-items: end;
+        gap: 2px;
+        min-height: 180px;
+        padding: 22px 28px;
+        border-radius: 10px;
+        overflow: hidden;
+        text-align: right;
+        border: 1px solid var(--rule);
+        background:
+          linear-gradient(90deg, rgba(8, 11, 16, 0.05) 0%, rgba(8, 11, 16, 0.55) 45%, rgba(8, 11, 16, 0.92) 100%),
+          url(assets/menu/banner.webp) left center / cover no-repeat,
+          var(--deck);
+        font: 800 italic 30px/1 var(--shout);
+        text-transform: uppercase;
+        color: var(--chalk);
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+      }
+      .slogan b { color: var(--amber); font-weight: 800; margin-top: 6px; }
+      .activity h3,
+      .pane .activity h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; letter-spacing: 0.12em; }
+      .activity h3 svg { color: var(--amber); }
+      ul.feed, ol.leaders { list-style: none; margin: 0; padding: 0; display: grid; }
+      ul.feed li {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px 7px;
+        padding: 9px 2px;
+        border-bottom: 1px solid #1b2430;
+        font-size: 14.5px;
+      }
+      ul.feed li:last-child { border-bottom: 0; }
+      ul.feed .mark { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #18202b; color: var(--amber); }
+      ul.feed .mark svg { width: 15px; height: 15px; }
+      ul.feed .name { color: var(--chalk); font-weight: 600; }
+      ul.feed .won { color: var(--money); font-weight: 600; font-variant-numeric: tabular-nums; }
+      ul.feed .where { text-transform: capitalize; color: var(--ink); }
+      ul.feed .when { margin-left: auto; font-size: 12.5px; color: var(--dim); }
+      ul.feed .dim, ol.leaders .dim { color: var(--dim); }
+      ol.leaders li {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 6px 16px;
+        padding: 11px 6px;
+        border-bottom: 1px solid #1b2430;
+      }
+      ol.leaders li.dim { display: block; }
+      ol.leaders .rank {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        font: 800 18px/1 var(--shout);
+        color: var(--chalk);
+        background: #18202b;
+        border: 1px solid var(--rule);
+      }
+      ol.leaders .top1 .rank { color: var(--amber-ink); background: linear-gradient(180deg, #ffd27a, var(--amber)); border: 0; }
+      ol.leaders .top2 .rank { color: #11161d; background: linear-gradient(180deg, #eef1f5, #a9b3bf); border: 0; }
+      ol.leaders .top3 .rank { color: #1c1007; background: linear-gradient(180deg, #e8a76a, #a8622c); border: 0; }
+      ol.leaders .name { font-size: 16px; color: var(--chalk); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      ol.leaders .kills { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+      ol.leaders .won { font: 800 22px/1 var(--shout); color: var(--money); font-variant-numeric: tabular-nums; }
+      @media (max-width: 560px) {
+        ol.leaders li { grid-template-columns: 44px minmax(0, 1fr) auto; }
+        ol.leaders .kills { grid-column: 2; grid-row: 2; }
+      }
+      @media (max-width: 760px) {
+        .topbar .bar { padding: 8px 16px; gap: 6px 12px; }
+        #menu-tabs { order: 3; width: 100%; margin: 0; overflow-x: auto; flex-wrap: nowrap; }
+        #menu-tabs button { min-height: 46px; padding: 0 10px; }
+        .menu-shell { padding: 16px 16px 48px; }
       }
 
       /* The rules, stated before anybody pays. */
@@ -970,8 +1477,7 @@
       .wallet-block .fine { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.5; }
       .wallet-block .fine b { color: var(--ink); }
       .wallet-block a { color: #9fe8b4; }
-      .wallet-block button,
-      #menu-status #play-here {
+      .wallet-block button {
         font: inherit;
         font-size: 12px;
         padding: 6px 12px;
@@ -1112,28 +1618,6 @@
       ul.honest li::before,
       ul.credits li::before { content: '\2022'; position: absolute; left: 2px; color: rgba(190, 210, 240, 0.4); }
       ul.credits a { color: var(--ink); }
-
-      #menu-status {
-        font-size: 13px;
-        color: var(--dim);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      #menu-status b { color: var(--ink); font-weight: 600; }
-      #menu-status .warn { color: var(--bad); }
-      #menu-status #leave-queue {
-        font: inherit;
-        font-size: 12px;
-        padding: 5px 12px;
-        border-radius: 6px;
-        color: var(--dim);
-        background: rgba(190, 210, 240, 0.08);
-        border: 1px solid rgba(190, 210, 240, 0.18);
-        cursor: pointer;
-      }
-      #menu-status #leave-queue:hover { color: #eaf1fb; }
 
       /* The settings live in the menu now, so they are a plain block rather
          than a panel floating over the weapon. */
