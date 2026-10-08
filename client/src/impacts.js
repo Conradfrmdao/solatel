@@ -14,7 +14,6 @@
 // Everything is pooled and reused, so a long firefight allocates nothing.
 
 import * as THREE from 'three';
-import { SIM } from './sim.js';
 
 /** Dust sprites, flashes, chips and mist, pooled. */
 const DUST = 72;
@@ -133,8 +132,6 @@ export class Impacts {
     if (eye && at.distanceTo(eye) > VISIBLE) return;
     const back = this._back.set(from[0] - to[0], from[1] - to[1], from[2] - to[2]);
     const length = back.length();
-    // The end of the range: the round struck nothing.
-    if (!hitPlayer && length >= (SIM.weaponRange ?? 120) - 0.05) return;
     back.divideScalar(length || 1);
 
     if (hitPlayer) {

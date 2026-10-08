@@ -129,6 +129,7 @@ mod tests {
             player_id,
             name: name.to_string(),
             map: "yard",
+            weapon: "rifle",
             stake: MicroUsd::from_usd(1),
             outcome: Outcome::Survived,
             counts: Counts {

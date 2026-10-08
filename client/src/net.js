@@ -57,6 +57,7 @@ export const BUTTON_CROUCH = 1 << 2;
 export const BUTTON_RELOAD = 1 << 3;
 export const BUTTON_THROW = 1 << 4;
 export const BUTTON_AIM = 1 << 5;
+export const BUTTON_SIDEARM = 1 << 6;
 
 /** Where the resume token lives between page loads.
  *

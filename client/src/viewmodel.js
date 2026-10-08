@@ -40,11 +40,11 @@
 // hanging where they were, which is most of what makes them read as real.
 
 import * as THREE from 'three';
-import { buildRifle } from './rifle.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { buildGun } from './guns.js';
 import { HAND, holdMatrix, palms } from './grip.js';
-import { SIM, wrapAngle } from './sim.js';
-import { RIFLE } from './weapons.js';
+import { OPTICS, SIM, wrapAngle } from './sim.js';
+import { RIFLE, feelFor } from './weapons.js';
 
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
 const KEY_LIGHT = 2.4;
@@ -259,107 +259,28 @@ function setWorldRotation(bone, world) {
  *  wrings the wrist into a twisted rope instead. */
 const FOREARM_ROLL = 0.5;
 
-/**
- * A tube red-dot sight, in the rifle model's own units.
- *
- * The housing is a lathed ring: open at both ends, thick-walled, with a
- * lip at each end so the rims read as rims. The glass is a faint blue-green
- * disc at the front, and the dot sits just behind it, unlit so it glows at
- * any exposure. A mount runs down from the tube to the carry handle.
- */
-function redDot(optic) {
-  const { height, front, rear, radius, bore, base, dotRadius } = optic;
-  const group = new THREE.Group();
-  group.name = 'red_dot';
-  const housing = new THREE.MeshStandardMaterial({
-    color: 0x1b1c1e,
-    roughness: 0.45,
-    metalness: 0.35,
-  });
-
-  // The tube, turned from a profile: out along the outside, back along the
-  // bore. LatheGeometry spins about +Y, so it is laid along -Z afterwards.
-  const length = rear - front;
-  const lip = radius * 1.08;
-  const profile = [
-    new THREE.Vector2(bore, 0),
-    new THREE.Vector2(lip, 0),
-    new THREE.Vector2(lip, length * 0.08),
-    new THREE.Vector2(radius, length * 0.12),
-    new THREE.Vector2(radius, length * 0.88),
-    new THREE.Vector2(lip, length * 0.92),
-    new THREE.Vector2(lip, length),
-    new THREE.Vector2(bore, length),
-    new THREE.Vector2(bore, 0),
-  ];
-  const tube = new THREE.Mesh(new THREE.LatheGeometry(profile, 32), housing);
-  tube.rotation.x = Math.PI / 2; // +Y onto +Z
-  tube.position.set(0, height, front);
-  group.add(tube);
-
-  // Turrets on the top and the right, for elevation and windage.
-  const turret = new THREE.CylinderGeometry(radius * 0.32, radius * 0.32, radius * 0.5, 16);
-  const top = new THREE.Mesh(turret, housing);
-  top.position.set(0, height + radius * 1.1, front + length * 0.5);
-  group.add(top);
-  const side = new THREE.Mesh(turret, housing);
-  side.rotation.z = Math.PI / 2;
-  side.position.set(-radius * 1.1, height, front + length * 0.5);
-  group.add(side);
-
-  // The mount, from the carry handle up to the tube.
-  const mountHeight = height - radius * 0.8 - base;
-  const mount = new THREE.Mesh(
-    new THREE.BoxGeometry(radius * 1.2, mountHeight, length * 0.7),
-    housing,
-  );
-  mount.position.set(0, base + mountHeight / 2, front + length * 0.5);
-  group.add(mount);
-
-  // Glass: just tinted, so the world is seen through it.
-  const glass = new THREE.Mesh(
-    new THREE.CircleGeometry(bore, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0x7fb8c8,
-      transparent: true,
-      opacity: 0.16,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    }),
-  );
-  glass.position.set(0, height, front + length * 0.04);
-  group.add(glass);
-
-  // The dot, and a soft glow round it.
-  const dot = new THREE.Mesh(
-    new THREE.CircleGeometry(dotRadius, 20),
-    new THREE.MeshBasicMaterial({ color: 0xff2a20, side: THREE.DoubleSide }),
-  );
-  dot.position.set(0, height, front + length * 0.05);
-  group.add(dot);
-  const halo = new THREE.Mesh(
-    new THREE.CircleGeometry(dotRadius * 1.9, 20),
-    new THREE.MeshBasicMaterial({
-      color: 0xff3a2a,
-      transparent: true,
-      opacity: 0.22,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    }),
-  );
-  halo.position.set(0, height, front + length * 0.051);
-  group.add(halo);
-
-  return group;
-}
-
 /** How long the rifle is out of the way for a throw. */
 const THROW_SECONDS = 0.65;
 
+/** Of a change of gun, how much is spent taking the old one down: the rest
+ *  brings the new one up. */
+const PUT_AWAY = 0.4;
+
+/** How far down and tipped a gun goes, out of sight, while guns change. */
+const LOWERED = { drop: 0.34, tip: 0.85 };
+
 export class Viewmodel {
-  constructor(config = RIFLE) {
+  constructor() {
+    const rifle = RIFLE.ads;
+    const config = feelFor('rifle', 'red_dot', { front: rifle.frontSight, rear: rifle.rearSight }, 1.25);
     this.config = config;
+    /** Every gun this player has been handed, built once each: `{ weapon,
+     *  optic, config, model }` by `weapon:optic`. */
+    this.rigs = new Map();
+    /** A change of gun under way: from where, to which, and how long. */
+    this.switching = null;
+    /** Cases still to come out of a bolt action: when, from this scene. */
+    this.ejections = [];
     this.scene = new THREE.Scene();
     // Angle and aspect are set from the world camera's hip angle, so the
     // weapon sits in the same perspective as everything else. With the
@@ -519,9 +440,11 @@ export class Viewmodel {
 
   _buildCasings() {
     const { casings, scale } = this.config;
-    // Lying along x, which is how it leaves the port: sideways.
+    // Lying along x, which is how it leaves the port: sideways. Kept, so a
+    // change of gun can reshape it to the new gun's cases.
     const geometry = new THREE.CylinderGeometry(casings.radius, casings.radius, casings.length, 8);
     geometry.rotateZ(Math.PI / 2);
+    this.casingGeometry = geometry;
     const brass = new THREE.MeshStandardMaterial({ color: 0xc9a04c, metalness: 0.35, roughness: 0.32 });
     this.casings = [];
     this.nextCasing = 0;
@@ -668,17 +591,85 @@ export class Viewmodel {
     }
   }
 
-  /** The rifle, built in code (`rifle.js`): nobody else's model ships. */
+  /** The rifle and its red dot, built in code (`guns.js`): nobody else's
+   *  model ships. In hand until a match hands the player something else. */
   async load() {
-    const rifle = buildRifle();
-    // The optic goes on the model itself, so every copy of the rifle -
-    // everyone else's, in `remotes.js` - carries it too.
-    if (this.config.optic) rifle.add(redDot(this.config.optic));
-    rifle.position.copy(this.modelOffset);
-    rifle.scale.setScalar(this.config.scale);
-    this.root.add(rifle);
-    this.rifle = rifle;
-    return rifle;
+    this._useRig(this._rig('rifle', 'red_dot'));
+    return this.rifle;
+  }
+
+  /** `weapon` with `optic`, built the first time it is asked for. */
+  _rig(weapon, optic) {
+    const key = `${weapon}:${optic}`;
+    let rig = this.rigs.get(key);
+    if (rig) return rig;
+    const model = buildGun(weapon, optic);
+    const config = feelFor(weapon, optic, model.userData.sight, OPTICS[optic] ?? 1.25);
+    model.position.set(...config.modelOffset);
+    model.scale.setScalar(config.scale);
+    model.visible = false;
+    this.root.add(model);
+    rig = { weapon, optic, config, model, slot: weapon === 'pistol' ? 'sidearm' : 'primary' };
+    this.rigs.set(key, rig);
+    return rig;
+  }
+
+  /** The guns a match hands this player, the primary in hand. */
+  setLoadout(loadout) {
+    this.loadout = { primary: loadout?.primary ?? 'rifle', optic: loadout?.optic ?? 'red_dot' };
+    this.switching = null;
+    this.ejections.length = 0;
+    this._rig('pistol', 'irons');
+    this._useRig(this._rig(this.loadout.primary, this.loadout.optic));
+  }
+
+  /** The rig for a slot of the current loadout. */
+  _rigFor(slot) {
+    const loadout = this.loadout ?? { primary: 'rifle', optic: 'red_dot' };
+    return slot === 'sidearm' ? this._rig('pistol', 'irons') : this._rig(loadout.primary, loadout.optic);
+  }
+
+  /** Which gun is in hand, as the player has it. A change starts the old
+   *  one going down and the new one coming up, over `seconds` - the drawn
+   *  gun's own time, the same the server makes the player wait to fire. */
+  setHeld(slot, seconds) {
+    const to = this._rigFor(slot);
+    const current = this.switching ? this.switching.to : this.rig;
+    if (to === current) return;
+    this.switching = { from: this.rig, to, at: this.time, seconds: Math.max(0.1, seconds) };
+  }
+
+  /** Puts `rig` in hand: its model shown, the others hidden, and everything
+   *  that depends on the gun - the sights, the muzzle, the port, the cases,
+   *  where the hands close - moved to it. */
+  _useRig(rig) {
+    this.rig = rig;
+    this.config = rig.config;
+    for (const other of this.rigs.values()) other.model.visible = other === rig;
+    this.rifle = rig.model;
+    const c = rig.config;
+    this.modelOffset.set(...c.modelOffset);
+    this.hipPosition.set(...c.hip.position);
+    this.hipRotation.set(...c.hip.rotation);
+    this._solveSights();
+    const muzzle = new THREE.Vector3(
+      this.modelOffset.x,
+      this.modelOffset.y + c.boreHeight * c.scale,
+      this.modelOffset.z + c.muzzleFace * c.scale,
+    );
+    if (this.flashGroup) this.flashGroup.position.copy(muzzle);
+    if (this.flashLight) this.flashLight.position.copy(muzzle);
+    if (this.port) {
+      const [px, py, pz] = c.casings.port;
+      this.port.set(px, py, pz).multiplyScalar(c.scale).add(this.modelOffset);
+    }
+    if (this.casingGeometry) {
+      const g = new THREE.CylinderGeometry(c.casings.radius, c.casings.radius, c.casings.length, 8);
+      g.rotateZ(Math.PI / 2);
+      this.casingGeometry.copy(g);
+      g.dispose();
+    }
+    this._retargetArms();
   }
 
   /**
@@ -732,24 +723,23 @@ export class Viewmodel {
       const a = arm.getWorldPosition(new THREE.Vector3());
       const b = fore.getWorldPosition(new THREE.Vector3());
       const c = hand.getWorldPosition(new THREE.Vector3());
-      // The hand against the rifle: this is the grip, and it is kept.
-      const grip = unheld.clone().multiply(hand.matrixWorld);
-      if (side === 'left') {
-        // Moved back along the rifle onto the handguard. The pose holds it
-        // out by the front sight, which a first-person arm cannot reach
-        // without the shoulder coming into view; how it holds is unchanged.
-        const palm = left.clone().applyMatrix4(unheld);
-        const [x, y, z] = arms.leftPalm;
-        grip.premultiply(new THREE.Matrix4().makeTranslation(x - palm.x, y - palm.y, z - palm.z));
-      }
+      // The hand against the rifle: this is the grip, and it is kept. The
+      // left one is moved, gun by gun, onto where that gun is held
+      // (`_retargetArms`); how it holds is the pose's.
+      const base = unheld.clone().multiply(hand.matrixWorld);
+      const palm = side === 'left' ? left.clone().applyMatrix4(unheld) : null;
+      const grip = base.clone();
       const upper = b.clone().sub(a);
       const lower = c.clone().sub(b);
       const hinge = upper.clone().cross(lower).normalize();
       this.arms.push({
+        side,
         arm,
         fore,
         hand,
         grip,
+        base,
+        palm,
         upperLength: upper.length(),
         lowerLength: lower.length(),
         upper: upper.normalize(),
@@ -777,7 +767,29 @@ export class Viewmodel {
     // weapon's sway and kick.
     this.scene.add(body);
     this.body = body;
+    this._retargetArms();
     this._poseArms();
+  }
+
+  /**
+   * The arms onto the gun in hand. The right hand is where it is on every
+   * gun, because every gun's grip is where the rifle's is. The left is moved
+   * from where the pose held the rifle onto this gun's support - under its
+   * handguard, or for the pistol, under the right hand - and each arm hangs
+   * from this gun's shoulders.
+   */
+  _retargetArms() {
+    if (!this.arms) return;
+    const { arms } = this.config;
+    for (const limb of this.arms) {
+      limb.grip.copy(limb.base);
+      if (limb.palm) {
+        const [x, y, z] = arms.leftPalm;
+        limb.grip.premultiply(new THREE.Matrix4().makeTranslation(x - limb.palm.x, y - limb.palm.y, z - limb.palm.z));
+      }
+      limb.shoulder.set(...arms[limb.side].shoulder);
+      limb.elbow.set(...arms[limb.side].elbow).normalize();
+    }
   }
 
   /**
@@ -841,9 +853,10 @@ export class Viewmodel {
     }
   }
 
-  /** The player is holding the aim button, or has let go. */
+  /** The player is holding the aim button, or has let go. Never while
+   *  guns are being changed. */
   setAiming(on) {
-    this.aiming = on;
+    this.aiming = on && !this.switching;
   }
 
   /**
@@ -898,7 +911,11 @@ export class Viewmodel {
     this.flashGroup.rotation.z = Math.random() * Math.PI;
     this.flashSize = 0.82 + Math.random() * 0.36;
 
-    this._eject();
+    // A bolt action's case comes out when the bolt is worked, after the
+    // shot; everything else throws it with the shot.
+    const delay = this.config.casings.delay ?? 0;
+    if (delay > 0) this.ejections.push(this.time + delay);
+    else this._eject();
     this._puff();
   }
 
@@ -997,6 +1014,23 @@ export class Viewmodel {
         thrown = smooth(Math.min(1, p / 0.2)) * smooth(Math.min(1, (1 - p) / 0.45));
       }
     }
+    // A change of gun: the old one down and out of sight, then the new one
+    // up from there, over the time the server makes the player wait.
+    let lowered = 0;
+    if (this.switching) {
+      const p = (this.time - this.switching.at) / this.switching.seconds;
+      if (p < PUT_AWAY) {
+        lowered = smooth(p / PUT_AWAY);
+      } else {
+        if (this.rig !== this.switching.to) this._useRig(this.switching.to);
+        lowered = 1 - smooth(Math.min(1, (p - PUT_AWAY) / (1 - PUT_AWAY)));
+        if (p >= 1) this.switching = null;
+      }
+    }
+    while (this.ejections.length && this.ejections[0] <= this.time) {
+      this.ejections.shift();
+      this._eject();
+    }
 
     const a = this.aim;
     const hip = this.hipPosition;
@@ -1005,7 +1039,7 @@ export class Viewmodel {
       hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
-        - reload * 0.09 + seat * 0.02 - thrown * 0.38,
+        - reload * 0.09 + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop,
       hip.z + (ads.z - hip.z) * a + r.back + reload * 0.05,
     );
     const hr = this.hipRotation;
@@ -1015,7 +1049,7 @@ export class Viewmodel {
     // must not, or they would leave the middle.
     this.root.rotation.set(
       hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch
-        + pitch * 0.05 * (1 - a) + reload * 0.32 - thrown * 0.7,
+        + pitch * 0.05 * (1 - a) + reload * 0.32 - thrown * 0.7 - lowered * LOWERED.tip,
       hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + reload * 0.25,
       hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + reload * 0.75 + seat * 0.06,
       'YXZ',
@@ -1032,8 +1066,35 @@ export class Viewmodel {
     }
     this.flashLight.intensity = lit ? 9 * (this.flash / c.flashSeconds) : 0;
 
+    // Through a magnified optic the picture is the scope's own (`scope`):
+    // the gun and the arms holding it are not in it.
+    const hidden = this.scope >= 0.999;
+    this.root.visible = !hidden;
+    if (this.body) this.body.visible = !hidden;
+
     this._poseArms();
     this._updateDebris(dt);
+  }
+
+  /** How far the view is into a magnified optic's own picture, 0 to 1: the
+   *  last quarter of the way to the sights, so the gun is seen coming up
+   *  to the eye first. Zero for iron sights and a red dot. */
+  get scope() {
+    if (!this.config.ads.scoped) return 0;
+    return smooth(Math.max(0, (this.aim - 0.75) / 0.25));
+  }
+
+  /** What is in hand: the gun and its optic, as the picture is drawn. */
+  get held() {
+    return this.rig;
+  }
+
+  /** Where the muzzle is drawn, in the world, for the player's own round to
+   *  leave from: this scene's camera looks the way the world's does, from
+   *  the eye. */
+  muzzleInWorld(camera, out) {
+    this.root.updateMatrix();
+    return out.copy(this.flashGroup.position).applyMatrix4(this.root.matrix).applyMatrix4(camera.matrixWorld);
   }
 
   /**

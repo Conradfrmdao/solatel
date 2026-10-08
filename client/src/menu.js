@@ -19,6 +19,7 @@
 
 import qrcode from 'qrcode-generator';
 import { asset } from './assets.js';
+import { OPTICS, PRIMARIES, SIM, WEAPONS } from './sim.js';
 import {
   canSend,
   connect,
@@ -55,6 +56,21 @@ const MAP_BLURB = {
 /** Where the stake last chosen is kept, per browser: a convenience, so the
  *  table a player plays at is the one picked when they come back. */
 const STAKE_KEY = 'solatel.stake';
+
+/** And the gun and optic last chosen, the same way. */
+const LOADOUT_KEY = 'solatel.loadout';
+
+/** What each optic is called on a button. */
+const OPTIC_NAMES = { irons: 'Iron sights', red_dot: 'Red dot', x2: '2x', x3: '3x', x4: '4x' };
+
+/** A line about each gun, for its card. Cosmetic: what each one does is the
+ *  shared table's, and is shown from it. */
+const GUN_BLURB = {
+  smg: 'Fastest kill up close. Falls off quickly.',
+  rifle: 'The all-rounder. Good from ten metres to a hundred.',
+  lmg: 'A hundred rounds, holds its damage at range. Slow to reload.',
+  sniper: 'One round to the head kills. Lead your target.',
+};
 
 /** Micro-USD as a string, the way the rest of the client formats money. */
 function money(micros) {
@@ -133,6 +149,7 @@ export class Menu {
     this.maps = root.querySelector('#menu-maps');
     this.tables = root.querySelector('#menu-tables');
     this.play = root.querySelector('#menu-play');
+    this.carrying = root.querySelector('#menu-carrying');
     this.activity = root.querySelector('#menu-activity');
     this.meName = root.querySelector('#me-name');
     this.meAvatar = root.querySelector('#me-avatar');
@@ -168,6 +185,21 @@ export class Menu {
     /** The maps it runs, and how many each seats. */
     this.mapList = [];
 
+    /** What this player will carry: a primary and its optic, remembered. */
+    this.loadout = { primary: 'rifle', optic: 'red_dot' };
+    try {
+      const kept = JSON.parse(window.localStorage.getItem(LOADOUT_KEY) ?? 'null');
+      if (kept && WEAPONS[kept.primary]?.optics.includes(kept.optic) && PRIMARIES.includes(kept.primary)) {
+        this.loadout = { primary: kept.primary, optic: kept.optic };
+      }
+    } catch {
+      /* no storage, or something else in it: the rifle it is */
+    }
+    this.guns = root.querySelector('#menu-guns');
+    this.optics = root.querySelector('#menu-optics');
+    /** Pictures of the guns, once drawn (`setGunPictures`). */
+    this.gunPictures = new Map();
+
     /** Which stake, of the tables this server offers. */
     this.chosenStake = null;
     try {
@@ -190,6 +222,20 @@ export class Menu {
       this._drawMaps();
       this._drawTables();
     });
+    this.guns.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-gun]');
+      if (!card) return;
+      const primary = card.dataset.gun;
+      const optics = WEAPONS[primary]?.optics ?? [];
+      // The optic chosen stays if this gun can carry it.
+      const optic = optics.includes(this.loadout.optic) ? this.loadout.optic : optics[0];
+      this._setLoadout({ primary, optic });
+    });
+    this.optics.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-optic]');
+      if (!button) return;
+      this._setLoadout({ ...this.loadout, optic: button.dataset.optic });
+    });
     this.tables.addEventListener('click', (event) => {
       const button = event.target.closest('[data-stake]');
       if (!button) return;
@@ -211,6 +257,73 @@ export class Menu {
     if (!this.tiers.some((t) => t.dollars === this.chosenStake)) this.chosenStake = this.tiers[0]?.dollars ?? null;
     this._drawMaps();
     this._drawTables();
+    this._drawGuns();
+  }
+
+  /** The gun and optic to play with, remembered for next time. */
+  _setLoadout(loadout) {
+    this.loadout = loadout;
+    try {
+      window.localStorage.setItem(LOADOUT_KEY, JSON.stringify(loadout));
+    } catch {
+      /* private browsing */
+    }
+    this._drawGuns();
+    this._drawPlay();
+  }
+
+  /** Pictures of each gun, drawn from its model (`portraits.js`). */
+  setGunPictures(pictures) {
+    this.gunPictures = pictures;
+    this._drawGuns();
+  }
+
+  /**
+   * The guns, as cards: a picture, a name, what the gun is for, and bars for
+   * what it does - every one read off the shared table the server enforces.
+   * The optics the chosen gun can carry go under them.
+   */
+  _drawGuns() {
+    if (!this.guns) return;
+    const tick = SIM.tickDt || 1 / 64;
+    const bar = (label, fraction, text) =>
+      `<span class="stat"><span class="label">${label}</span>` +
+      `<span class="track"><span class="fill" style="width:${Math.round(Math.min(1, Math.max(0.04, fraction)) * 100)}%"></span></span>` +
+      `<span class="value">${text}</span></span>`;
+    this.guns.innerHTML = PRIMARIES.filter((id) => WEAPONS[id])
+      .map((id) => {
+        const gun = WEAPONS[id];
+        const near = gun.bands[0];
+        const rpm = Math.round(60 / (gun.fireTicks * tick));
+        const falls = gun.bands.length > 1 ? `${gun.bands[1].from} m` : 'never';
+        const reach = gun.bands.length > 1 ? gun.bands[gun.bands.length - 1].from / 120 : 1;
+        const picture = this.gunPictures.get(`${id}:${gun.optics[0]}`);
+        return (
+          `<button class="gun${id === this.loadout.primary ? ' on' : ''}" type="button" data-gun="${id}">` +
+          (picture ? `<img class="art" alt="" src="${picture}">` : '<span class="art"></span>') +
+          `<span class="name">${escapeHtml(gun.name)}</span>` +
+          `<span class="blurb">${escapeHtml(GUN_BLURB[id] ?? '')}</span>` +
+          '<span class="stats">' +
+          bar('Damage', near.body / 80, `${near.body} body · ${near.head} head`) +
+          bar('Rate', rpm / 800, gun.automatic ? `${rpm}/min` : gun.fireTicks > 40 ? 'bolt' : 'semi') +
+          bar('Range', reach, `falls off ${falls}`) +
+          bar('Magazine', gun.magazine / 100, `${gun.magazine} rounds`) +
+          '</span>' +
+          `</button>`
+        );
+      })
+      .join('');
+    const gun = WEAPONS[this.loadout.primary];
+    this.optics.innerHTML = (gun?.optics ?? [])
+      .map((optic) => {
+        const power = OPTICS[optic];
+        const note = optic === 'red_dot' ? 'fast, wide view' : `${power}x magnification`;
+        return (
+          `<button class="optic${optic === this.loadout.optic ? ' on' : ''}" type="button" data-optic="${optic}">` +
+          `<b>${OPTIC_NAMES[optic] ?? optic}</b><span>${note}</span></button>`
+        );
+      })
+      .join('');
   }
 
   /**
@@ -222,7 +335,7 @@ export class Menu {
    */
   bindPlay(onQueue, onLeaveQueue) {
     this.play.addEventListener('click', () => {
-      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake);
+      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake, { ...this.loadout });
     });
     this.status.addEventListener('click', (event) => {
       if (event.target.closest('#leave-queue')) onLeaveQueue();
@@ -853,6 +966,11 @@ export class Menu {
       this._playLabel = label;
       this.play.innerHTML = label;
     }
+    const gun = WEAPONS[this.loadout.primary];
+    const carrying = gun
+      ? `${gun.name} with ${this.loadout.optic === 'red_dot' ? 'a red dot' : `a ${OPTIC_NAMES[this.loadout.optic]} scope`}, and a pistol.`
+      : '';
+    if (this.carrying && this.carrying.textContent !== carrying) this.carrying.textContent = carrying;
     this.play.disabled = !ready || Boolean(queued);
   }
 
@@ -1010,6 +1128,13 @@ const TEMPLATE = `
 
       <div id="menu-maps"></div>
 
+      <section class="arms">
+        <h2>Choose your weapon</h2>
+        <p class="sub">What your stake buys a life with. Everybody carries a pistol as well: <kbd>Q</kbd> or the wheel to swap.</p>
+        <div id="menu-guns"></div>
+        <div id="menu-optics"></div>
+      </section>
+
       <div class="play-row">
         <div class="fees">
           <h2>Select entry fee</h2>
@@ -1017,7 +1142,7 @@ const TEMPLATE = `
           <div id="menu-tables"></div>
           <div class="go">
             <button type="button" id="menu-play" disabled>Play</button>
-            <p class="fine">Nothing is charged until your match forms. One stake buys one life.</p>
+            <p class="fine"><span id="menu-carrying"></span> Nothing is charged until your match forms. One stake buys one life.</p>
           </div>
         </div>
         <aside class="side">
@@ -1056,6 +1181,8 @@ const TEMPLATE = `
         <span><kbd>space</kbd> jump</span>
         <span><kbd>C</kbd> crouch</span>
         <span><kbd>R</kbd> reload</span>
+        <span><kbd>Q</kbd> or <kbd>wheel</kbd> swap gun</span>
+        <span><kbd>1</kbd><kbd>2</kbd> primary, pistol</span>
         <span><kbd>G</kbd> grenade</span>
         <span><kbd>tab</kbd> scores</span>
         <span><kbd>esc</kbd> free the mouse</span>

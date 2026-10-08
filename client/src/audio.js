@@ -53,6 +53,52 @@ const VOLUME_KEY = 'solatel.volume';
  *  never opened the settings. */
 const DEFAULT_VOLUME = 0.7;
 
+/**
+ * How each gun sounds, as numbers on the one synthesised shot: the crack's
+ * loudness and pitch, the thump of the charge, the body's pitch, how long
+ * it all lasts (`length`, on the rifle's), the echo, and the mechanism.
+ * Pairs are [up close, far off]. A pistol snaps; an SMG is lighter and
+ * higher; a machine gun is the rifle with more chest; the sniper rifle is
+ * the loudest thing in the game and rings round the map.
+ */
+const VOICES = {
+  rifle: {
+    crack: 1.6, crackFrequency: [2200, 1100],
+    thump: 1.1, thumpFrequency: [420, 300], thumpDecay: [0.09, 0.13],
+    body: [150, 110], bodyGain: 0.9, length: 1,
+    tail: [0.34, 0.8], tailGain: [0.3, 0.5],
+    mechanism: 3400,
+  },
+  pistol: {
+    crack: 1.3, crackFrequency: [2700, 1400],
+    thump: 0.8, thumpFrequency: [540, 380], thumpDecay: [0.06, 0.1],
+    body: [190, 140], bodyGain: 0.55, length: 0.75,
+    tail: [0.24, 0.6], tailGain: [0.22, 0.38],
+    mechanism: 4300,
+  },
+  smg: {
+    crack: 1.2, crackFrequency: [2900, 1500],
+    thump: 0.85, thumpFrequency: [500, 350], thumpDecay: [0.06, 0.1],
+    body: [175, 128], bodyGain: 0.6, length: 0.8,
+    tail: [0.26, 0.6], tailGain: [0.22, 0.4],
+    mechanism: 3900,
+  },
+  lmg: {
+    crack: 1.7, crackFrequency: [2000, 1000],
+    thump: 1.3, thumpFrequency: [380, 270], thumpDecay: [0.1, 0.15],
+    body: [135, 100], bodyGain: 1.0, length: 1.15,
+    tail: [0.4, 0.9], tailGain: [0.34, 0.55],
+    mechanism: 2900,
+  },
+  sniper: {
+    crack: 2.0, crackFrequency: [1800, 900],
+    thump: 1.6, thumpFrequency: [300, 220], thumpDecay: [0.14, 0.2],
+    body: [110, 80], bodyGain: 1.2, length: 1.6,
+    tail: [0.7, 1.5], tailGain: [0.45, 0.7],
+    mechanism: 2400, bolt: true,
+  },
+};
+
 export class Audio {
   constructor() {
     this.volume = storedVolume();
@@ -173,10 +219,14 @@ export class Audio {
    * Four layers, because a gunshot is four things happening at once and any
    * three of them sound like a toy.
    */
-  shot(at, listener, forward) {
+  shot(at, listener, forward, weapon = 'rifle') {
     if (!this.ready) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
+    const v = VOICES[weapon] ?? VOICES.rifle;
+    // Each voice is [up close, far off]: near, the top end and the
+    // mechanism; far, the low end and the echo.
+    const pick = ([near, far]) => (place.close ? near : far);
 
     const { context } = this;
     const start = context.currentTime + place.delay;
@@ -188,68 +238,81 @@ export class Audio {
     // is also the layer that carries the direction, because the ear locates
     // high frequencies far better than low ones.
     this.burst(out, start, {
-      gain: 1.6 * place.gain,
+      gain: v.crack * place.gain,
       attack: 0.0002,
       decay: close ? 0.028 : 0.05,
       type: 'highpass',
-      frequency: close ? 2200 : 1100,
+      frequency: pick(v.crackFrequency),
       q: 0.6,
     });
 
     // 2. The blast: the mid-range thump of the charge, band-limited so it
     // reads as coming out of a barrel rather than a speaker.
     this.burst(out, start, {
-      gain: 1.1 * place.gain,
+      gain: v.thump * place.gain,
       attack: 0.0004,
-      decay: close ? 0.09 : 0.13,
+      decay: pick(v.thumpDecay),
       type: 'bandpass',
-      frequency: close ? 420 : 300,
+      frequency: pick(v.thumpFrequency),
       q: 0.8,
     });
 
     // 3. The body, an octave below anything a sine alone gives: a sawtooth
     // dropping fast, which is what makes a shot land in the chest rather
-    // than the ears.
+    // than the ears. Deeper and longer the bigger the cartridge.
     const body = context.createOscillator();
     const bodyGain = context.createGain();
     const bodyFilter = context.createBiquadFilter();
     bodyFilter.type = 'lowpass';
     bodyFilter.frequency.setValueAtTime(close ? 900 : 500, start);
-    bodyFilter.frequency.exponentialRampToValueAtTime(90, start + 0.1);
+    bodyFilter.frequency.exponentialRampToValueAtTime(90, start + 0.1 * v.length);
     body.type = 'sawtooth';
-    body.frequency.setValueAtTime(close ? 150 : 110, start);
-    body.frequency.exponentialRampToValueAtTime(38, start + 0.11);
+    body.frequency.setValueAtTime(pick(v.body), start);
+    body.frequency.exponentialRampToValueAtTime(38, start + 0.11 * v.length);
     bodyGain.gain.setValueAtTime(0.0001, start);
-    bodyGain.gain.exponentialRampToValueAtTime(0.9 * place.gain, start + 0.002);
-    bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+    bodyGain.gain.exponentialRampToValueAtTime(v.bodyGain * place.gain, start + 0.002);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18 * v.length);
     body.connect(bodyFilter).connect(bodyGain).connect(out);
     body.start(start);
-    body.stop(start + 0.2);
+    body.stop(start + 0.2 * v.length);
 
     // 4. The yard answering. Delayed by the time sound takes to reach the
     // nearest thing worth bouncing off and come back, duller than the shot
     // because a wall absorbs the top end, and longer the further away the
-    // shot was.
+    // shot was - and the bigger the round, the longer the yard rings.
     this.burst(out, start + (close ? 0.035 : 0.06), {
-      gain: (close ? 0.3 : 0.5) * place.gain,
+      gain: pick(v.tailGain) * place.gain,
       attack: 0.012,
-      decay: close ? 0.34 : 0.8,
+      decay: pick(v.tail),
       type: 'lowpass',
       frequency: close ? 1100 : 620,
       q: 0.4,
     });
 
     // The player's own weapon also has a mechanism, and hearing it is most of
-    // what makes a gun feel like an object rather than an effect.
+    // what makes a gun feel like an object rather than an effect. A bolt is
+    // worked a moment after the shot, and heard as a separate clack.
     if (close) {
       this.burst(out, start + 0.045, {
         gain: 0.3,
         attack: 0.0004,
         decay: 0.022,
         type: 'bandpass',
-        frequency: 3400,
+        frequency: v.mechanism,
         q: 3.0,
       });
+      if (v.bolt) {
+        for (const [after, frequency] of [[0.42, 1900], [0.58, 2600]]) {
+          this.burst(out, start + after, {
+            gain: 0.28,
+            attack: 0.0006,
+            decay: 0.03,
+            type: 'bandpass',
+            frequency,
+            q: 2.4,
+          });
+        }
+      }
     }
   }
 

@@ -217,3 +217,166 @@ export const RIFLE = {
     drag: 3,
   },
 };
+
+// ---- every other gun --------------------------------------------------------
+//
+// Each starts from the rifle and says only what differs: where it sits, how
+// long it takes to bring up, how it kicks, what it throws out. Kick is still
+// only drawn - none of it moves the aim the server is sent.
+
+function variant(base, changes) {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(changes)) {
+    out[key] = value && typeof value === 'object' && !Array.isArray(value) && base[key]
+      ? { ...base[key], ...value }
+      : value;
+  }
+  return out;
+}
+
+/** A 9 mm pistol: held out in both hands, near the middle; a sharp, quick
+ *  flip of a kick; small cases. */
+export const PISTOL = variant(RIFLE, {
+  name: 'pistol',
+  boreHeight: 0.066,
+  muzzleFace: -0.27,
+  hip: { position: [0.17, -0.19, -0.42], rotation: [-0.02, 0.07, 0] },
+  ads: { eyeRelief: 0.3, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
+  sway: { position: 0.03, rotation: 0.4 },
+  recoil: {
+    back: 0.035,
+    rise: 0.13,
+    maxRise: 0.22,
+    sideways: 0.01,
+    roll: 0.025,
+    pattern: [0, 0.5, -0.5, 0.4, -0.4],
+    patternReset: 0.35,
+    recovery: 14,
+    cameraRoll: 0.005,
+    cameraRecovery: 18,
+  },
+  flashSeconds: 0.035,
+  arms: {
+    right: { shoulder: [0.24, -0.5, 0.05], elbow: [0.9, -0.7, 0.2] },
+    left: { shoulder: [-0.12, -0.5, 0.0], elbow: [-0.9, -0.8, 0.1] },
+    leftPalm: [-0.02, -0.62, 0.48],
+  },
+  casings: { port: [0.07, 0.13, 0.3], speed: [1.0, 1.4], lift: [1.4, 1.9], radius: 0.0049, length: 0.019 },
+  smoke: { size: [0.04, 0.28], opacity: 0.22 },
+});
+
+/** A compact SMG: a little further in, quicker to the shoulder, a light
+ *  buzz of a kick with more of it sideways. */
+export const SMG = variant(RIFLE, {
+  name: 'smg',
+  muzzleFace: -1.52,
+  hip: { position: [0.25, -0.24, -0.42], rotation: [-0.03, 0.08, 0] },
+  ads: { duration: 0.15 },
+  recoil: {
+    back: 0.028,
+    rise: 0.03,
+    maxRise: 0.14,
+    sideways: 0.014,
+    roll: 0.016,
+    pattern: [0, 0.6, -0.8, 0.9, -0.5, 0.7, -1.0, 0.6],
+    patternReset: 0.22,
+    recovery: 14,
+    cameraRoll: 0.004,
+    cameraRecovery: 18,
+  },
+  flashSeconds: 0.03,
+  casings: { port: [0.08, 0.08, 0.05], radius: 0.0027, length: 0.03 },
+  smoke: { size: [0.05, 0.32], opacity: 0.22 },
+});
+
+/** A belt-fed machine gun: heavy, slow to the shoulder, a deep shove of a
+ *  kick that walks. */
+export const LMG = variant(RIFLE, {
+  name: 'lmg',
+  muzzleFace: -3.35,
+  hip: { position: [0.29, -0.27, -0.47], rotation: [-0.035, 0.09, 0] },
+  ads: { duration: 0.3, swayScale: 0.35 },
+  sway: { position: 0.045, rotation: 0.55, recovery: 7 },
+  bob: { amount: 0.014 },
+  recoil: {
+    back: 0.05,
+    rise: 0.04,
+    maxRise: 0.16,
+    sideways: 0.016,
+    roll: 0.022,
+    pattern: [0, 0.5, -0.7, 0.9, -0.6, 0.8, -1.0, 0.7],
+    patternReset: 0.3,
+    recovery: 10,
+    cameraRoll: 0.007,
+    cameraRecovery: 14,
+  },
+  flashSeconds: 0.045,
+  casings: { port: [0.1, 0.0, 0.05], lift: [0.9, 1.3], radius: 0.0029, length: 0.045 },
+});
+
+/** A bolt-action .308: long, heavy, a big slow kick, and the case comes out
+ *  when the bolt is worked rather than with the shot. */
+export const SNIPER = variant(RIFLE, {
+  name: 'sniper',
+  muzzleFace: -3.6,
+  hip: { position: [0.28, -0.26, -0.46], rotation: [-0.03, 0.09, 0] },
+  ads: { duration: 0.3, swayScale: 0.25 },
+  sway: { position: 0.045, rotation: 0.55, recovery: 7 },
+  recoil: {
+    back: 0.11,
+    rise: 0.15,
+    maxRise: 0.3,
+    sideways: 0.008,
+    roll: 0.035,
+    pattern: [0],
+    patternReset: 1,
+    recovery: 6,
+    cameraRoll: 0.018,
+    cameraRecovery: 8,
+  },
+  flashSeconds: 0.06,
+  casings: { port: [0.1, 0.1, -0.05], radius: 0.006, length: 0.051, delay: 0.55, seconds: 1.4 },
+  smoke: { size: [0.09, 0.55], opacity: 0.32 },
+});
+
+export const GUNS = { pistol: PISTOL, smg: SMG, rifle: RIFLE, lmg: LMG, sniper: SNIPER };
+
+/**
+ * How each optic is looked through: how far in front of the eye it sits and
+ * how much its own view narrows. A magnified optic is looked *through* - at
+ * the sights, the picture is the scope's own: the world magnified in a round
+ * eyepiece, the reticle over it, and nothing of the gun.
+ */
+const OPTIC_FEEL = {
+  irons: { eyeRelief: null, weaponZoom: 0.85, scoped: false, slower: 0 },
+  red_dot: { eyeRelief: 0.13, weaponZoom: 0.8, scoped: false, slower: 0 },
+  x2: { eyeRelief: 0.09, weaponZoom: 0.8, scoped: true, slower: 0.03 },
+  x3: { eyeRelief: 0.08, weaponZoom: 0.8, scoped: true, slower: 0.05 },
+  x4: { eyeRelief: 0.07, weaponZoom: 0.8, scoped: true, slower: 0.07 },
+};
+
+/**
+ * The feel of `weapon` carrying `optic`, with the sights read off the model
+ * that was built for it (`sight`, from `buildGun`): the line the eye aims
+ * down, and how much the view narrows - by the optic's own magnification,
+ * as the shared table states it.
+ */
+export function feelFor(weapon, optic, sight, magnification) {
+  const base = GUNS[weapon] ?? RIFLE;
+  const look = OPTIC_FEEL[optic] ?? OPTIC_FEEL.red_dot;
+  return {
+    ...base,
+    optic: undefined,
+    ads: {
+      ...base.ads,
+      frontSight: sight.front,
+      rearSight: sight.rear,
+      eyeRelief: look.eyeRelief ?? base.ads.eyeRelief,
+      zoom: 1 / magnification,
+      weaponZoom: look.weaponZoom,
+      duration: base.ads.duration + look.slower,
+      scoped: look.scoped,
+      opticId: optic,
+    },
+  };
+}

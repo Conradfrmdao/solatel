@@ -74,6 +74,10 @@ export class Input {
     /** Crouching is a toggle on C: holding a key down for a whole fight is
      *  a cramp, and Ctrl, the other habit, is Ctrl+W in a browser. */
     this._crouch = false;
+    /** The pistol rather than the primary: 2 for it, 1 for the primary, Q
+     *  or the mouse wheel to swap - what every shooter has taught a hand. */
+    this._sidearm = false;
+    this._wheelAt = 0;
     /** Keys pressed since the last sample, so a tap shorter than a tick
      *  still reaches the server as one command with the button down. */
     this._tapped = new Set();
@@ -129,6 +133,20 @@ export class Input {
       if (event.button === 0) this._fire = false;
       if (event.button === 2) this._aim = false;
     });
+    // The wheel swaps guns, a notch at a time: a trackpad's flick sends a
+    // dozen events, and one swap is what was meant.
+    window.addEventListener(
+      'wheel',
+      (event) => {
+        if (!(this.locked || !this.requireLock) || event.target !== this.canvas) return;
+        const now = performance.now();
+        if (now - this._wheelAt > 250 && Math.abs(event.deltaY) > 0) {
+          this._sidearm = !this._sidearm;
+          this._wheelAt = now;
+        }
+      },
+      { passive: true },
+    );
     // The right button aims, so it must not open the browser's menu over the
     // game. Only over the canvas: a right click in the menu is still the
     // browser's.
@@ -139,6 +157,9 @@ export class Input {
       if (!event.repeat && (this.locked || !this.requireLock)) {
         this._tapped.add(event.code);
         if (event.code === 'KeyC') this._crouch = !this._crouch;
+        if (event.code === 'Digit1') this._sidearm = false;
+        if (event.code === 'Digit2') this._sidearm = true;
+        if (event.code === 'KeyQ') this._sidearm = !this._sidearm;
         // Jumping from a crouch stands up and jumps, in the one command:
         // the simulation will not jump a crouched body, and a jump key
         // that did nothing while crouched read as a jump key that was
@@ -376,6 +397,17 @@ export class Input {
    *  beginning on its knees. */
   resetCrouch() {
     this._crouch = false;
+  }
+
+  /** Whether the pistol is wanted in hand rather than the primary. A
+   *  posture like a crouch, so it holds while the mouse is free. */
+  get sidearm() {
+    return this._sidearm;
+  }
+
+  /** A new life starts with its primary in hand. */
+  resetSidearm() {
+    this._sidearm = false;
   }
 
   /** Whether the aim button is held. Sent, so that everybody else sees the

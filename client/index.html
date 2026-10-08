@@ -187,7 +187,11 @@
         text-align: right;
         text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
       }
+      #weapon .gun { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: #d7dde6; }
+      #weapon .gun .spare { margin-left: 12px; color: var(--dim); }
+      #weapon .gun .spare::before { content: 'Q · '; opacity: 0.7; }
       #weapon .ammo { font-size: 22px; color: var(--dim); }
+      #weapon .ammo.drawing b { color: var(--dim); }
       #weapon .ammo b { font-size: 34px; color: #eaf1fb; }
       #weapon .ammo.low b { color: #f0c26a; }
       #weapon .ammo.empty b { color: var(--bad); }
@@ -423,6 +427,34 @@
       .mm-card[data-phase='found'] .mm-radar span,
       .mm-card[data-phase='loading'] .mm-radar span { animation: none; opacity: 0; }
       .mm-card[data-phase='found'] .mm-radar i { inset: 18px; transition: inset 200ms ease; }
+
+      /* Through a scope: the world in a round eyepiece, black round it, a
+         thin shadow ring at its edge, and the reticle over the middle. */
+      #scope {
+        --eye: 300px;
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(
+          circle at 50% 50%,
+          transparent calc(var(--eye) - 3px),
+          rgba(0, 0, 0, 0.55) calc(var(--eye) - 1px),
+          rgba(4, 5, 6, 0.97) calc(var(--eye) + 2px),
+          #030304 100%
+        );
+      }
+      #scope::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: calc(var(--eye) * 2);
+        height: calc(var(--eye) * 2);
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        box-shadow: inset 0 0 calc(var(--eye) * 0.22) rgba(0, 0, 0, 0.65);
+      }
+      #scope .reticle { position: absolute; inset: 0; width: 100%; height: 100%; }
 
       #crosshair,
       #hitmarker {
@@ -1131,6 +1163,91 @@
         text-transform: uppercase;
       }
       .map .busy { font-size: 12px; color: #b5bfcc; font-variant-numeric: tabular-nums; }
+
+      /* The gun a life is played with: a picture of each, what it is for,
+         and bars for what it does, then the optics it can carry. */
+      .arms {
+        display: grid;
+        gap: 14px;
+        padding: 20px 22px;
+        border-radius: 10px;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+      }
+      .arms .sub { margin-top: -8px; }
+      .arms kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font: 600 12px/1.4 var(--shout);
+        background: var(--well);
+        border: 1px solid #2c394b;
+      }
+      #menu-guns {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 12px;
+      }
+      .gun {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+        padding: 12px 14px 14px;
+        border-radius: 8px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .gun:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .gun.on {
+        border: 2px solid var(--amber);
+        background: linear-gradient(180deg, rgba(246, 162, 27, 0.16), rgba(246, 162, 27, 0.03));
+        box-shadow: 0 0 24px rgba(246, 162, 27, 0.14);
+      }
+      .gun .art {
+        display: block;
+        width: 100%;
+        aspect-ratio: 480 / 170;
+        object-fit: contain;
+        background: radial-gradient(ellipse at 50% 60%, rgba(246, 162, 27, 0.1), transparent 70%);
+      }
+      .gun .name { font: 800 24px/1 var(--shout); letter-spacing: 0.03em; text-transform: uppercase; }
+      .gun.on .name { color: var(--amber-hot); }
+      .gun .blurb { font-size: 13px; line-height: 1.35; color: #c3ccd8; min-height: 2.7em; }
+      .gun .stats { display: grid; gap: 5px; }
+      .gun .stat {
+        display: grid;
+        grid-template-columns: 70px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--dim);
+      }
+      .gun .stat .label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+      .gun .stat .track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+      .gun .stat .fill { display: block; height: 100%; background: linear-gradient(90deg, #c47c12, var(--amber-hot)); }
+      .gun .stat .value { color: #d7dde6; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      #menu-optics { display: flex; flex-wrap: wrap; gap: 10px; }
+      .optic {
+        display: grid;
+        gap: 2px;
+        padding: 9px 16px;
+        border-radius: 6px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+      }
+      .optic b { font: 800 18px/1 var(--shout); letter-spacing: 0.04em; text-transform: uppercase; }
+      .optic span { font-size: 12px; color: var(--dim); }
+      .optic:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .optic.on { border: 2px solid var(--amber); }
+      .optic.on b { color: var(--amber-hot); }
+      #menu-carrying { color: #d7dde6; }
 
       /* The entry fee, the button that plays, and the way to fund it. */
       .play-row {

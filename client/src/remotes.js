@@ -62,9 +62,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
-import { SIM, lerpAngle, wrapAngle } from './sim.js';
+import { SIM, WEAPONS, lerpAngle, wrapAngle } from './sim.js';
 import { flashTexture } from './viewmodel.js';
 import { HAND, holdMatrix, palms } from './grip.js';
+import { POINTS, WEAPON_IDS, buildGun } from './guns.js';
 import { RIFLE as WEAPON } from './weapons.js';
 import { lightMaterial } from './light.js';
 import { SnapshotClock } from './snapclock.js';
@@ -148,9 +149,6 @@ const RIFLE = {
   muzzle: new THREE.Vector3(0, 0.065, -2.306),
 };
 
-/** Where the magazine sits, in the rifle model's units: under the receiver
- *  just ahead of the grip. A reload takes the left hand there. */
-const MAGAZINE = new THREE.Vector3(0, -0.62, 0.1);
 
 /** A reload as the body shows it: the rifle canted over and dipped, so the
  *  magazine well faces the hand that is changing it. Radians. */
@@ -403,14 +401,9 @@ export class Remotes {
     });
   }
 
-  /**
-   * `weapon` is a model somebody else already loaded.
-   *
-   * The viewmodel needs the same rifle, and fetching its geometry twice
-   * because two modules each asked for it is the kind of waste that is
-   * invisible on localhost and expensive on a real connection.
-   */
-  async load(soldierUrl, weapon) {
+  /** The soldier everybody is drawn as, and the guns they carry, which are
+   *  built in code (`guns.js`) the first time anybody carries each. */
+  async load(soldierUrl) {
     const soldier = await new GLTFLoader().loadAsync(soldierUrl);
     this.template = soldier.scene;
     // Which way the face looks, in the head bone's own frame: the soldier
@@ -439,21 +432,17 @@ export class Remotes {
         for (const material of [node.material].flat()) lightMaterial(material);
       }
     });
-    // The rifle in somebody else's hands is lit by the map as they are. The
-    // one in the player's own hands is drawn in a scene of its own, lit its
-    // own way, so this is a copy with copies of its materials.
+    // A gun in somebody else's hands is lit by the map as they are. The one
+    // in the player's own hands is drawn in a scene of its own, lit its own
+    // way, so these are copies with copies of its materials.
     const copies = new Map();
-    const lit = (material) => {
+    this._lit = (material) => {
       if (!copies.has(material)) copies.set(material, lightMaterial(material.clone()));
       return copies.get(material);
     };
-    this.weapon = weapon.clone(true);
-    this.weapon.traverse((node) => {
-      if (!node.isMesh) return;
-      node.castShadow = true;
-      node.material = Array.isArray(node.material) ? node.material.map(lit) : lit(node.material);
-      detailed(node.geometry);
-    });
+    /** Every gun and optic anybody has carried, built once: by `weapon:optic`. */
+    this.guns = new Map();
+    this.weapon = this._gun('rifle', 'red_dot');
 
     const find = (name) => {
       const clip = THREE.AnimationClip.findByName(soldier.animations, name);
@@ -481,7 +470,55 @@ export class Remotes {
    *  the rifle every copy is made from - for compiling before the first of
    *  them appears (`prepareToDraw` in main.js). */
   get prototypes() {
-    return [this.template, this.weapon].filter(Boolean);
+    // One of each gun, each with a different optic, which between them use
+    // every material any of them is drawn with.
+    const optics = { pistol: 'irons', smg: 'red_dot', rifle: 'x2', lmg: 'x3', sniper: 'x4' };
+    return [this.template, ...WEAPON_IDS.map((w) => this._gun(w, optics[w]))].filter(Boolean);
+  }
+
+  /** The model of `weapon` with `optic`, as everybody else carries it: lit by
+   *  the map, with fewer triangles further away. Built the first time. */
+  _gun(weapon, optic) {
+    const key = `${weapon}:${optic}`;
+    let gun = this.guns.get(key);
+    if (gun) return gun;
+    gun = buildGun(weapon, optic);
+    gun.traverse((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.material = Array.isArray(node.material) ? node.material.map(this._lit) : this._lit(node.material);
+      detailed(node.geometry);
+    });
+    this.guns.set(key, gun);
+    return gun;
+  }
+
+  /** Puts `weapon` with `optic` in a player's hands, if it is not there. */
+  _arm(player, weapon, optic) {
+    const key = `${weapon}:${optic}`;
+    if (player.gunKey === key) return;
+    player.gunKey = key;
+    player.weapon = weapon;
+    if (player.gun) player.rifle.remove(player.gun);
+    // A copy of the gun as it was built: placed and sized by the hands, so
+    // nothing of any rig's offset or scale is inherited - inheriting it is
+    // what once made it a toy.
+    const copy = this._gun(weapon, optic).clone(true);
+    copy.position.set(0, 0, 0);
+    copy.rotation.set(0, 0, 0);
+    copy.scale.setScalar(1);
+    player.rifle.add(copy);
+    player.gun = copy;
+    const [mx, my, mz] = (POINTS[weapon] ?? POINTS.rifle).muzzle;
+    player.muzzle.position.set(mx, my, mz);
+    player.details = player.details.filter((d) => !d.gun);
+    copy.traverse((node) => {
+      const levels = node.isMesh ? DETAILS.get(node.geometry) : null;
+      if (levels) {
+        node.geometry = levels[player.level] ?? levels[0];
+        player.details.push({ mesh: node, levels, gun: true });
+      }
+    });
   }
 
   /**
@@ -583,10 +620,13 @@ export class Remotes {
     aimVector(player.yaw, player.pitch, _fwd);
     _side.crossVectors(_fwd, _up).normalize();
     _lift.crossVectors(_side, _fwd);
+    // Measured for the rifle: a longer gun's muzzle is further out by what
+    // it has on the rifle, a pistol's nearer.
+    const reach = ((POINTS[player.weapon] ?? POINTS.rifle).muzzle[2] - RIFLE.muzzle.z) * -RIFLE.scale;
     return out
       .copy(player.root.position)
       .addScaledVector(_up, player.eye)
-      .addScaledVector(_fwd, SHOULDER_MUZZLE.forward - SHOULDER_MUZZLE.perPitch * player.pitch)
+      .addScaledVector(_fwd, SHOULDER_MUZZLE.forward + reach - SHOULDER_MUZZLE.perPitch * player.pitch)
       .addScaledVector(_lift, -(player.kneeling ? SHOULDER_MUZZLE.downKneeling : SHOULDER_MUZZLE.down))
       .addScaledVector(_side, SHOULDER_MUZZLE.right);
   }
@@ -635,19 +675,10 @@ export class Remotes {
 
     // The rifle, placed each frame from the hands rather than parented to
     // one of them.
+    // The gun is put in `rifle` by `_arm`, whichever it is.
     const rifle = new THREE.Group();
     rifle.matrixAutoUpdate = false;
     root.add(rifle);
-    if (this.weapon) {
-      // A copy of the first-person rifle, which carries that rig's own
-      // offset and scale. Those are dropped: this one is placed and sized
-      // here, and inheriting them is what once made it a toy.
-      const copy = this.weapon.clone(true);
-      copy.position.set(0, 0, 0);
-      copy.rotation.set(0, 0, 0);
-      copy.scale.setScalar(1);
-      rifle.add(copy);
-    }
     const muzzle = new THREE.Object3D();
     muzzle.position.copy(RIFLE.muzzle);
     rifle.add(muzzle);
@@ -669,7 +700,10 @@ export class Remotes {
       .map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
     return {
-      id, root, body, mixer, actions, bones, rifle, flashSprite, hipsScale, clean, details,
+      id, root, body, mixer, actions, bones, rifle, muzzle, flashSprite, hipsScale, clean, details,
+      gun: null,
+      gunKey: null,
+      weapon: 'rifle',
       level: 0,
       gait: 'idle',
       legYaw: 0,
@@ -734,10 +768,14 @@ export class Remotes {
     }
     root.visible = true;
 
-    // A reload starting is seen, and heard by anybody close enough.
+    // The gun in their hands, as the snapshot says: a change is seen.
+    this._arm(player, entry.weapon ?? 'rifle', entry.optic ?? 'red_dot');
+
+    // A reload starting is seen, and heard by anybody close enough, for as
+    // long as that gun takes.
     if (entry.reloading && !player.reloading) {
       player.reloadAt = player.age;
-      this.reloads.push([entry.x, entry.y, entry.z]);
+      this.reloads.push({ at: [entry.x, entry.y, entry.z], seconds: this._reloadSeconds(player) });
     }
     player.reloading = entry.reloading;
     if (this.throws.has(player.id)) {
@@ -922,7 +960,8 @@ export class Remotes {
    * right hand, and the left arm solved onto where it has to be.
    */
   _act(player, entry, aim, dir) {
-    const reload = player.reloading ? (player.age - player.reloadAt) / SIM.reloadSeconds : null;
+    const reload = player.reloading ? (player.age - player.reloadAt) / this._reloadSeconds(player) : null;
+    const points = POINTS[player.weapon] ?? POINTS.rifle;
     const thrown = player.throwAt === undefined ? null : (player.age - player.throwAt) / THROW_SECONDS;
     if (thrown !== null && thrown > 1) player.throwAt = undefined;
 
@@ -961,7 +1000,7 @@ export class Remotes {
       this._placeRifle(player, dir, RELOAD_DIP * canted, RELOAD_CANT * canted);
       // The hand to the magazine, down to the pouch at the hip for the next
       // one, back up to seat it, and back onto the handguard.
-      _mag.copy(MAGAZINE).applyMatrix4(_m);
+      _mag.fromArray(points.magazine).applyMatrix4(_m);
       const { bones } = player;
       if (!bones.hips) return;
       _side.crossVectors(aim, _up).normalize();
@@ -990,6 +1029,12 @@ export class Remotes {
     }
 
     this._placeRifle(player, dir);
+    // A pistol is held in both hands, the left under the right: the poses
+    // were made for a rifle, whose handguard is out where a pistol has
+    // nothing, so the left hand is put on it.
+    if (player.weapon === 'pistol') {
+      this._reachLeft(player, _reach.fromArray(points.support).applyMatrix4(_m), 1);
+    }
   }
 
   /** The left hand towards `goal` by `weight`, the arm solved to reach it
@@ -1093,8 +1138,13 @@ export class Remotes {
     action.setEffectiveTimeScale(reverse ? -rate : rate);
   }
 
-  /** Where somebody else's reload started since the last call, for the
-   *  sound - as [x, y, z], the way positions cross the wire. */
+  /** How long a reload of the gun in `player`'s hands takes. */
+  _reloadSeconds(player) {
+    return (WEAPONS[player.weapon] ?? WEAPONS.rifle).reloadSeconds;
+  }
+
+  /** Where somebody else's reload started since the last call, and how long
+   *  it lasts, for the sound - positions as [x, y, z], as on the wire. */
   takeReloads() {
     if (this.reloads.length === 0) return EMPTY;
     const started = this.reloads;
@@ -1422,6 +1472,8 @@ function snapshotToEntries(older, newer, alpha) {
       crouched: Boolean(b.crouched),
       reloading: Boolean(fresh.reloading),
       aiming: Boolean(fresh.aiming),
+      weapon: fresh.weapon ?? 'rifle',
+      optic: fresh.optic ?? 'red_dot',
     });
     byId.delete(old.id);
   }
@@ -1445,6 +1497,8 @@ function snapshotToEntries(older, newer, alpha) {
       crouched: Boolean(s.crouched),
       reloading: Boolean(fresh.reloading),
       aiming: Boolean(fresh.aiming),
+      weapon: fresh.weapon ?? 'rifle',
+      optic: fresh.optic ?? 'red_dot',
     });
   }
 

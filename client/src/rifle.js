@@ -19,95 +19,7 @@
 // carry a copy.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-
-const BORE = 0.066;
-
-// ---- building blocks: everything is in (z, y) side view, x across ---------
-
-function plain(geometry) {
-  const g = geometry.index ? geometry.toNonIndexed() : geometry;
-  for (const name of Object.keys(g.attributes)) {
-    if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
-  }
-  if (!g.attributes.uv) {
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-  }
-  return g;
-}
-
-/**
- * A side profile - points as [z, y] - extruded `width` across x about
- * `x`, with rounded edges. `holes` are more outlines, cut through.
- */
-function side(points, width, { bevel = 0.012, x = 0, holes = [], segments = 2 } = {}) {
-  const shape = new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y)));
-  for (const hole of holes) shape.holes.push(new THREE.Path(hole.map(([z, y]) => new THREE.Vector2(z, y))));
-  const depth = Math.max(width - 2 * bevel, 0.002);
-  const g = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: bevel > 0,
-    bevelThickness: bevel,
-    bevelSize: bevel * 0.8,
-    bevelSegments: segments,
-    curveSegments: 8,
-  });
-  // Shape x is our z; the extrusion runs across.
-  g.translate(0, 0, -depth / 2);
-  g.rotateY(-Math.PI / 2);
-  g.translate(x, 0, 0);
-  return g;
-}
-
-/** A round section turned about the z axis: `profile` is [z, radius]. */
-function turned(profile, { y = BORE, x = 0, segments = 24 } = {}) {
-  const pts = profile.map(([z, r]) => new THREE.Vector2(r, z));
-  const g = new THREE.LatheGeometry(pts, segments);
-  // The lathe turns about y; lay it along z.
-  g.rotateX(Math.PI / 2);
-  g.translate(x, y, 0);
-  return g;
-}
-
-/** A plain cylinder from z0 to z1, radius r, about (x, y). */
-function rod(z0, z1, r, { y = BORE, x = 0, segments = 18 } = {}) {
-  return turned(
-    [
-      [z0, 0],
-      [z0, r * 0.9],
-      [z0 + Math.sign(z1 - z0) * r * 0.1, r],
-      [z1 - Math.sign(z1 - z0) * r * 0.1, r],
-      [z1, r * 0.9],
-      [z1, 0],
-    ],
-    { y, x, segments },
-  );
-}
-
-/** A cylinder across the rifle (a pin, a button), at (z, y). */
-function pin(z, y, r, length, { x = 0, segments = 12 } = {}) {
-  const g = new THREE.CylinderGeometry(r, r, length, segments);
-  g.rotateZ(Math.PI / 2);
-  g.translate(x, y, z);
-  return g;
-}
-
-function block(x0, y0, z0, x1, y1, z1) {
-  const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
-  g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  return g;
-}
-
-/** Points along a quadratic curve, for the magazine's sweep. */
-function curve(a, c, b, n = 8) {
-  const out = [];
-  for (let i = 0; i <= n; i += 1) {
-    const t = i / n;
-    const u = 1 - t;
-    out.push([u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]]);
-  }
-  return out;
-}
+import { BORE, assemble, block, curve, gather, pin, rod, side, turned } from './gunkit.js';
 
 // ---- the parts ------------------------------------------------------------
 
@@ -304,11 +216,10 @@ function frontEnd() {
 
 /** Parts by material. Exposed for the tests that check where it all is. */
 export function rifleParts() {
-  const parts = { metal: [], steel: [], polymer: [], dark: [] };
-  for (const piece of [upperReceiver(), carryHandle(), lowerReceiver(), pistolGrip(), magazine(), stock(), frontEnd()]) {
-    for (const [kind, list] of Object.entries(piece)) parts[kind].push(...list);
-  }
-  return parts;
+  return gather(
+    [upperReceiver(), carryHandle(), lowerReceiver(), pistolGrip(), magazine(), stock(), frontEnd()],
+    ['metal', 'steel', 'polymer', 'dark'],
+  );
 }
 
 let materials = null;
@@ -329,17 +240,9 @@ function rifleMaterials() {
 
 /** The rifle, one mesh per material, in the model frame described above. */
 export function buildRifle() {
-  const group = new THREE.Group();
-  group.name = 'rifle';
-  const mats = rifleMaterials();
-  for (const [kind, geometries] of Object.entries(rifleParts())) {
-    if (!geometries.length) continue;
-    const merged = mergeGeometries(geometries.map(plain), false);
-    merged.computeBoundingSphere();
-    const mesh = new THREE.Mesh(merged, mats[kind]);
-    mesh.name = `rifle_${kind}`;
-    mesh.castShadow = true;
-    group.add(mesh);
-  }
-  return group;
+  return assemble('rifle', rifleParts(), rifleMaterials());
 }
+
+/** The rifle's materials, which every gun shares: one set of shaders for
+ *  all of them. */
+export { rifleMaterials as gunMaterials };

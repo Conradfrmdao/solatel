@@ -30,7 +30,8 @@ import { Audio } from './audio.js';
 import { Link, noteReferral, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
-import { BRUSHES, SIM, SPAWNS, loadSim, selectMap, spawnFacing } from './sim.js';
+import { BRUSHES, PRIMARIES, SIM, SPAWNS, WEAPONS, loadSim, roundPath, selectMap, spawnFacing } from './sim.js';
+import { portraits } from './portraits.js';
 import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
@@ -115,6 +116,25 @@ const _from = new THREE.Vector3();
  */
 const CATCH_UP_TICKS = 20;
 
+/**
+ * Seconds a round fired from `from` at `velocity` takes to reach `to`, along
+ * the shared flight: when to draw where it came down, so the dust rises as
+ * the tracer gets there rather than when the message did.
+ */
+function flightSeconds(weapon, from, velocity, to) {
+  const gun = WEAPONS[weapon] ?? WEAPONS.rifle;
+  const path = roundPath(weapon, from, velocity, Math.min(4, (gun.range / gun.muzzleVelocity) * 3));
+  const goal = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  for (let i = 3; i < path.length; i += 3) {
+    const d = Math.hypot(path[i] - from[0], path[i + 1] - from[1], path[i + 2] - from[2]);
+    if (d >= goal) {
+      const before = Math.hypot(path[i - 3] - from[0], path[i - 2] - from[1], path[i - 1] - from[2]);
+      return (i / 3 - 1 + (goal - before) / Math.max(1e-6, d - before)) * SIM.tickDt;
+    }
+  }
+  return goal / gun.muzzleVelocity;
+}
+
 async function boot() {
   const canvas = document.getElementById('solatel-canvas');
   const hudRoot = document.getElementById('hud');
@@ -189,10 +209,10 @@ async function boot() {
   await link.firstWelcome;
 
   say('loading the weapon…');
-  const rifle = await viewmodel.load();
+  await viewmodel.load();
   say('loading the soldier…');
-  // The same rifle, handed on rather than fetched again.
-  const soldier = await remotes.load(asset('assets/characters/soldier.glb'), rifle);
+  // Every gun is built in code (`guns.js`), for them and for this player.
+  const soldier = await remotes.load(asset('assets/characters/soldier.glb'));
   // And the same soldier's arms in first person, in the same pose.
   viewmodel.setArms(soldier, remotes.clips.aim);
 
@@ -201,6 +221,11 @@ async function boot() {
   // the menu's markup and the HUD is what wires them up. A HUD constructed
   // first would look for sliders that did not exist yet.
   const menu = new Menu(document.getElementById('menu'));
+  // Pictures of the guns, drawn from their models, for the menu's cards -
+  // in the background: the menu works without them.
+  portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot'])).then((pictures) =>
+    menu.setGunPictures(pictures),
+  );
   const hud = new Hud(hudRoot);
   const audio = new Audio();
   const death = new Death();
@@ -264,12 +289,12 @@ async function boot() {
   // decides which world there will be.
   menu.setOffer(link.maps, link.tiers);
   menu.bindPlay(
-    (mapName, dollars) => {
+    (mapName, dollars, loadout) => {
       // The click on play is a real gesture, so it is also where the
       // sound can be started: the match-found chime has to be heard by
       // somebody who has not clicked the world yet.
       audio.resume();
-      local.queue(mapName, dollars);
+      local.queue(mapName, dollars, loadout);
       // The map's files, into the cache while the line forms.
       prefetchMap(mapName);
     },
@@ -328,6 +353,8 @@ async function boot() {
    * comes out of whichever map the simulation is pointed at.
    */
   let entering = null;
+  /** The loadout the viewmodel was last handed. */
+  let armedWith = null;
   /** The match whose map is loaded, compiled and ready to draw. Until it is
    *  this one, the loading card stays up and nothing is drawn. */
   let preparedFor = null;
@@ -341,6 +368,9 @@ async function boot() {
     menu.show(false);
     say(`loading ${mapName}…`);
     document.body.classList.remove('running');
+    // The guns this life is played with, in hand before the first frame.
+    viewmodel.setLoadout(local.loadout);
+    armedWith = local.loadout;
     await world.load(mapName);
 
     // The far plane is set from the map rather than left at a constant, and
@@ -566,34 +596,50 @@ async function boot() {
       if (message.t === 'snapshot') {
         // A straggler from a match this player has left is nothing to draw.
         if (message.match_id === local.matchId) remotes.record(message, now);
-      } else if (message.t === 'shot_fired') {
-        // Somebody else's tracer leaves the rifle as it is drawn; see
-        // `muzzleOf`. Within a couple of metres of the server's `from`, or
-        // something is wrong with the drawing and the server's is used.
-        const muzzle = message.shooter === local.id ? null : remotes.muzzleOf(message.shooter, _muzzle);
-        const from =
-          muzzle && muzzle.distanceTo(_from.fromArray(message.from)) < 2.5
-            ? [muzzle.x, muzzle.y, muzzle.z]
-            : message.from;
-        world.addTracer(from, message.to, message.hit_player);
-        // Where it landed, as the server says: dust off a wall, a mist off
-        // a player. Drawn for every shot, the player's own included, from
-        // the server's account rather than this client's prediction.
-        impacts.strike(message.from, message.to, message.hit_player, camera.position);
+      } else if (message.t === 'shot_fired' || message.t === 'shot_landed') {
         const mine = message.shooter === local.id;
-        // This player's own shot was already kicked, flashed and heard when
-        // they fired it - see the predicted shots below. Doing it again here
-        // would be every shot twice, the second a round trip late. Everyone
-        // else's is wherever the server says it was, which is what gives a
-        // shot a direction and a distance. The round landing is a second
-        // sound from a second place - often the more useful one, because it
-        // is where the shooter was aiming.
-        if (!mine) {
-          audio.shot(message.from, eye, forward);
+        if (message.t === 'shot_fired' && !mine) {
+          // Somebody else's round leaves the gun as it is drawn; see
+          // `muzzleOf`. Within a couple of metres of the server's `from`, or
+          // something is wrong with the drawing and the server's is used.
+          // It flies from there at its own speed, along the shared flight.
+          const muzzle = remotes.muzzleOf(message.shooter, _muzzle);
+          const from =
+            muzzle && muzzle.distanceTo(_from.fromArray(message.from)) < 2.5
+              ? [muzzle.x, muzzle.y, muzzle.z]
+              : message.from;
+          world.addRound({
+            key: `${message.shooter}:${message.shot}`,
+            weapon: message.weapon,
+            drawnFrom: from,
+            from: message.from,
+            velocity: message.velocity,
+          });
+          // This player's own shot was already kicked, flashed and heard
+          // when they fired it - see the predicted shots below. Everyone
+          // else's is wherever the server says it was, which is what gives
+          // a shot a direction and a distance.
+          audio.shot(message.from, eye, forward, message.weapon);
           remotes.onShot(message.shooter);
         }
-        if (!message.hit_player) audio.impact(message.to, eye, forward);
-        if (mine && message.hit_player) audio.hitConfirmed(false);
+        // Where it came down, as the server says: dust off a wall, a mist
+        // off a player, when the round would have got there. Drawn for every
+        // shot, the player's own included, from the server's account rather
+        // than this client's prediction. The round landing is a second sound
+        // from a second place - often the more useful one, because it is
+        // where the shooter was aiming.
+        const landing = message.t === 'shot_fired' ? message.landed : message.landing;
+        if (landing) {
+          const key = `${message.shooter}:${message.shot}`;
+          const delay = message.t === 'shot_fired'
+            ? flightSeconds(message.weapon, message.from, message.velocity, landing.at) - (mine ? link.rttMs / 1000 : 0)
+            : 0;
+          world.landRound(key, landing, Math.max(0, delay), mine, () => {
+            if (landing.struck) impacts.strike(message.from ?? landing.at, landing.at, landing.hit_player, camera.position);
+            if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward);
+          });
+          if (mine && landing.hit_player) audio.hitConfirmed(false);
+        }
       } else if (message.t === 'damaged') {
         audio.hurt();
         // Which way it came from, held on screen as the player turns, and a
@@ -680,12 +726,29 @@ async function boot() {
     // player's commands behind the server's clock for good.
     if (accumulator > tickDt * CATCH_UP_TICKS) accumulator = 0;
 
-    // This player's own shots, the moment they leave the weapon.
-    for (let shots = local.takePredictedShots(); shots > 0; shots -= 1) {
-      viewmodel.onShotFired();
-      audio.shot(Audio.OWN, eye, forward);
+    // The guns this life carries, and which is in hand: a change is drawn
+    // as the old one going down and the new one coming up, over the time
+    // the server makes the player wait to fire it.
+    if (local.loadout !== armedWith) {
+      viewmodel.setLoadout(local.loadout);
+      armedWith = local.loadout;
     }
-    if (local.takeReloadStart()) audio.reload(SIM.reloadSeconds);
+    if (local.takeSwitch()) viewmodel.setHeld(local.held, local.gun.drawSeconds);
+    // This player's own shots, the moment they leave the weapon: the kick,
+    // the sound, and the round flying from the muzzle as drawn.
+    for (const shot of local.takePredictedShots()) {
+      viewmodel.onShotFired();
+      audio.shot(Audio.OWN, eye, forward, shot.weapon);
+      world.addRound({
+        key: null,
+        weapon: shot.weapon,
+        drawnFrom: viewmodel.muzzleInWorld(camera, _muzzle).toArray(),
+        from: shot.from,
+        velocity: shot.velocity,
+        own: true,
+      });
+    }
+    if (local.takeReloadStart()) audio.reload(local.gun.reloadSeconds);
     if (local.takeThrow()) viewmodel.onThrow();
 
     // 4. Render state, interpolated between the last two ticks.
@@ -847,7 +910,7 @@ async function boot() {
     // No sights while the rifle is on its side for a reload.
     viewmodel.setAiming(playing && input.aiming && local.health > 0 && local.reloadMs === 0);
     viewmodel.setReload(
-      local.reloadMs > 0 ? 1 - local.reloadMs / (SIM.reloadSeconds * 1000) : null,
+      local.reloadMs > 0 ? 1 - local.reloadMs / (local.gun.reloadSeconds * 1000) : null,
     );
     viewmodel.setEyeOffset(local.eyeOffset ?? SIM.eyeOffset);
     if (dying) {
@@ -890,7 +953,7 @@ async function boot() {
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position, camera);
-    for (const at of remotes.takeReloads()) audio.reloadAt(at, eye, forward, SIM.reloadSeconds);
+    for (const { at, seconds } of remotes.takeReloads()) audio.reloadAt(at, eye, forward, seconds);
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     lightHere(eye, here);
     viewmodel.setLight(dt, here.sky, here.sun);
@@ -914,6 +977,7 @@ async function boot() {
       viewmodel.setView(camera.aspect, weaponFov);
     }
     hud.setCrosshairOpacity(viewmodel.crosshairOpacity);
+    hud.setScope(viewmodel.scope, viewmodel.held, zoom, camera);
 
     // Counters cover the whole frame, not the last pass of it. Three.js
     // clears `info.render` at the top of every `render` call, so with the

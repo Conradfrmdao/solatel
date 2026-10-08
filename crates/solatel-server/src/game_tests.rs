@@ -16,9 +16,26 @@
 use super::*;
 use solatel_protocol::glam::Vec3;
 use solatel_protocol::sim::{
-    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAGAZINE, MAX_HEALTH,
-    REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, look_direction,
+    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH, REGEN_DELAY,
+    REGEN_SECONDS, look_direction,
+    PLAYER_HALF_EXTENTS,
+    weapon::{Loadout, Optic, Round, Slot, Weapon},
 };
+
+/// What the rifle - every test's gun unless it says otherwise - does to a
+/// region at the three metres the duel is fought over.
+fn rifle(region: HitRegion) -> i16 {
+    Weapon::Rifle.damage(region, 3.0)
+}
+
+/// The rifle's magazine, and the seconds a reload of it takes.
+fn rifle_magazine() -> u32 {
+    Weapon::Rifle.stats().magazine
+}
+
+fn rifle_reload_seconds() -> f32 {
+    Weapon::Rifle.stats().reload_ticks as f32 * TICK_DT
+}
 
 /// Puts a player into the lobby and hands back what it decided.
 ///
@@ -111,11 +128,23 @@ fn queue_map(
         session_id: session,
         map: map_name.to_string(),
         tier_dollars: dollars,
+        loadout: Loadout::default(),
     });
 }
 
 /// Put a player in line and run the matchmaker until something happens.
 fn queue(lobby: &mut Lobby, player: PlayerId, session: SessionId, dollars: i64) {
+    queue_armed(lobby, player, session, dollars, Loadout::default());
+}
+
+/// Put a player in line carrying `loadout`.
+fn queue_armed(
+    lobby: &mut Lobby,
+    player: PlayerId,
+    session: SessionId,
+    dollars: i64,
+    loadout: Loadout,
+) {
     lobby.handle(GameCommand::Queue {
         player_id: player,
         session_id: session,
@@ -124,6 +153,7 @@ fn queue(lobby: &mut Lobby, player: PlayerId, session: SessionId, dollars: i64) 
         // need somewhere with clear ground.
         map: map::TEST_MAP.name.to_string(),
         tier_dollars: dollars,
+        loadout,
     });
 }
 
@@ -802,6 +832,11 @@ struct Duel {
 
 impl Duel {
     fn new() -> Self {
+        Self::armed(Loadout::default())
+    }
+
+    /// A duel whose shooter carries `loadout`; everybody else the rifle.
+    fn armed(loadout: Loadout) -> Self {
         let mut lobby = free_play();
         lobby.floor = 2;
         let (shooter_tx, shooter_rx) = mpsc::channel(512);
@@ -813,7 +848,7 @@ impl Duel {
         let shooter = shooter_join.player_id;
         let victim = victim_join.player_id;
         let bystander = bystander_join.player_id;
-        queue(&mut lobby, shooter, shooter_session, 1);
+        queue_armed(&mut lobby, shooter, shooter_session, 1, loadout);
         queue(&mut lobby, victim, victim_session, 1);
         queue(&mut lobby, bystander, bystander_session, 1);
         run_matchmaker(&mut lobby);
@@ -901,9 +936,9 @@ impl Duel {
         self.lobby.step();
     }
 
-    /// Let enough time pass for the weapon to be ready again.
+    /// Let enough time pass for the gun in hand to be ready again.
     fn reload(&mut self) {
-        let ticks = (WEAPON_FIRE_INTERVAL / TICK_DT).ceil() as usize + 1;
+        let ticks = self.body(self.shooter).arms.weapon().stats().fire_ticks as usize + 1;
         for _ in 0..ticks {
             self.lobby.step();
         }
@@ -914,8 +949,8 @@ impl Duel {
     /// Derived rather than typed, so rebalancing the weapon does not silently
     /// turn every test below into "shoot them a bit and see".
     fn shots_to_kill() -> u32 {
-        MAX_HEALTH.div_euclid(HitRegion::Body.damage()) as u32
-            + u32::from(MAX_HEALTH % HitRegion::Body.damage() != 0)
+        MAX_HEALTH.div_euclid(rifle(HitRegion::Body)) as u32
+            + u32::from(MAX_HEALTH % rifle(HitRegion::Body) != 0)
     }
 
     fn kill_the_victim(&mut self) {
@@ -957,13 +992,13 @@ fn a_body_shot_takes_body_damage() {
 
     assert_eq!(
         duel.health(duel.victim),
-        MAX_HEALTH - HitRegion::Body.damage(),
+        MAX_HEALTH - rifle(HitRegion::Body),
         "a shot at the chest should do body damage"
     );
     let stats = duel.stats(duel.shooter);
     assert_eq!(stats.shots_hit, 1);
     assert_eq!(stats.headshots, 0);
-    assert_eq!(stats.damage_dealt, HitRegion::Body.damage() as u32);
+    assert_eq!(stats.damage_dealt, rifle(HitRegion::Body) as u32);
 }
 
 #[test]
@@ -974,7 +1009,7 @@ fn a_headshot_takes_head_damage_and_is_counted() {
 
     assert_eq!(
         duel.health(duel.victim),
-        MAX_HEALTH - HitRegion::Head.damage(),
+        MAX_HEALTH - rifle(HitRegion::Head),
         "a shot at the head should do head damage"
     );
     assert_eq!(duel.stats(duel.shooter).headshots, 1);
@@ -988,7 +1023,7 @@ fn a_leg_shot_takes_leg_damage() {
 
     assert_eq!(
         duel.health(duel.victim),
-        MAX_HEALTH - HitRegion::Legs.damage(),
+        MAX_HEALTH - rifle(HitRegion::Legs),
         "a shot at the shins should do leg damage"
     );
     assert_eq!(duel.stats(duel.shooter).headshots, 0);
@@ -2628,22 +2663,24 @@ fn a_magazine_runs_out_and_a_reload_refills_it() {
     let mut duel = Duel::new();
     // Aim at nothing, so the victim survives the whole magazine.
     let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
-    for _ in 0..(MAGAZINE as usize + 5) {
+    for _ in 0..(rifle_magazine() as usize + 5) {
         duel.press(Buttons::FIRE, sky);
         duel.reload();
     }
     let stats = duel.stats(duel.shooter);
     assert_eq!(
-        stats.shots_fired, MAGAZINE,
+        stats.shots_fired,
+        rifle_magazine(),
         "fired past the end of the magazine"
     );
     assert!(
-        duel.body(duel.shooter).reload_until.is_some() || duel.body(duel.shooter).ammo == MAGAZINE
+        duel.body(duel.shooter).arms.reloading()
+            || duel.body(duel.shooter).arms.rounds() == rifle_magazine()
     );
-    duel.steps(seconds(RELOAD_SECONDS + 0.1));
+    duel.steps(seconds(rifle_reload_seconds() + 0.1));
     assert_eq!(
-        duel.body(duel.shooter).ammo,
-        MAGAZINE,
+        duel.body(duel.shooter).arms.rounds(),
+        rifle_magazine(),
         "the reload did not finish"
     );
 }
@@ -2664,8 +2701,8 @@ fn reloading_by_hand_blocks_the_trigger_until_it_is_done() {
         fired,
         "fired mid-reload"
     );
-    duel.steps(seconds(RELOAD_SECONDS));
-    assert_eq!(duel.body(duel.shooter).ammo, MAGAZINE);
+    duel.steps(seconds(rifle_reload_seconds()));
+    assert_eq!(duel.body(duel.shooter).arms.rounds(), rifle_magazine());
 }
 
 /// Whether the victim's latest snapshot says the shooter is aiming.
@@ -3008,7 +3045,7 @@ fn the_warm_up_gathers_everybody_and_lets_them_walk_but_not_fight() {
         "nothing is thrown in the warm-up"
     );
     assert!(game.grenades.is_empty());
-    assert!(body.reload_until.is_none(), "nothing reloaded");
+    assert!(!body.arms.reloading(), "nothing reloaded");
     assert!(body.previous_buttons.aim(), "the rifle may come up");
 
     // The countdown ends: on their own spawn, facing its way.
@@ -3074,7 +3111,7 @@ fn a_map_with_nowhere_to_gather_holds_everybody_still_but_lets_them_look() {
         "nothing is thrown in the warm-up"
     );
     assert!(game.grenades.is_empty());
-    assert!(!body.state.crouched && body.reload_until.is_none());
+    assert!(!body.state.crouched && !body.arms.reloading());
     assert!(
         (body.state.yaw - 1.0).abs() < 1e-4,
         "the aim is theirs to move"
@@ -3591,4 +3628,512 @@ fn a_body_whose_owner_leaves_mid_guess_stands_where_they_left_it() {
         predicted(start, &commands, ground).position,
         "the guess carried them on after their last command, and is taken back"
     );
+}
+
+// ---- the guns ----------------------------------------------------------
+//
+// Five of them, and what tells them apart is all the server's: the rate, the
+// magazine, the reload, the draw, the damage at each range and the round's
+// flight. Most of these are fought over the duel's three metres, where a
+// round lands inside the tick it is fired; the long ones are moved onto
+// open ground, because no map has a clear 300 metres and a test that fired
+// across one would be measuring its buildings.
+
+/// Flat ground as far as anybody can shoot.
+static OPEN_BRUSHES: &[map::Brush] = &[map::Brush::new(
+    Vec3::new(-2000.0, -1.0, -2000.0),
+    Vec3::new(2000.0, 0.0, 2000.0),
+)];
+static OPEN_SPAWNS: &[map::Spawn] = &[map::Spawn {
+    position: Vec3::new(0.0, 1.0, 0.0),
+    yaw: 0.0,
+}];
+static OPEN_GROUND: map::Map =
+    map::Map::new("open", 1.0, 2000.0, 2000.0, OPEN_BRUSHES, OPEN_SPAWNS, 30);
+
+impl Duel {
+    /// The duel moved onto open ground: the shooter at the origin facing
+    /// -Z, the victim `distance` metres down the line, the bystander well
+    /// off it, every history filled where they now stand.
+    fn out_in_the_open(&mut self, distance: f32) {
+        let stand = |x: f32, z: f32| {
+            PlayerState::spawned_at(map::Spawn {
+                position: Vec3::new(x, PLAYER_HALF_EXTENTS.y, z),
+                yaw: 0.0,
+            })
+        };
+        let game = self.lobby.matches.get_mut(&self.match_id).unwrap();
+        game.map = &OPEN_GROUND;
+        for (id, state) in [
+            (self.shooter, stand(0.0, 0.0)),
+            (self.victim, stand(0.0, -distance)),
+            (self.bystander, stand(400.0, 400.0)),
+        ] {
+            let body = game.bodies.get_mut(&id).unwrap();
+            body.state = state;
+            body.guess = None;
+            body.history.clear();
+            body.last_input = idle_input(state);
+        }
+        self.steps(40);
+    }
+
+    /// One tick of the victim running `right` (-1 to 1) across the line of
+    /// fire while the shooter does `shooter_buttons` at `target`.
+    fn strafe_tick(&mut self, right: f32, shooter_buttons: u8, target: Vec3) {
+        self.seq += 1;
+        let victim_yaw = self.body(self.victim).state.yaw;
+        self.lobby.handle(GameCommand::Inputs {
+            player_id: self.victim,
+            session_id: self.victim_session,
+            commands: vec![InputCommand {
+                seq: self.seq,
+                forward: 0.0,
+                right,
+                yaw: victim_yaw,
+                pitch: 0.0,
+                buttons: Buttons(0),
+            }],
+        });
+        self.press(shooter_buttons, target);
+    }
+
+    fn shooter_saw(&mut self) -> Vec<ServerMsg> {
+        drain(&mut self.shooter_rx)
+    }
+}
+
+/// How far under the line of sight `weapon`'s round is `distance` metres
+/// out, and how long it took to get there, by the shared flight.
+fn flight_to(weapon: Weapon, distance: f32) -> (f32, f32) {
+    let mut round = Round::fired(weapon, Vec3::ZERO, 0.0, 0.0);
+    let mut seconds = 0.0;
+    while -round.position.z < distance {
+        round.step(weapon.stats().drag, TICK_DT);
+        seconds += TICK_DT;
+    }
+    (-round.position.y, seconds)
+}
+
+#[test]
+fn every_automatic_gun_fires_at_its_own_rate_and_no_faster() {
+    for weapon in [Weapon::Smg, Weapon::Rifle, Weapon::Lmg] {
+        let mut duel = Duel::armed(Loadout {
+            primary: weapon,
+            optic: weapon.default_optic(),
+        });
+        let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+        // The trigger held for a second, every tick.
+        for _ in 0..TICK_HZ {
+            duel.press(Buttons::FIRE, sky);
+        }
+        let every = weapon.stats().fire_ticks;
+        let expected = (TICK_HZ - 1) / every + 1;
+        assert_eq!(
+            duel.stats(duel.shooter).shots_fired,
+            expected,
+            "{weapon:?} fires every {every} ticks"
+        );
+    }
+}
+
+#[test]
+fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
+    let mut duel = Duel::armed(Loadout {
+        primary: Weapon::Sniper,
+        optic: Optic::X4,
+    });
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    for _ in 0..200 {
+        duel.press(Buttons::FIRE, sky);
+    }
+    assert_eq!(duel.stats(duel.shooter).shots_fired, 1, "held, it fired once");
+
+    // Pulled as fast as a finger can - every other tick - the bolt still
+    // decides: the first pull fires, and then one a second and a quarter.
+    for i in 0..200 {
+        duel.press(if i % 2 == 0 { 0 } else { Buttons::FIRE }, sky);
+    }
+    let bolt = Weapon::Sniper.stats().fire_ticks;
+    assert_eq!(duel.stats(duel.shooter).shots_fired, 1 + 1 + (200 - 2) / bolt);
+
+    // The pistol the same way, with its own rate.
+    duel.steps(seconds(1.5));
+    for _ in 0..seconds(0.5) {
+        duel.press(Buttons::SIDEARM, sky);
+    }
+    let before = duel.stats(duel.shooter).shots_fired;
+    for _ in 0..50 {
+        duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
+    }
+    assert_eq!(duel.stats(duel.shooter).shots_fired, before + 1);
+    for i in 0..60 {
+        let fire = if i % 2 == 0 { 0 } else { Buttons::FIRE };
+        duel.press(Buttons::SIDEARM | fire, sky);
+    }
+    let pistol = Weapon::Pistol.stats().fire_ticks;
+    assert_eq!(duel.stats(duel.shooter).shots_fired, before + 1 + 60 / pistol);
+}
+
+#[test]
+fn changing_guns_takes_the_drawn_guns_time_and_puts_away_a_reload() {
+    let mut duel = Duel::new();
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    for _ in 0..3 {
+        duel.press(Buttons::FIRE, sky);
+        duel.reload();
+    }
+    duel.press(Buttons::RELOAD, sky);
+    assert!(duel.body(duel.shooter).arms.reloading());
+
+    // Out comes the pistol, and the magazine that was going in is not in.
+    duel.press(Buttons::SIDEARM, sky);
+    let arms = duel.body(duel.shooter).arms;
+    assert_eq!(arms.held, Slot::Sidearm);
+    assert!(!arms.reloading(), "the reload went away with the rifle");
+    assert_eq!(arms.spare(), rifle_magazine() - 3);
+
+    // Not ready until it is drawn.
+    let fired = duel.stats(duel.shooter).shots_fired;
+    let draw = Weapon::Pistol.stats().draw_ticks as usize;
+    for _ in 0..(draw - 2) / 2 {
+        duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
+        duel.press(Buttons::SIDEARM, sky);
+    }
+    assert_eq!(duel.stats(duel.shooter).shots_fired, fired, "fired while drawing");
+    duel.steps(4);
+    duel.press(Buttons::SIDEARM, sky);
+    duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
+    assert_eq!(duel.stats(duel.shooter).shots_fired, fired + 1);
+    assert_eq!(
+        duel.body(duel.shooter).arms.rounds(),
+        Weapon::Pistol.stats().magazine - 1
+    );
+
+    // And back: the rifle takes its own time, longer than the pistol's.
+    duel.press(0, sky);
+    let arms = duel.body(duel.shooter).arms;
+    assert_eq!(arms.weapon(), Weapon::Rifle);
+    assert_eq!(arms.ready_at - duel.lobby.tick, Weapon::Rifle.stats().draw_ticks);
+    assert!(Weapon::Rifle.stats().draw_ticks > Weapon::Pistol.stats().draw_ticks);
+}
+
+#[test]
+fn a_long_shot_takes_time_to_arrive() {
+    let mut duel = Duel::new();
+    duel.out_in_the_open(200.0);
+    let chest = duel.position(duel.victim);
+    let _ = duel.shooter_saw();
+    duel.fire_at(chest);
+
+    // Fired, and not there yet: 200 metres is a quarter of a second for a
+    // rifle round, and the shooter's lag covers a tenth of it.
+    assert_eq!(duel.health(duel.victim), MAX_HEALTH, "a round arrived instantly");
+    assert_eq!(duel.lobby.matches[&duel.match_id].rounds.len(), 1);
+    let fired = duel
+        .shooter_saw()
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMsg::ShotFired {
+                shot,
+                weapon,
+                landed,
+                velocity,
+                ..
+            } => Some((shot, weapon, landed, velocity)),
+            _ => None,
+        })
+        .expect("the shot was told");
+    assert_eq!(fired.1, Weapon::Rifle);
+    assert!(fired.2.is_none(), "it had not landed when it was told");
+    assert!((fired.3.length() - Weapon::Rifle.stats().muzzle_velocity).abs() < 1.0);
+
+    let (_, arrives) = flight_to(Weapon::Rifle, 200.0);
+    duel.steps(seconds(arrives));
+    assert_eq!(
+        duel.health(duel.victim),
+        MAX_HEALTH - Weapon::Rifle.damage(HitRegion::Body, 200.0),
+        "and then it did, doing what a rifle does at 200 m"
+    );
+    let landed = duel.shooter_saw().into_iter().find_map(|m| match m {
+        ServerMsg::ShotLanded { shot, landing, .. } => Some((shot, landing)),
+        _ => None,
+    });
+    let (shot, landing) = landed.expect("its landing was told");
+    assert_eq!(shot, fired.0, "paired with the shot it was");
+    assert!(landing.hit_player && landing.struck);
+    assert!(duel.lobby.matches[&duel.match_id].rounds.is_empty());
+}
+
+#[test]
+fn a_long_shot_falls_and_has_to_be_aimed_over() {
+    let sniper = Loadout {
+        primary: Weapon::Sniper,
+        optic: Optic::X4,
+    };
+    let distance = 300.0;
+    let (drop, arrives) = flight_to(Weapon::Sniper, distance);
+    assert!(drop > 0.4, "a .308 round drops {drop} m by {distance} m");
+
+    // Aimed at the middle of the head, it falls into the body.
+    let mut duel = Duel::armed(sniper);
+    duel.out_in_the_open(distance);
+    let head = duel.position(duel.victim) + Vec3::new(0.0, (HEAD_BOTTOM + PLAYER_HALF_EXTENTS.y) / 2.0, 0.0);
+    duel.fire_at(head);
+    duel.steps(seconds(arrives));
+    assert_eq!(
+        duel.health(duel.victim),
+        MAX_HEALTH - Weapon::Sniper.damage(HitRegion::Body, distance),
+        "a round aimed at a head 300 m away should land in the body"
+    );
+    assert_eq!(duel.stats(duel.shooter).headshots, 0);
+
+    // Held over by the drop, it is the head, and with this gun that is all.
+    let mut duel = Duel::armed(sniper);
+    duel.out_in_the_open(distance);
+    duel.fire_at(head + Vec3::new(0.0, drop, 0.0));
+    duel.steps(seconds(arrives));
+    assert!(!duel.alive(duel.victim), "held over, the round found the head");
+    assert_eq!(duel.stats(duel.shooter).headshots, 1);
+}
+
+#[test]
+fn a_running_target_has_to_be_led() {
+    let distance = 300.0;
+    let (drop, arrives) = flight_to(Weapon::Rifle, distance);
+    let run = |lead: bool| {
+        let mut duel = Duel::new();
+        duel.out_in_the_open(distance);
+        // Up to speed across the line of fire.
+        let chest = duel.position(duel.victim);
+        for _ in 0..20 {
+            duel.strafe_tick(1.0, 0, chest);
+        }
+        let speed = duel.body(duel.victim).state.velocity;
+        assert!(speed.length() > 7.0, "test setup: running at {speed:?}");
+        // The round's clock starts where the shooter's screen was, and the
+        // target is where it really is when the round gets there: led by
+        // its speed times what is left of the flight once the round has
+        // caught up with now.
+        let behind = (duel.lobby.matches[&duel.match_id].rounds.len(), ());
+        assert_eq!(behind.0, 0);
+        let caught_up = 7.0 * TICK_DT;
+        let aim = duel.position(duel.victim)
+            + Vec3::new(0.0, drop, 0.0)
+            + if lead { speed * (arrives - caught_up) } else { Vec3::ZERO };
+        duel.strafe_tick(1.0, Buttons::FIRE, aim);
+        for _ in 0..seconds(arrives) {
+            duel.strafe_tick(1.0, 0, aim);
+        }
+        duel.health(duel.victim)
+    };
+    assert_eq!(run(false), MAX_HEALTH, "a running target shot where it stood was missed");
+    assert!(run(true) < MAX_HEALTH, "led by its run, it was hit");
+}
+
+#[test]
+fn damage_falls_off_with_range_and_never_for_the_sniper() {
+    for (weapon, distance) in [
+        (Weapon::Rifle, 75.0),
+        (Weapon::Rifle, 150.0),
+        (Weapon::Smg, 20.0),
+        (Weapon::Smg, 60.0),
+        (Weapon::Sniper, 250.0),
+    ] {
+        let mut duel = Duel::armed(Loadout {
+            primary: weapon,
+            optic: weapon.default_optic(),
+        });
+        duel.out_in_the_open(distance);
+        let (drop, arrives) = flight_to(weapon, distance);
+        let chest = duel.position(duel.victim) + Vec3::new(0.0, drop, 0.0);
+        duel.fire_at(chest);
+        duel.steps(seconds(arrives) + 2);
+        assert_eq!(
+            duel.health(duel.victim),
+            MAX_HEALTH - weapon.damage(HitRegion::Body, distance),
+            "{weapon:?} at {distance} m"
+        );
+    }
+    assert!(Weapon::Rifle.damage(HitRegion::Body, 150.0) < Weapon::Rifle.damage(HitRegion::Body, 10.0));
+}
+
+#[test]
+fn one_sniper_round_to_the_head_kills_and_the_feed_says_which_gun() {
+    let mut duel = Duel::armed(Loadout {
+        primary: Weapon::Sniper,
+        optic: Optic::X3,
+    });
+    let head = duel.position(duel.victim) + Vec3::new(0.0, HEAD_BOTTOM + 0.1, 0.0);
+    let _ = drain(&mut duel.victim_rx);
+    duel.fire_at(head);
+    assert!(!duel.alive(duel.victim), "one round to the head");
+    let cause = drain(&mut duel.victim_rx).into_iter().find_map(|m| match m {
+        ServerMsg::Killed { cause, headshot, .. } => Some((cause, headshot)),
+        _ => None,
+    });
+    assert_eq!(cause, Some((DeathCause::Sniper, true)));
+}
+
+#[test]
+fn a_round_that_meets_nothing_is_spent_at_its_range() {
+    let mut duel = Duel::new();
+    duel.out_in_the_open(50.0);
+    // Out over the empty ground, a little up, past the victim's side.
+    let away = duel.body(duel.shooter).state.eye_position() + Vec3::new(30.0, 2.0, -100.0);
+    let _ = duel.shooter_saw();
+    duel.press(Buttons::SIDEARM, away);
+    duel.steps(seconds(0.5));
+    duel.press(Buttons::SIDEARM | Buttons::FIRE, away);
+    duel.steps(seconds(1.0));
+    let landed = duel.shooter_saw().into_iter().find_map(|m| match m {
+        ServerMsg::ShotLanded { landing, .. } => Some(landing),
+        ServerMsg::ShotFired {
+            landed: Some(landing),
+            ..
+        } => Some(landing),
+        _ => None,
+    });
+    let landing = landed.expect("the pistol round came down somewhere");
+    assert!(!landing.hit_player);
+    if !landing.struck {
+        // Out of range in the open: as far as a pistol round goes.
+        let gone = (landing.at - Vec3::new(0.0, 0.0, 0.0)).length();
+        assert!(gone > Weapon::Pistol.stats().range * 0.9, "spent at {gone} m");
+    }
+    assert!(duel.lobby.matches[&duel.match_id].rounds.is_empty());
+    assert_eq!(duel.health(duel.victim), MAX_HEALTH);
+}
+
+#[test]
+fn the_loadout_is_the_one_queued_with_as_the_game_allows_it() {
+    let mut lobby = free_play();
+    let (tx, mut rx) = mpsc::channel(4096);
+    let (joined, session) = join(&mut lobby, "Choosy", None, tx);
+    let player = joined.player_id;
+    // An SMG cannot carry a 4x: it gets its own red dot.
+    queue_armed(&mut lobby, player, session, 1, Loadout {
+        primary: Weapon::Smg,
+        optic: Optic::X4,
+    });
+    // Asking again in line changes it and keeps the place.
+    queue_armed(&mut lobby, player, session, 1, Loadout {
+        primary: Weapon::Lmg,
+        optic: Optic::X3,
+    });
+    run_matchmaker(&mut lobby);
+    let match_id = lobby.match_of(player).expect("in a match");
+    let wanted = Loadout {
+        primary: Weapon::Lmg,
+        optic: Optic::X3,
+    };
+    assert_eq!(lobby.matches[&match_id].bodies[&player].arms.loadout, wanted);
+    let told = drain(&mut rx).into_iter().find_map(|m| match m {
+        ServerMsg::MatchStarted { loadout, .. } => Some(loadout),
+        _ => None,
+    });
+    assert_eq!(told, Some(wanted), "the match says what it settled on");
+    let arms = lobby.matches[&match_id].bodies[&player].arms;
+    assert_eq!(arms.rounds(), Weapon::Lmg.stats().magazine);
+    assert_eq!(arms.spare(), Weapon::Pistol.stats().magazine);
+
+    // And a pistol as a primary is the rifle.
+    assert_eq!(
+        Loadout {
+            primary: Weapon::Pistol,
+            optic: Optic::Irons,
+        }
+        .sanitized()
+        .primary,
+        Weapon::Rifle
+    );
+}
+
+#[test]
+fn everybody_sees_the_gun_in_hand_and_its_owner_sees_both_magazines() {
+    let mut duel = Duel::armed(Loadout {
+        primary: Weapon::Sniper,
+        optic: Optic::X3,
+    });
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    let seen = |duel: &mut Duel| {
+        let _ = drain(&mut duel.victim_rx);
+        duel.lobby.broadcast_snapshot(duel.match_id);
+        drain(&mut duel.victim_rx)
+            .into_iter()
+            .rev()
+            .find_map(|m| match m {
+                ServerMsg::Snapshot { players, .. } => Some(players),
+                _ => None,
+            })
+            .expect("a snapshot")
+            .into_iter()
+            .find(|p| p.id == duel.shooter)
+            .expect("the shooter in it")
+    };
+    let before = seen(&mut duel);
+    assert_eq!((before.weapon, before.optic), (Weapon::Sniper, Optic::X3));
+
+    duel.press(Buttons::SIDEARM, sky);
+    let after = seen(&mut duel);
+    assert_eq!(after.weapon, Weapon::Pistol, "the pistol is seen in hand");
+
+    let _ = duel.shooter_saw();
+    duel.lobby.broadcast_snapshot(duel.match_id);
+    let own = duel.shooter_saw().into_iter().rev().find_map(|m| match m {
+        ServerMsg::Snapshot {
+            weapon,
+            ammo,
+            spare_ammo,
+            switch_ms,
+            ..
+        } => Some((weapon, ammo, spare_ammo, switch_ms)),
+        _ => None,
+    });
+    let (weapon, ammo, spare, switch_ms) = own.expect("the shooter's own snapshot");
+    assert_eq!(weapon, Weapon::Pistol);
+    assert_eq!(ammo, Weapon::Pistol.stats().magazine);
+    assert_eq!(spare, Weapon::Sniper.stats().magazine);
+    assert!(switch_ms > 0 && switch_ms <= 350, "drawing for {switch_ms} ms");
+}
+
+#[test]
+fn a_late_packet_leaves_the_gun_in_hand() {
+    let mut duel = Duel::new();
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    for _ in 0..seconds(0.5) {
+        duel.press(Buttons::SIDEARM, sky);
+    }
+    assert_eq!(duel.body(duel.shooter).arms.held, Slot::Sidearm);
+    // Nothing from the shooter for a while: the body runs on a guess, and a
+    // guess that forgot the pistol would put the rifle back in their hands
+    // and cost them its draw when the packets came.
+    duel.steps(10);
+    assert!(duel.body(duel.shooter).guess.is_some(), "test setup: guessing");
+    assert_eq!(duel.body(duel.shooter).arms.held, Slot::Sidearm);
+    assert!(duel.body(duel.shooter).arms.ready(duel.lobby.tick));
+}
+
+#[test]
+fn the_warm_up_lets_everybody_change_guns_and_fire_none_of_them() {
+    let (mut lobby, match_id, player, session, _rx) = warming_up();
+    for seq in 1..20 {
+        lobby.handle(GameCommand::Inputs {
+            player_id: player,
+            session_id: session,
+            commands: vec![InputCommand {
+                seq,
+                forward: 0.0,
+                right: 0.0,
+                yaw: 0.0,
+                pitch: 0.0,
+                buttons: Buttons(Buttons::SIDEARM | Buttons::FIRE),
+            }],
+        });
+        lobby.step();
+    }
+    let body = &lobby.matches[&match_id].bodies[&player];
+    assert!(lobby.matches[&match_id].warming_up(lobby.tick));
+    assert_eq!(body.arms.held, Slot::Sidearm, "the pistol may come out");
+    assert_eq!(body.stats.shots_fired, 0, "and may not be fired");
 }

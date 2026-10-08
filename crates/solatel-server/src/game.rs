@@ -61,15 +61,16 @@ use solatel_protocol::{
     Stakes,
     ids::{MatchId, PlayerId, ResumeToken, SessionId, WithdrawalId},
     net::{
-        DeathCause, GrenadeSnapshot, INTERPOLATION_DELAY_MS, MAX_INPUTS_PER_MESSAGE,
+        DeathCause, GrenadeSnapshot, INTERPOLATION_DELAY_MS, Landing, MAX_INPUTS_PER_MESSAGE,
         MAX_LAG_COMPENSATION_MS, PlayerSnapshot, SNAPSHOT_HZ, ScoreEntry, ServerMsg, TICK_DT,
         TICK_HZ, TableStatus, Tier,
     },
     sim::{
         Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HitRegion, InputCommand, KILL_CREDIT_SECONDS,
-        MAGAZINE, MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS,
-        RELOAD_SECONDS, WEAPON_FIRE_INTERVAL, WEAPON_RANGE, Zone, grenade, hitscan, map, zone_at,
-        zone_damage_per_second,
+        MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS, Zone, grenade,
+        hitscan, map,
+        weapon::{Loadout, Round, Slot, Weapon},
+        zone_at, zone_damage_per_second,
     },
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -123,9 +124,10 @@ const MAX_CARRY_FORWARD_TICKS: u32 = 16;
 /// stood in for are dropped as history.
 const GUESS_WINDOW_TICKS: u32 = 32;
 
-/// One second of authoritative states, which is what lag compensation rewinds
-/// through.
-const HISTORY_TICKS: usize = TICK_HZ as usize;
+/// Two seconds of authoritative states: what lag compensation rewinds
+/// through, and what a reaction is measured against for a round that was in
+/// the air for half a second before it landed.
+const HISTORY_TICKS: usize = 2 * TICK_HZ as usize;
 
 const TICKS_PER_SNAPSHOT: u32 = TICK_HZ / SNAPSHOT_HZ;
 
@@ -229,8 +231,8 @@ const GATHERING_SPACING: f32 = 1.6;
 enum Hold {
     /// Live: everything.
     Free,
-    /// Together on the gathering ground: walk, jump, crouch and raise the
-    /// rifle, and nothing that could hurt anybody.
+    /// Together on the gathering ground: walk, jump, crouch, raise the gun
+    /// and change it, and nothing that could hurt anybody.
     Gathered,
     /// On their own spawn, for a map with nowhere to gather: look round -
     /// along the sights too - and nothing else, or the warm-up would be a
@@ -333,12 +335,14 @@ pub enum GameCommand {
         player_id: PlayerId,
         commands: Vec<InputCommand>,
     },
-    /// Put this player in line for a table - one map at one stake.
+    /// Put this player in line for a table - one map at one stake - with
+    /// the guns they will carry.
     Queue {
         player_id: PlayerId,
         session_id: SessionId,
         map: String,
         tier_dollars: i64,
+        loadout: Loadout,
     },
     /// Take them back out of it. No money has moved, so nothing is returned.
     LeaveQueue {
@@ -483,6 +487,9 @@ struct Connection {
     withdraw_after: f32,
     outbound: mpsc::Sender<ServerMsg>,
     rtt_ms: f32,
+    /// The guns they asked to carry, as the game allows them: the last
+    /// they queued with, and what their next match gives them.
+    loadout: Loadout,
 }
 
 impl Connection {
@@ -513,8 +520,8 @@ struct Body {
     /// Retained so a tick with no fresh input can continue the player's motion
     /// rather than stopping them dead on a single dropped packet.
     last_input: InputCommand,
-    /// Game time of the last shot, for enforcing the fire rate.
-    last_fire_at: f32,
+    /// The two guns, and what each is doing.
+    arms: Arms,
     /// The body is being moved on a guess while its owner's commands are
     /// late. See [`GUESS_WINDOW_TICKS`].
     guess: Option<Guess>,
@@ -522,13 +529,11 @@ struct Body {
     history: VecDeque<(u32, PlayerState)>,
     /// False once their stake has left escrow, however it left.
     staked: bool,
-    /// Rounds in the magazine, and when the reload under way finishes.
-    ammo: u32,
-    reload_until: Option<f32>,
     /// Grenades left this life.
     grenades: u32,
     /// Buttons of the last command consumed, so a throw happens on the
-    /// press and not on every tick it is held.
+    /// press and not on every tick it is held - and a pistol or a bolt fires
+    /// on the pull of the trigger.
     previous_buttons: Buttons,
     /// Game time of the last damage from anything, for regeneration.
     last_hurt_at: f32,
@@ -551,7 +556,7 @@ struct Body {
 }
 
 impl Body {
-    fn new(state: PlayerState) -> Self {
+    fn new(state: PlayerState, loadout: Loadout) -> Self {
         Self {
             stats: Stats::default(),
             winnings_micro_usd: 0,
@@ -559,12 +564,10 @@ impl Body {
             pending: VecDeque::new(),
             last_applied_seq: 0,
             last_input: idle_input(state),
-            last_fire_at: f32::NEG_INFINITY,
+            arms: Arms::new(loadout),
             guess: None,
             history: VecDeque::with_capacity(HISTORY_TICKS),
             staked: true,
-            ammo: MAGAZINE,
-            reload_until: None,
             grenades: GRENADES_PER_LIFE,
             previous_buttons: Buttons::empty(),
             last_hurt_at: f32::NEG_INFINITY,
@@ -609,13 +612,11 @@ impl Body {
     /// [`GUESS_WINDOW_TICKS`]. That is never more commands than ticks: each
     /// tick runs one, or guesses and owes one, so no client can make a body
     /// move faster by holding its commands back and sending them together.
-    #[allow(clippy::too_many_arguments)]
     fn advance(
         &mut self,
         id: PlayerId,
         tick: u32,
         hold: Hold,
-        now: f32,
         ground: &map::Map,
         shots: &mut Vec<Shot>,
         throws: &mut Vec<(PlayerId, PlayerState)>,
@@ -655,7 +656,7 @@ impl Body {
                 break;
             };
             let waited = tick.wrapping_sub(arrived);
-            self.run_command(id, command, waited, hold, now, ground, shots, throws);
+            self.run_command(id, command, waited, hold, tick, ground, shots, throws);
         }
         // Still short of this tick: guess the rest from here.
         for _ in run..owed {
@@ -687,7 +688,7 @@ impl Body {
         mut command: InputCommand,
         waited: u32,
         hold: Hold,
-        now: f32,
+        tick: u32,
         ground: &map::Map,
         shots: &mut Vec<Shot>,
         throws: &mut Vec<(PlayerId, PlayerState)>,
@@ -695,20 +696,36 @@ impl Body {
         match hold {
             Hold::Free => {}
             Hold::Gathered => {
-                command.buttons =
-                    Buttons(command.buttons.0 & (Buttons::JUMP | Buttons::CROUCH | Buttons::AIM));
+                command.buttons = Buttons(
+                    command.buttons.0
+                        & (Buttons::JUMP | Buttons::CROUCH | Buttons::AIM | Buttons::SIDEARM),
+                );
             }
             Hold::Still => {
-                // Looking round is allowed, and raising the rifle is looking.
+                // Looking round is allowed, and raising the gun is looking;
+                // so is changing it, which hurts nobody.
                 command.forward = 0.0;
                 command.right = 0.0;
-                command.buttons = Buttons(command.buttons.0 & Buttons::AIM);
+                command.buttons = Buttons(command.buttons.0 & (Buttons::AIM | Buttons::SIDEARM));
             }
         }
         self.last_applied_seq = command.seq;
         self.last_input = command;
         solatel_protocol::sim::step_tick(&mut self.state, &command, ground);
-        if command.buttons.fire() {
+        // Which gun is a posture, like a crouch: whichever the command holds.
+        self.arms.want(
+            if command.buttons.sidearm() {
+                Slot::Sidearm
+            } else {
+                Slot::Primary
+            },
+            tick,
+        );
+        // A pistol or a bolt fires on the pull, not for as long as the
+        // trigger is held.
+        if command.buttons.fire()
+            && (self.arms.weapon().stats().automatic || !self.previous_buttons.fire())
+        {
             // From where this command left them: when several are run in one
             // tick, each shot leaves from its own place.
             shots.push(Shot {
@@ -722,8 +739,8 @@ impl Body {
         if command.buttons.throw() && !self.previous_buttons.throw() && self.grenades > 0 {
             throws.push((id, self.state));
         }
-        if command.buttons.reload() && self.reload_until.is_none() && self.ammo < MAGAZINE {
-            self.reload_until = Some(now + RELOAD_SECONDS);
+        if command.buttons.reload() {
+            self.arms.reload(tick);
         }
         self.previous_buttons = command.buttons;
     }
@@ -741,11 +758,13 @@ impl Body {
         guess.ticks = guess.ticks.saturating_add(1);
         let mut carried = self.last_input;
         // A crouch is a posture, not an action: it is held, and a late
-        // packet should not stand anybody up. Nor lower their rifle.
+        // packet should not stand anybody up. Nor lower their gun, nor
+        // change it.
         let held = carried.buttons;
         carried.buttons = Buttons::empty();
         carried.buttons.set(Buttons::CROUCH, held.crouch());
         carried.buttons.set(Buttons::AIM, held.aim());
+        carried.buttons.set(Buttons::SIDEARM, held.sidearm());
         if guess.ticks > MAX_CARRY_FORWARD_TICKS {
             carried.forward = 0.0;
             carried.right = 0.0;
@@ -769,6 +788,146 @@ impl Body {
             .map(|(_, state)| *state)
             .unwrap_or(self.state)
     }
+}
+
+/// A player's two guns, and what each is doing.
+///
+/// Every timer is a tick. The rate of fire is most of what tells the guns
+/// apart, and a timer kept in seconds of server uptime blurs as the server
+/// stays up: an `f32` of seconds resolves a tick until about a day and a
+/// half, and by half a day it could already turn an eight-tick rifle into a
+/// nine-tick one.
+#[derive(Debug, Clone, Copy)]
+struct Arms {
+    loadout: Loadout,
+    /// Rounds in each gun's magazine: the primary's, then the pistol's.
+    rounds: [u32; 2],
+    /// Which gun is in hand, or on its way there.
+    held: Slot,
+    /// The tick the gun in hand can first fire: until it has been drawn.
+    ready_at: u32,
+    /// The tick a reload under way is done.
+    reload_done: Option<u32>,
+    /// The tick the gun in hand may next fire, by its rate.
+    next_fire: u32,
+}
+
+impl Arms {
+    fn new(loadout: Loadout) -> Self {
+        let loadout = loadout.sanitized();
+        Self {
+            loadout,
+            rounds: [
+                loadout.primary.stats().magazine,
+                Weapon::Pistol.stats().magazine,
+            ],
+            held: Slot::Primary,
+            ready_at: 0,
+            reload_done: None,
+            next_fire: 0,
+        }
+    }
+
+    fn slot_index(slot: Slot) -> usize {
+        match slot {
+            Slot::Primary => 0,
+            Slot::Sidearm => 1,
+        }
+    }
+
+    /// The gun in hand.
+    fn weapon(&self) -> Weapon {
+        self.loadout.weapon(self.held)
+    }
+
+    fn rounds(&self) -> u32 {
+        self.rounds[Self::slot_index(self.held)]
+    }
+
+    /// Rounds in the gun that is not in hand.
+    fn spare(&self) -> u32 {
+        self.rounds[1 - Self::slot_index(self.held)]
+    }
+
+    fn reloading(&self) -> bool {
+        self.reload_done.is_some()
+    }
+
+    /// Whether the gun in hand has been drawn.
+    fn ready(&self, tick: u32) -> bool {
+        tick >= self.ready_at
+    }
+
+    /// The command wants `slot` in hand. Changing takes the drawn gun's own
+    /// time, and puts away a reload half done: the magazine that was going
+    /// in is not in.
+    fn want(&mut self, slot: Slot, tick: u32) {
+        if slot == self.held {
+            return;
+        }
+        self.held = slot;
+        self.ready_at = tick + self.weapon().stats().draw_ticks;
+        self.reload_done = None;
+    }
+
+    /// Start putting a fresh magazine in, unless one is going in, the gun
+    /// is still being drawn, or the magazine is full.
+    fn reload(&mut self, tick: u32) {
+        let stats = self.weapon().stats();
+        if self.reloading() || !self.ready(tick) || self.rounds() >= stats.magazine {
+            return;
+        }
+        self.reload_done = Some(tick + stats.reload_ticks);
+    }
+
+    /// This tick's bookkeeping: a reload finishing.
+    fn settle(&mut self, tick: u32) {
+        if let Some(done) = self.reload_done
+            && tick >= done
+        {
+            self.rounds[Self::slot_index(self.held)] = self.weapon().stats().magazine;
+            self.reload_done = None;
+        }
+    }
+
+    /// Ticks from `tick` to `until`, as milliseconds for a client's clock.
+    fn ms_until(tick: u32, until: u32) -> u32 {
+        (until.saturating_sub(tick) as f32 * TICK_DT * 1000.0).round() as u32
+    }
+}
+
+/// A round in the air: fired before this tick and still going.
+#[derive(Debug, Clone, Copy)]
+struct Flying {
+    shot: u32,
+    shooter: PlayerId,
+    weapon: Weapon,
+    /// Where it was fired from, for the range it is judged at.
+    origin: solatel_protocol::glam::Vec3,
+    round: Round,
+    /// Metres along its flight so far.
+    travelled: f32,
+    /// The tick it was fired on and how far that shot was rewound, so a
+    /// reaction is measured against the moment the trigger was pulled.
+    fired_tick: u32,
+    rewind_ms: f32,
+    /// The aim had swung through a flick just before it was fired.
+    flicked: bool,
+}
+
+/// Where a step of a round's flight came down, if it did.
+enum Struck {
+    /// Still going.
+    Nothing,
+    /// Into the map, or out of range in the open (`struck` false).
+    Ground(Landing),
+    /// Into a player, here, on this part of them, this far from the muzzle.
+    Player {
+        landing: Landing,
+        victim: PlayerId,
+        region: HitRegion,
+        distance: f32,
+    },
 }
 
 /// A body moved on a guess while its owner's commands are late: where their
@@ -835,6 +994,10 @@ struct Match {
     /// Grenades thrown and not yet gone off.
     grenades: Vec<LiveGrenade>,
     next_grenade: u32,
+    /// Rounds fired and still in the air, and the number the next shot is
+    /// given.
+    rounds: Vec<Flying>,
+    next_shot: u32,
     /// Everything this match is, as it is played, for a reviewer. In a cell
     /// because it is written from `to_match`, which everything that tells a
     /// match anything already goes through with a shared borrow.
@@ -1132,6 +1295,7 @@ impl Lobby {
             player_id,
             name,
             map: game.map.name,
+            weapon: body.arms.loadout.primary.id(),
             stake: game.stakes.entry(),
             outcome,
             counts: Counts {
@@ -1244,6 +1408,8 @@ impl Lobby {
                 next_spawn: 0,
                 grenades: Vec::new(),
                 next_grenade: 0,
+                rounds: Vec::new(),
+                next_shot: 0,
                 recorder: Default::default(),
             },
         );
@@ -1284,6 +1450,12 @@ impl Lobby {
 
     /// Put a paid player into a match.
     fn admit(&mut self, player_id: PlayerId, match_id: MatchId) {
+        // The guns they queued with: theirs for the whole of this life.
+        let loadout = self
+            .connections
+            .get(&player_id)
+            .map(|c| c.loadout)
+            .unwrap_or_default();
         let Some(game) = self.matches.get_mut(&match_id) else {
             return;
         };
@@ -1299,7 +1471,7 @@ impl Lobby {
             spawn
         };
         game.awaiting.remove(&player_id);
-        let mut body = Body::new(PlayerState::spawned_at(home));
+        let mut body = Body::new(PlayerState::spawned_at(home), loadout);
         body.spawn = spawn;
         body.home = home;
         game.bodies.insert(player_id, body);
@@ -1367,12 +1539,11 @@ impl Lobby {
             self.withdraw(player_id, match_id);
         }
 
-        let Some(started) = self.match_started(match_id) else {
-            return;
-        };
         for player_id in bodies {
-            if let Some(connection) = self.connections.get(&player_id) {
-                connection.send(started.clone());
+            if let Some(started) = self.match_started(match_id, player_id)
+                && let Some(connection) = self.connections.get(&player_id)
+            {
+                connection.send(started);
             }
         }
         self.broadcast_scoreboard(match_id);
@@ -1564,7 +1735,7 @@ impl Lobby {
                     // After the reply, so it lands behind the `Welcome` the
                     // connection writes first.
                     if let Some(match_id) = self.match_of(player_id)
-                        && let Some(started) = self.match_started(match_id)
+                        && let Some(started) = self.match_started(match_id, player_id)
                         && let Some(connection) = self.connections.get(&player_id)
                     {
                         connection.send(started);
@@ -1596,6 +1767,7 @@ impl Lobby {
                         withdraw_after: f32::NEG_INFINITY,
                         outbound,
                         rtt_ms: 0.0,
+                        loadout: Loadout::default(),
                     },
                 );
                 let _ = reply.send(JoinOutcome {
@@ -1718,6 +1890,7 @@ impl Lobby {
                 session_id,
                 map,
                 tier_dollars,
+                loadout,
             } => {
                 let now = self.game_time();
                 // The name has to be one this build actually has, and the
@@ -1743,9 +1916,12 @@ impl Lobby {
                     // One entry fee buys one life. Somebody already in a
                     // match - alive or dead - is not queueing for another
                     // until that one lets them go, which for the dead is
-                    // immediately and for the living is the whistle.
+                    // immediately and for the living is the whistle. Nor
+                    // changing the guns they are carrying in it.
                     return;
                 }
+                // Asking again in line changes the guns and keeps the place.
+                connection.loadout = loadout.sanitized();
                 // Queueing again for the same table does not move them to
                 // the back of their own line. A different map or a different
                 // stake is a different line, and they join the end of it.
@@ -2151,14 +2327,8 @@ impl Lobby {
                     continue;
                 }
 
-                body.advance(*id, tick, hold, now, ground, &mut shots, &mut throws);
-
-                if let Some(done) = body.reload_until
-                    && now >= done
-                {
-                    body.ammo = MAGAZINE;
-                    body.reload_until = None;
-                }
+                body.advance(*id, tick, hold, ground, &mut shots, &mut throws);
+                body.arms.settle(tick);
 
                 // The zone burns; out of it, health comes back on its own.
                 if zone.excludes(body.state.position) {
@@ -2233,8 +2403,11 @@ impl Lobby {
         }
         self.step_grenades(match_id, now);
 
-        // Shots are resolved after everyone has moved, so all players are at
-        // the same point in time.
+        // Rounds already in the air move on a tick, against everybody where
+        // they are now. Then this tick's shots, after everyone has moved, so
+        // all players are at the same point in time - and a round fired this
+        // tick is not stepped twice in it.
+        self.step_rounds(match_id, now);
         for shot in shots {
             self.resolve_shot(match_id, shot, now);
         }
@@ -2454,6 +2627,19 @@ impl Lobby {
         }
     }
 
+    /// A pull of the trigger: a round out of the gun in hand, if the gun
+    /// will fire one now, flown at once through what its shooter could see.
+    ///
+    /// The round leaves into the world as it was on the shooter's screen - a
+    /// round trip and a little more ago, see below - and is flown a tick at
+    /// a time against the world a tick later each time, until it has caught
+    /// up with now. A round whose flight is shorter than that lands on the
+    /// way and is judged in full here, which at these ranges is most of
+    /// them: a rifle round crosses fifty metres in four ticks. One still in
+    /// the air flies on with the match against everybody where they really
+    /// are (`step_rounds`). Either way a round meets each target where the
+    /// shooter would have seen it at the moment the round got there, which
+    /// is lag compensation for something that takes time to arrive.
     fn resolve_shot(&mut self, match_id: MatchId, shot: Shot, now: f32) {
         let Shot {
             shooter: shooter_id,
@@ -2461,6 +2647,7 @@ impl Lobby {
             origin,
             waited,
         } = shot;
+        let tick = self.tick;
         let Some(game) = self.matches.get(&match_id) else {
             return;
         };
@@ -2471,49 +2658,50 @@ impl Lobby {
             return;
         }
 
-        // Rate limit. The client is free to send `fire` every tick; this is
-        // what makes doing so no better than firing at the intended rate.
-        if now - shooter.last_fire_at < WEAPON_FIRE_INTERVAL {
+        // Rate limit, in ticks. The client is free to send `fire` every
+        // tick; this is what makes doing so no better than firing at the
+        // gun's own rate. Nothing while the gun is still being drawn or a
+        // magazine is going in, and pulling the trigger on an empty one
+        // starts putting one in.
+        let arms = shooter.arms;
+        let weapon = arms.weapon();
+        let stats = weapon.stats();
+        if !arms.ready(tick) || tick < arms.next_fire || arms.reloading() {
             return;
         }
-        // Nothing to fire while a magazine is going in, and pulling the
-        // trigger on an empty one starts putting one in.
-        if shooter.reload_until.is_some() {
-            return;
-        }
-        if shooter.ammo == 0 {
+        if arms.rounds() == 0 {
             if let Some(body) = self
                 .matches
                 .get_mut(&match_id)
                 .and_then(|m| m.bodies.get_mut(&shooter_id))
             {
-                body.reload_until = Some(now + RELOAD_SECONDS);
+                body.arms.reload(tick);
             }
             return;
         }
 
-        // The look direction comes from the input command, not from the
-        // shooter's stored state, so the shot matches the frame they fired on.
+        // The aim comes from the input command, not from the shooter's
+        // stored state, so the shot matches the frame they fired on. Was it
+        // the end of a flick: the aim a tenth of a second ago, from the
+        // shooter's own history, against the aim of the shot. Counted only
+        // if it hits, and only ever judged over many hits.
         let direction = solatel_protocol::sim::look_direction(command.yaw, command.pitch);
-        // Was this the end of a flick: the aim a tenth of a second ago, from
-        // the shooter's own history, against the aim of the shot. Counted
-        // only if it hits, and only ever judged over many hits.
         let flicked = {
-            let then = shooter.state_at(self.tick, crate::records::SNAP_WINDOW_SECONDS * 1000.0);
+            let then = shooter.state_at(tick, crate::records::SNAP_WINDOW_SECONDS * 1000.0);
             let before = solatel_protocol::sim::look_direction(then.yaw, then.pitch);
             direction.dot(before).clamp(-1.0, 1.0).acos()
                 > crate::records::SNAP_DEGREES.to_radians()
         };
 
-        // Rewind everyone else to what this shooter could see when they
-        // pulled the trigger. That is older than now by the whole round trip -
-        // the snapshot they were looking at took half of it to reach them,
-        // and the command took the other half to come back - plus however
-        // long the command then waited here, plus the interpolation buffer
-        // they render behind by. It used to be half the round trip and no
-        // wait, which judged every shot against where its target was a few
-        // tens of milliseconds after the shooter last saw it: a running
-        // target a third of a metre on, and a shot at an edge a miss.
+        // How far behind now the shooter's screen was when they pulled the
+        // trigger. Older than now by the whole round trip - the snapshot
+        // they were looking at took half of it to reach them, and the
+        // command took the other half to come back - plus however long the
+        // command then waited here, plus the interpolation buffer they
+        // render behind by. It used to be half the round trip and no wait,
+        // which judged every shot against where its target was a few tens
+        // of milliseconds after the shooter last saw it: a running target a
+        // third of a metre on, and a shot at an edge a miss.
         let rtt_ms = self
             .connections
             .get(&shooter_id)
@@ -2522,66 +2710,172 @@ impl Lobby {
         let rewind_ms = (rtt_ms + waited_ms(waited) + INTERPOLATION_DELAY_MS)
             .clamp(0.0, MAX_LAG_COMPENSATION_MS);
 
-        let tick = self.tick;
-        let rewound: Vec<(PlayerId, PlayerState)> = game
-            .bodies
-            .iter()
-            .filter(|(id, _)| **id != shooter_id)
-            .map(|(id, body)| (*id, body.state_at(tick, rewind_ms)))
-            .collect();
-
-        let hit = hitscan::trace(
+        let round = Round::fired(weapon, origin, command.yaw, command.pitch);
+        let velocity = round.velocity;
+        let mut flight = Flying {
+            shot: 0,
+            shooter: shooter_id,
+            weapon,
             origin,
-            direction,
-            WEAPON_RANGE,
-            game.map,
-            rewound.iter().map(|(id, state)| (*id, state)),
-        );
+            round,
+            travelled: 0.0,
+            fired_tick: tick,
+            rewind_ms,
+            flicked,
+        };
 
-        let impact = hit
-            .map(|h| h.point)
-            .unwrap_or(origin + direction * WEAPON_RANGE);
-        let victim = hit.and_then(|h| h.player);
-        let region = hit.and_then(|h| h.region);
-        // How long the target had been in this shooter's sight, judged on
-        // the same rewound world the hit was. Only a hit is ever measured.
-        let sighting = victim.and_then(|id| {
-            let target = game.bodies.get(&id)?;
-            exposure(shooter, target, tick, rewind_ms, game.map).map(|e| (id, e))
-        });
-
-        if let Some(shooter) = self
-            .matches
-            .get_mut(&match_id)
-            .and_then(|m| m.bodies.get_mut(&shooter_id))
-        {
-            shooter.last_fire_at = now;
-            shooter.ammo = shooter.ammo.saturating_sub(1);
-            if shooter.ammo == 0 {
-                shooter.reload_until = Some(now + RELOAD_SECONDS);
+        // Caught up a tick at a time. Each tick of flight is judged against
+        // everybody as the shooter's screen had them when that tick began:
+        // the first against the world at the moment of the trigger pull -
+        // which for anybody within a tick's flight of the muzzle, most
+        // fights, is exactly what the shooter saw - and each one after it a
+        // tick later, until the round's clock is the server's.
+        let step_ms = TICK_DT * 1000.0;
+        let behind = (rewind_ms / step_ms).round() as u32;
+        let mut struck = Struck::Nothing;
+        for k in 0..behind {
+            let ago = (behind - k) as f32 * step_ms;
+            let reach = flight_reach(&flight, ago);
+            let seen: Vec<(PlayerId, PlayerState)> = game
+                .bodies
+                .iter()
+                .filter(|(id, body)| **id != shooter_id && reach.holds(body.state.position))
+                .map(|(id, body)| (*id, body.state_at(tick, ago)))
+                .collect();
+            struck = fly(&mut flight, game.map, seen.iter().map(|(id, state)| (*id, state)));
+            if !matches!(struck, Struck::Nothing) {
+                break;
             }
-            // Counted here, past the rate limit, so a client holding the
-            // trigger down is not charged for the shots the weapon refused
-            // to take. Accuracy should measure aim, not send rate.
-            shooter.stats.shots_fired = shooter.stats.shots_fired.saturating_add(1);
         }
 
-        // Tracer for everyone in this match, including the shooter.
+        // The gun's side of it, whether or not the round has landed: a round
+        // gone, the next not before the gun's rate allows, and an empty
+        // magazine starting to be replaced.
+        let Some(game) = self.matches.get_mut(&match_id) else {
+            return;
+        };
+        game.next_shot = game.next_shot.wrapping_add(1);
+        flight.shot = game.next_shot;
+        if let Some(body) = game.bodies.get_mut(&shooter_id) {
+            let slot = Arms::slot_index(body.arms.held);
+            body.arms.rounds[slot] = body.arms.rounds[slot].saturating_sub(1);
+            body.arms.next_fire = tick + stats.fire_ticks;
+            if body.arms.rounds() == 0 {
+                body.arms.reload(tick);
+            }
+            // Counted here, past the rate limit, so a client holding the
+            // trigger down is not charged for the shots the gun refused to
+            // take. Accuracy should measure aim, not send rate.
+            body.stats.shots_fired = body.stats.shots_fired.saturating_add(1);
+        }
+        if matches!(struck, Struck::Nothing) {
+            game.rounds.push(flight);
+        }
+
+        // For everyone in this match, including the shooter: the flash, the
+        // sound, the tracer, and where it came down if it already has.
         self.to_match(
             match_id,
             &ServerMsg::ShotFired {
                 shooter: shooter_id,
+                shot: flight.shot,
+                weapon,
                 from: origin,
-                to: impact,
-                hit_player: victim.is_some(),
+                velocity,
+                landed: struck.landing(),
             },
         );
+        if let Struck::Player {
+            victim,
+            region,
+            distance,
+            ..
+        } = struck
+        {
+            self.land_hit(match_id, &flight, victim, region, distance, now);
+        }
+    }
 
-        let (Some(victim_id), Some(region)) = (victim, region) else {
+    /// Every round still in the air flies on a tick, against everybody
+    /// where they were when the tick began - which, its clock caught up,
+    /// is where they really were.
+    fn step_rounds(&mut self, match_id: MatchId, now: f32) {
+        let tick = self.tick;
+        let step_ms = TICK_DT * 1000.0;
+        let Some(game) = self.matches.get_mut(&match_id) else {
             return;
         };
+        if game.rounds.is_empty() {
+            return;
+        }
+        let mut rounds = std::mem::take(&mut game.rounds);
+        let game = &*game;
+        let mut landed = Vec::new();
+        rounds.retain_mut(|flight| {
+            let reach = flight_reach(flight, step_ms);
+            let shooter = flight.shooter;
+            let near: Vec<(PlayerId, PlayerState)> = game
+                .bodies
+                .iter()
+                .filter(|(id, body)| **id != shooter && reach.holds(body.state.position))
+                .map(|(id, body)| (*id, body.state_at(tick, step_ms)))
+                .collect();
+            match fly(flight, game.map, near.iter().map(|(id, state)| (*id, state))) {
+                Struck::Nothing => true,
+                struck => {
+                    landed.push((*flight, struck));
+                    false
+                }
+            }
+        });
+        if let Some(game) = self.matches.get_mut(&match_id) {
+            game.rounds = rounds;
+        }
+        for (flight, struck) in landed {
+            if let Some(landing) = struck.landing() {
+                self.to_match(
+                    match_id,
+                    &ServerMsg::ShotLanded {
+                        shooter: flight.shooter,
+                        shot: flight.shot,
+                        landing,
+                    },
+                );
+            }
+            if let Struck::Player {
+                victim,
+                region,
+                distance,
+                ..
+            } = struck
+            {
+                self.land_hit(match_id, &flight, victim, region, distance, now);
+            }
+        }
+    }
 
-        let damage = region.damage();
+    /// A round has hit a player: the damage, the counts, who is told, and a
+    /// kill if it was one.
+    fn land_hit(
+        &mut self,
+        match_id: MatchId,
+        flight: &Flying,
+        victim_id: PlayerId,
+        region: HitRegion,
+        distance: f32,
+        now: f32,
+    ) {
+        let shooter_id = flight.shooter;
+        let damage = flight.weapon.damage(region, distance);
+        // How long the target had been in this shooter's sight when the
+        // trigger was pulled, judged on the same rewound world the shot was.
+        // Only a hit is ever measured.
+        let sighting = self.matches.get(&match_id).and_then(|game| {
+            let shooter = game.bodies.get(&shooter_id)?;
+            let target = game.bodies.get(&victim_id)?;
+            exposure(shooter, target, flight.fired_tick, flight.rewind_ms, game.map)
+                .map(|e| (victim_id, e))
+        });
         let reward = self
             .matches
             .get(&match_id)
@@ -2639,7 +2933,7 @@ impl Lobby {
             if region == HitRegion::Head {
                 shooter.stats.headshots = shooter.stats.headshots.saturating_add(1);
             }
-            if flicked {
+            if flight.flicked {
                 shooter.stats.snap_hits = shooter.stats.snap_hits.saturating_add(1);
             }
             if let Some((target, Exposure { since_tick, ms })) = sighting {
@@ -2680,7 +2974,7 @@ impl Lobby {
 
         if killed {
             tracing::info!(
-                killer = %shooter_id, victim = %victim_id, ?region, "kill"
+                killer = %shooter_id, victim = %victim_id, ?region, weapon = ?flight.weapon, distance, "kill"
             );
             // The victim's *stake* leaves escrow here - the reward to the
             // killer and the rake to the platform - and nothing else does.
@@ -2701,7 +2995,7 @@ impl Lobby {
                     killer: Some(shooter_id),
                     killer_name: Some(killer_name),
                     headshot: region == HitRegion::Head,
-                    cause: DeathCause::Rifle,
+                    cause: DeathCause::from(flight.weapon),
                 },
             );
             self.broadcast_scoreboard(match_id);
@@ -2785,8 +3079,9 @@ impl Lobby {
     /// map, and without this it discards every snapshot as a straggler from
     /// a match it is not in, and sits on the menu while its body stands in
     /// the match being shot at.
-    fn match_started(&self, match_id: MatchId) -> Option<ServerMsg> {
+    fn match_started(&self, match_id: MatchId, player_id: PlayerId) -> Option<ServerMsg> {
         let game = self.matches.get(&match_id).filter(|m| m.running())?;
+        let body = game.bodies.get(&player_id)?;
         Some(ServerMsg::MatchStarted {
             match_id,
             map_name: game.map.name.to_string(),
@@ -2794,6 +3089,7 @@ impl Lobby {
             duration_ms: (MATCH_DURATION * 1000.0) as u32,
             players: game.bodies.len() as u32,
             starts_in_ms: game.starts_in_ms(self.tick),
+            loadout: body.arms.loadout,
         })
     }
 
@@ -2914,14 +3210,15 @@ impl Lobby {
             .map(|(id, body)| PlayerSnapshot {
                 id: *id,
                 state: body.state,
-                reloading: body.reload_until.is_some(),
+                reloading: body.arms.reloading(),
                 aiming: body.previous_buttons.aim(),
+                weapon: body.arms.weapon(),
+                optic: body.arms.loadout.optic,
             })
             .collect();
 
         let server_time_ms = f64::from(self.tick) * f64::from(TICK_DT) * 1000.0;
         let pool = game.pot_micro_usd();
-        let now = self.game_time();
         let live_grenades: Vec<GrenadeSnapshot> = game
             .grenades
             .iter()
@@ -2958,11 +3255,15 @@ impl Lobby {
                 zone_radius: zone.radius,
                 match_remaining_ms: remaining_ms,
                 players,
-                ammo: body.ammo,
+                weapon: body.arms.weapon(),
+                ammo: body.arms.rounds(),
+                spare_ammo: body.arms.spare(),
                 reload_ms: body
-                    .reload_until
-                    .map(|done| ((done - now).max(0.0) * 1000.0) as u32)
+                    .arms
+                    .reload_done
+                    .map(|done| Arms::ms_until(self.tick, done))
                     .unwrap_or(0),
+                switch_ms: Arms::ms_until(self.tick, body.arms.ready_at),
                 grenades: body.grenades,
                 live_grenades: live_grenades.clone(),
                 starts_in_ms,
@@ -3131,6 +3432,100 @@ struct Exposure {
     since_tick: u32,
     /// How long before the shot that was.
     ms: f32,
+}
+
+impl Struck {
+    /// Where the round came down, if it has.
+    fn landing(&self) -> Option<Landing> {
+        match self {
+            Struck::Nothing => None,
+            Struck::Ground(landing) | Struck::Player { landing, .. } => Some(*landing),
+        }
+    }
+}
+
+/// Fastest anybody's body moves, in metres per second: a fall off a roof,
+/// not a run. Only for deciding who is near enough to a round's line to be
+/// worth rewinding.
+const FASTEST_BODY: f32 = 30.0;
+
+/// The box a round's next tick of flight could meet anybody in, with room
+/// for how far they could have moved between where they are and where the
+/// world it is judged against had them. A cheap test, so a shot does not
+/// rewind everybody on the map to find the few near its line.
+struct Reach {
+    min: solatel_protocol::glam::Vec3,
+    max: solatel_protocol::glam::Vec3,
+}
+
+impl Reach {
+    fn holds(&self, point: solatel_protocol::glam::Vec3) -> bool {
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
+    }
+}
+
+fn flight_reach(flight: &Flying, ago_ms: f32) -> Reach {
+    let from = flight.round.position;
+    let to = from + flight.round.velocity * TICK_DT;
+    let slack = 2.5 + FASTEST_BODY * (ago_ms / 1000.0 + TICK_DT);
+    let slack = solatel_protocol::glam::Vec3::splat(slack);
+    Reach {
+        min: from.min(to) - slack,
+        max: from.max(to) + slack,
+    }
+}
+
+/// One tick of a round's flight, against `targets`: into the map, into the
+/// nearest of them, or on.
+fn fly<'a, I>(flight: &mut Flying, map: &map::Map, targets: I) -> Struck
+where
+    I: IntoIterator<Item = (PlayerId, &'a PlayerState)>,
+{
+    let stats = flight.weapon.stats();
+    let from = flight.round.position;
+    flight.round.step(stats.drag, TICK_DT);
+    let delta = flight.round.position - from;
+    let length = delta.length();
+    // Never past its range: the step that runs out of it is cut short there.
+    let reach = length.min((stats.range - flight.travelled).max(0.0));
+    if length <= f32::EPSILON || reach <= 0.0 {
+        return Struck::Ground(Landing {
+            at: from,
+            hit_player: false,
+            struck: false,
+        });
+    }
+    let direction = delta / length;
+    let hit = hitscan::trace(from, direction, reach, map, targets);
+    flight.travelled += reach;
+    match hit {
+        Some(hit) => match (hit.player, hit.region) {
+            (Some(victim), Some(region)) => Struck::Player {
+                landing: Landing {
+                    at: hit.point,
+                    hit_player: true,
+                    struck: true,
+                },
+                victim,
+                region,
+                distance: (hit.point - flight.origin).length(),
+            },
+            _ => Struck::Ground(Landing {
+                at: hit.point,
+                hit_player: false,
+                struck: true,
+            }),
+        },
+        // Spent, or out of the bottom of the world.
+        None if flight.travelled >= stats.range || flight.round.position.y < -50.0 => {
+            Struck::Ground(Landing {
+                at: from + direction * reach,
+                hit_player: false,
+                struck: false,
+            })
+        }
+        None => Struck::Nothing,
+    }
 }
 
 /// How long `target` had been in `shooter`'s line of sight at `tick`, or

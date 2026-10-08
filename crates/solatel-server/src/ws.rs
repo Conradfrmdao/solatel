@@ -291,7 +291,11 @@ async fn read_loop(
                     })
                     .await;
             }
-            ClientMsg::Queue { map, tier_dollars } => {
+            ClientMsg::Queue {
+                map,
+                tier_dollars,
+                loadout,
+            } => {
                 state
                     .game
                     .send(GameCommand::Queue {
@@ -299,6 +303,7 @@ async fn read_loop(
                         session_id,
                         map,
                         tier_dollars,
+                        loadout,
                     })
                     .await;
             }
