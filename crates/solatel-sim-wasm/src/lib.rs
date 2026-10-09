@@ -34,8 +34,7 @@ use solatel_protocol::{
     sim::{
         Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
         InputCommand, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState, REGEN_DELAY,
-        REGEN_SECONDS, ZONE_FINAL_RADIUS,
-        hitscan,
+        REGEN_SECONDS, ZONE_FINAL_RADIUS, hitscan,
         map::{self, MAP_VERSION},
         step_tick,
         weapon::{BULLET_GRAVITY, Optic, Round, Weapon},
@@ -413,7 +412,16 @@ pub fn optic_magnifications() -> Vec<f32> {
 /// it, and where a round lands is the server's to say.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn round_path(weapon: u8, x: f32, y: f32, z: f32, vx: f32, vy: f32, vz: f32, seconds: f32) -> Vec<f32> {
+pub fn round_path(
+    weapon: u8,
+    x: f32,
+    y: f32,
+    z: f32,
+    vx: f32,
+    vy: f32,
+    vz: f32,
+    seconds: f32,
+) -> Vec<f32> {
     let Some(weapon) = Weapon::ALL.get(usize::from(weapon)) else {
         return Vec::new();
     };

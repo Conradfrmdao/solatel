@@ -150,6 +150,8 @@ pub struct Stats {
 // and for as long as its seventy-five rounds last, and the sniper rifle wherever
 // its owner can put a round on a head.
 
+// A table: its damage bands read across, one range to a line.
+#[rustfmt::skip]
 const PISTOL: Stats = Stats {
     name: "Pistol",
     automatic: false,
@@ -167,6 +169,7 @@ const PISTOL: Stats = Stats {
     ],
 };
 
+#[rustfmt::skip]
 const SMG: Stats = Stats {
     name: "SMG",
     automatic: true,
@@ -185,6 +188,7 @@ const SMG: Stats = Stats {
     ],
 };
 
+#[rustfmt::skip]
 const RIFLE: Stats = Stats {
     name: "Assault rifle",
     automatic: true,
@@ -205,6 +209,7 @@ const RIFLE: Stats = Stats {
     ],
 };
 
+#[rustfmt::skip]
 const LMG: Stats = Stats {
     name: "Machine gun",
     automatic: true,
@@ -224,6 +229,7 @@ const LMG: Stats = Stats {
     ],
 };
 
+#[rustfmt::skip]
 const SNIPER: Stats = Stats {
     name: "Sniper rifle",
     automatic: false,
@@ -509,7 +515,10 @@ mod tests {
         for weapon in Weapon::ALL {
             let zero = weapon.stats().zero;
             let (height, _) = flight(weapon, &[zero])[0];
-            assert!(height.abs() < 0.002, "{weapon:?} is {height} m off at its zero of {zero} m");
+            assert!(
+                height.abs() < 0.002,
+                "{weapon:?} is {height} m off at its zero of {zero} m"
+            );
         }
     }
 
@@ -518,14 +527,38 @@ mod tests {
         // The figures in the module's table, within a centimetre and a
         // couple of milliseconds: if these move, the table is wrong.
         let rifle = flight(Weapon::Rifle, &[200.0, 300.0]);
-        assert!((rifle[0].0 + 0.25).abs() < 0.01, "rifle at 200 m: {:?}", rifle[0]);
-        assert!((rifle[1].0 + 0.81).abs() < 0.01, "rifle at 300 m: {:?}", rifle[1]);
-        assert!((rifle[1].1 - 0.506).abs() < 0.003, "rifle at 300 m: {:?}", rifle[1]);
+        assert!(
+            (rifle[0].0 + 0.25).abs() < 0.01,
+            "rifle at 200 m: {:?}",
+            rifle[0]
+        );
+        assert!(
+            (rifle[1].0 + 0.81).abs() < 0.01,
+            "rifle at 300 m: {:?}",
+            rifle[1]
+        );
+        assert!(
+            (rifle[1].1 - 0.506).abs() < 0.003,
+            "rifle at 300 m: {:?}",
+            rifle[1]
+        );
         let sniper = flight(Weapon::Sniper, &[300.0]);
-        assert!((sniper[0].0 + 0.57).abs() < 0.01, "sniper at 300 m: {:?}", sniper[0]);
-        assert!((sniper[0].1 - 0.423).abs() < 0.003, "sniper at 300 m: {:?}", sniper[0]);
+        assert!(
+            (sniper[0].0 + 0.57).abs() < 0.01,
+            "sniper at 300 m: {:?}",
+            sniper[0]
+        );
+        assert!(
+            (sniper[0].1 - 0.423).abs() < 0.003,
+            "sniper at 300 m: {:?}",
+            sniper[0]
+        );
         let pistol = flight(Weapon::Pistol, &[100.0]);
-        assert!((pistol[0].0 + 0.61).abs() < 0.01, "pistol at 100 m: {:?}", pistol[0]);
+        assert!(
+            (pistol[0].0 + 0.61).abs() < 0.01,
+            "pistol at 100 m: {:?}",
+            pistol[0]
+        );
     }
 
     #[test]
@@ -540,7 +573,10 @@ mod tests {
                 assert!(speed < last, "{weapon:?} sped up");
                 last = speed;
             }
-            assert!(last > stats.muzzle_velocity * 0.3, "{weapon:?} all but stopped in a second");
+            assert!(
+                last > stats.muzzle_velocity * 0.3,
+                "{weapon:?} all but stopped in a second"
+            );
         }
     }
 
@@ -590,10 +626,16 @@ mod tests {
             assert_eq!(bands[0].from, 0, "{weapon:?}");
             for pair in bands.windows(2) {
                 assert!(pair[0].from < pair[1].from, "{weapon:?}");
-                assert!(pair[1].body <= pair[0].body, "{weapon:?} hits harder further out");
+                assert!(
+                    pair[1].body <= pair[0].body,
+                    "{weapon:?} hits harder further out"
+                );
             }
             for band in bands {
-                assert!(band.head >= band.body && band.body >= band.legs, "{weapon:?}");
+                assert!(
+                    band.head >= band.body && band.body >= band.legs,
+                    "{weapon:?}"
+                );
             }
         }
     }
@@ -654,10 +696,16 @@ mod tests {
         // drifted from serde's, a loadout sent back would quietly become the
         // rifle.
         for weapon in Weapon::ALL {
-            assert_eq!(serde_json::to_string(&weapon).unwrap(), format!("\"{}\"", weapon.id()));
+            assert_eq!(
+                serde_json::to_string(&weapon).unwrap(),
+                format!("\"{}\"", weapon.id())
+            );
         }
         for optic in Optic::ALL {
-            assert_eq!(serde_json::to_string(&optic).unwrap(), format!("\"{}\"", optic.id()));
+            assert_eq!(
+                serde_json::to_string(&optic).unwrap(),
+                format!("\"{}\"", optic.id())
+            );
         }
     }
 

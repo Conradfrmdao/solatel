@@ -16,9 +16,8 @@
 use super::*;
 use solatel_protocol::glam::Vec3;
 use solatel_protocol::sim::{
-    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH, REGEN_DELAY,
-    REGEN_SECONDS, look_direction,
-    PLAYER_HALF_EXTENTS,
+    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH,
+    PLAYER_HALF_EXTENTS, REGEN_DELAY, REGEN_SECONDS, look_direction,
     weapon::{Loadout, Optic, Round, Slot, Weapon},
 };
 
@@ -1220,6 +1219,49 @@ fn a_dead_body_is_kept_for_the_board_and_off_the_map() {
         duel.lobby.score_entries(duel.match_id).len(),
         3,
         "the board should still say who was killed"
+    );
+}
+
+#[test]
+fn nobody_is_told_how_hurt_anybody_else_is() {
+    let mut duel = Duel::new();
+    let centre = duel.position(duel.victim);
+    duel.fire_at(centre);
+    let hurt = duel.health(duel.victim);
+    assert!(hurt < MAX_HEALTH, "the shot should have landed");
+    let _ = drain(&mut duel.shooter_rx);
+    let _ = drain(&mut duel.victim_rx);
+    duel.lobby.broadcast_snapshot(duel.match_id);
+
+    let latest = |rx: &mut mpsc::Receiver<ServerMsg>| {
+        drain(rx)
+            .into_iter()
+            .rev()
+            .find_map(|m| match m {
+                ServerMsg::Snapshot { players, .. } => Some(players),
+                _ => None,
+            })
+            .expect("a snapshot")
+    };
+    let health_in = |players: &[PlayerSnapshot], id: PlayerId| {
+        players
+            .iter()
+            .find(|p| p.id == id)
+            .expect("drawn")
+            .state
+            .health
+    };
+    let shooter_saw = latest(&mut duel.shooter_rx);
+    assert_eq!(
+        health_in(&shooter_saw, duel.victim),
+        MAX_HEALTH,
+        "the shooter was sent the victim's health; a snapshot goes to everybody in the match"
+    );
+    let victim_saw = latest(&mut duel.victim_rx);
+    assert_eq!(
+        health_in(&victim_saw, duel.victim),
+        hurt,
+        "the victim should still be told their own health"
     );
 }
 
@@ -3747,7 +3789,11 @@ fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
     for _ in 0..200 {
         duel.press(Buttons::FIRE, sky);
     }
-    assert_eq!(duel.stats(duel.shooter).shots_fired, 1, "held, it fired once");
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        1,
+        "held, it fired once"
+    );
 
     // Pulled as fast as a finger can - every other tick - the bolt still
     // decides: the first pull fires, and then one a second and a quarter.
@@ -3755,7 +3801,10 @@ fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
         duel.press(if i % 2 == 0 { 0 } else { Buttons::FIRE }, sky);
     }
     let bolt = Weapon::Sniper.stats().fire_ticks;
-    assert_eq!(duel.stats(duel.shooter).shots_fired, 1 + 1 + (200 - 2) / bolt);
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        1 + 1 + (200 - 2) / bolt
+    );
 
     // The pistol the same way, with its own rate.
     duel.steps(seconds(1.5));
@@ -3772,7 +3821,10 @@ fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
         duel.press(Buttons::SIDEARM | fire, sky);
     }
     let pistol = Weapon::Pistol.stats().fire_ticks;
-    assert_eq!(duel.stats(duel.shooter).shots_fired, before + 1 + 60 / pistol);
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        before + 1 + 60 / pistol
+    );
 }
 
 #[test]
@@ -3800,7 +3852,11 @@ fn changing_guns_takes_the_drawn_guns_time_and_puts_away_a_reload() {
         duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
         duel.press(Buttons::SIDEARM, sky);
     }
-    assert_eq!(duel.stats(duel.shooter).shots_fired, fired, "fired while drawing");
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        fired,
+        "fired while drawing"
+    );
     duel.steps(4);
     duel.press(Buttons::SIDEARM, sky);
     duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
@@ -3814,7 +3870,10 @@ fn changing_guns_takes_the_drawn_guns_time_and_puts_away_a_reload() {
     duel.press(0, sky);
     let arms = duel.body(duel.shooter).arms;
     assert_eq!(arms.weapon(), Weapon::Rifle);
-    assert_eq!(arms.ready_at - duel.lobby.tick, Weapon::Rifle.stats().draw_ticks);
+    assert_eq!(
+        arms.ready_at - duel.lobby.tick,
+        Weapon::Rifle.stats().draw_ticks
+    );
     assert!(Weapon::Rifle.stats().draw_ticks > Weapon::Pistol.stats().draw_ticks);
 }
 
@@ -3828,7 +3887,11 @@ fn a_long_shot_takes_time_to_arrive() {
 
     // Fired, and not there yet: 200 metres is a quarter of a second for a
     // rifle round, and the shooter's lag covers a tenth of it.
-    assert_eq!(duel.health(duel.victim), MAX_HEALTH, "a round arrived instantly");
+    assert_eq!(
+        duel.health(duel.victim),
+        MAX_HEALTH,
+        "a round arrived instantly"
+    );
     assert_eq!(duel.lobby.matches[&duel.match_id].rounds.len(), 1);
     let fired = duel
         .shooter_saw()
@@ -3878,7 +3941,8 @@ fn a_long_shot_falls_and_has_to_be_aimed_over() {
     // Aimed at the middle of the head, it falls into the body.
     let mut duel = Duel::armed(sniper);
     duel.out_in_the_open(distance);
-    let head = duel.position(duel.victim) + Vec3::new(0.0, (HEAD_BOTTOM + PLAYER_HALF_EXTENTS.y) / 2.0, 0.0);
+    let head = duel.position(duel.victim)
+        + Vec3::new(0.0, (HEAD_BOTTOM + PLAYER_HALF_EXTENTS.y) / 2.0, 0.0);
     duel.fire_at(head);
     duel.steps(seconds(arrives));
     assert_eq!(
@@ -3893,7 +3957,10 @@ fn a_long_shot_falls_and_has_to_be_aimed_over() {
     duel.out_in_the_open(distance);
     duel.fire_at(head + Vec3::new(0.0, drop, 0.0));
     duel.steps(seconds(arrives));
-    assert!(!duel.alive(duel.victim), "held over, the round found the head");
+    assert!(
+        !duel.alive(duel.victim),
+        "held over, the round found the head"
+    );
     assert_eq!(duel.stats(duel.shooter).headshots, 1);
 }
 
@@ -3920,14 +3987,22 @@ fn a_running_target_has_to_be_led() {
         let caught_up = 7.0 * TICK_DT;
         let aim = duel.position(duel.victim)
             + Vec3::new(0.0, drop, 0.0)
-            + if lead { speed * (arrives - caught_up) } else { Vec3::ZERO };
+            + if lead {
+                speed * (arrives - caught_up)
+            } else {
+                Vec3::ZERO
+            };
         duel.strafe_tick(1.0, Buttons::FIRE, aim);
         for _ in 0..seconds(arrives) {
             duel.strafe_tick(1.0, 0, aim);
         }
         duel.health(duel.victim)
     };
-    assert_eq!(run(false), MAX_HEALTH, "a running target shot where it stood was missed");
+    assert_eq!(
+        run(false),
+        MAX_HEALTH,
+        "a running target shot where it stood was missed"
+    );
     assert!(run(true) < MAX_HEALTH, "led by its run, it was hit");
 }
 
@@ -3955,7 +4030,9 @@ fn damage_falls_off_with_range_and_never_for_the_sniper() {
             "{weapon:?} at {distance} m"
         );
     }
-    assert!(Weapon::Rifle.damage(HitRegion::Body, 150.0) < Weapon::Rifle.damage(HitRegion::Body, 10.0));
+    assert!(
+        Weapon::Rifle.damage(HitRegion::Body, 150.0) < Weapon::Rifle.damage(HitRegion::Body, 10.0)
+    );
 }
 
 #[test]
@@ -3968,10 +4045,14 @@ fn one_sniper_round_to_the_head_kills_and_the_feed_says_which_gun() {
     let _ = drain(&mut duel.victim_rx);
     duel.fire_at(head);
     assert!(!duel.alive(duel.victim), "one round to the head");
-    let cause = drain(&mut duel.victim_rx).into_iter().find_map(|m| match m {
-        ServerMsg::Killed { cause, headshot, .. } => Some((cause, headshot)),
-        _ => None,
-    });
+    let cause = drain(&mut duel.victim_rx)
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMsg::Killed {
+                cause, headshot, ..
+            } => Some((cause, headshot)),
+            _ => None,
+        });
     assert_eq!(cause, Some((DeathCause::Sniper, true)));
 }
 
@@ -3999,7 +4080,10 @@ fn a_round_that_meets_nothing_is_spent_at_its_range() {
     if !landing.struck {
         // Out of range in the open: as far as a pistol round goes.
         let gone = (landing.at - Vec3::new(0.0, 0.0, 0.0)).length();
-        assert!(gone > Weapon::Pistol.stats().range * 0.9, "spent at {gone} m");
+        assert!(
+            gone > Weapon::Pistol.stats().range * 0.9,
+            "spent at {gone} m"
+        );
     }
     assert!(duel.lobby.matches[&duel.match_id].rounds.is_empty());
     assert_eq!(duel.health(duel.victim), MAX_HEALTH);
@@ -4012,22 +4096,37 @@ fn the_loadout_is_the_one_queued_with_as_the_game_allows_it() {
     let (joined, session) = join(&mut lobby, "Choosy", None, tx);
     let player = joined.player_id;
     // An SMG cannot carry a 4x: it gets its own red dot.
-    queue_armed(&mut lobby, player, session, 1, Loadout {
-        primary: Weapon::Smg,
-        optic: Optic::X4,
-    });
+    queue_armed(
+        &mut lobby,
+        player,
+        session,
+        1,
+        Loadout {
+            primary: Weapon::Smg,
+            optic: Optic::X4,
+        },
+    );
     // Asking again in line changes it and keeps the place.
-    queue_armed(&mut lobby, player, session, 1, Loadout {
-        primary: Weapon::Lmg,
-        optic: Optic::X3,
-    });
+    queue_armed(
+        &mut lobby,
+        player,
+        session,
+        1,
+        Loadout {
+            primary: Weapon::Lmg,
+            optic: Optic::X3,
+        },
+    );
     run_matchmaker(&mut lobby);
     let match_id = lobby.match_of(player).expect("in a match");
     let wanted = Loadout {
         primary: Weapon::Lmg,
         optic: Optic::X3,
     };
-    assert_eq!(lobby.matches[&match_id].bodies[&player].arms.loadout, wanted);
+    assert_eq!(
+        lobby.matches[&match_id].bodies[&player].arms.loadout,
+        wanted
+    );
     let told = drain(&mut rx).into_iter().find_map(|m| match m {
         ServerMsg::MatchStarted { loadout, .. } => Some(loadout),
         _ => None,
@@ -4094,7 +4193,10 @@ fn everybody_sees_the_gun_in_hand_and_its_owner_sees_both_magazines() {
     assert_eq!(weapon, Weapon::Pistol);
     assert_eq!(ammo, Weapon::Pistol.stats().magazine);
     assert_eq!(spare, Weapon::Sniper.stats().magazine);
-    assert!(switch_ms > 0 && switch_ms <= 350, "drawing for {switch_ms} ms");
+    assert!(
+        switch_ms > 0 && switch_ms <= 350,
+        "drawing for {switch_ms} ms"
+    );
 }
 
 #[test]
@@ -4109,7 +4211,10 @@ fn a_late_packet_leaves_the_gun_in_hand() {
     // guess that forgot the pistol would put the rifle back in their hands
     // and cost them its draw when the packets came.
     duel.steps(10);
-    assert!(duel.body(duel.shooter).guess.is_some(), "test setup: guessing");
+    assert!(
+        duel.body(duel.shooter).guess.is_some(),
+        "test setup: guessing"
+    );
     assert_eq!(duel.body(duel.shooter).arms.held, Slot::Sidearm);
     assert!(duel.body(duel.shooter).arms.ready(duel.lobby.tick));
 }

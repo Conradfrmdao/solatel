@@ -985,7 +985,10 @@ mod tests {
                 let head = gun.damage(HitRegion::Head, distance);
                 let body = gun.damage(HitRegion::Body, distance);
                 assert!(head > body, "{gun:?} at {distance} m");
-                assert!(body > gun.damage(HitRegion::Legs, distance), "{gun:?} at {distance} m");
+                assert!(
+                    body > gun.damage(HitRegion::Legs, distance),
+                    "{gun:?} at {distance} m"
+                );
                 // A one-shot kill means whoever saw the other first wins
                 // outright, with nothing to play for in between - except
                 // with a bolt action, whose round has to be led.

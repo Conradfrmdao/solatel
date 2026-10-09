@@ -1958,7 +1958,10 @@ are in the lobby the instant they die.
 
 Damage is told to the victim and the shooter and to nobody else. Broadcasting
 it would tell every other player in the match how hurt their opponents are,
-which is information nobody earned. The killfeed is the exception, and it
+which is information nobody earned. That includes the snapshot, which goes to
+the whole match: every body in it is sent at full health and only the
+recipient's own entry carries the real figure. It was once sent whole, to
+everybody, for months; `nobody_is_told_how_hurt_anybody_else_is` pins it. The killfeed is the exception, and it
 carries both names *in the event* rather than looking them up in the
 scoreboard afterwards — the most interesting kill in a match is frequently the
 one where somebody then leaves, and a feed that says "‹unknown› killed you" is

@@ -477,12 +477,16 @@ check(
   'a pistol pulled every other command fires no faster than its trigger allows',
   `${pulled.fired} shots in ${pulled.elapsed.toFixed(1)} s`,
 );
-const swapped = await hold(armed, 2, (n) => FIRE | (n % 2 ? SIDEARM : 0));
+// The pistol is in hand, so the first command puts it away: a first command
+// that kept it would be a fair pull of its trigger, and fire it.
+const swapped = await hold(armed, 2, (n) => FIRE | (n % 2 ? 0 : SIDEARM));
 check(swapped.fired === 0, 'changing guns every command with the trigger down fires nothing', `${swapped.fired} shots`);
 armed.close();
 const pistolero = new Wire('Pistolero');
 await pistolero.connect();
-pistolero.send({ t: 'queue', map: 'arena', tier_dollars: 1, loadout: { primary: 'pistol', optic: 'x4' } });
+// Iron sights are the pistol's alone, so the rifle it becomes cannot keep
+// them either.
+pistolero.send({ t: 'queue', map: 'arena', tier_dollars: 1, loadout: { primary: 'pistol', optic: 'irons' } });
 for (let i = 0; i < 200 && !pistolero.loadout; i += 1) await sleep(100);
 check(
   pistolero.loadout?.primary === 'rifle' && pistolero.loadout?.optic === 'red_dot',

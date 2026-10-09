@@ -2742,7 +2742,11 @@ impl Lobby {
                 .filter(|(id, body)| **id != shooter_id && reach.holds(body.state.position))
                 .map(|(id, body)| (*id, body.state_at(tick, ago)))
                 .collect();
-            struck = fly(&mut flight, game.map, seen.iter().map(|(id, state)| (*id, state)));
+            struck = fly(
+                &mut flight,
+                game.map,
+                seen.iter().map(|(id, state)| (*id, state)),
+            );
             if !matches!(struck, Struck::Nothing) {
                 break;
             }
@@ -2820,7 +2824,11 @@ impl Lobby {
                 .filter(|(id, body)| **id != shooter && reach.holds(body.state.position))
                 .map(|(id, body)| (*id, body.state_at(tick, step_ms)))
                 .collect();
-            match fly(flight, game.map, near.iter().map(|(id, state)| (*id, state))) {
+            match fly(
+                flight,
+                game.map,
+                near.iter().map(|(id, state)| (*id, state)),
+            ) {
                 Struck::Nothing => true,
                 struck => {
                     landed.push((*flight, struck));
@@ -2873,8 +2881,14 @@ impl Lobby {
         let sighting = self.matches.get(&match_id).and_then(|game| {
             let shooter = game.bodies.get(&shooter_id)?;
             let target = game.bodies.get(&victim_id)?;
-            exposure(shooter, target, flight.fired_tick, flight.rewind_ms, game.map)
-                .map(|e| (victim_id, e))
+            exposure(
+                shooter,
+                target,
+                flight.fired_tick,
+                flight.rewind_ms,
+                game.map,
+            )
+            .map(|e| (victim_id, e))
         });
         let reward = self
             .matches
@@ -3203,13 +3217,22 @@ impl Lobby {
         // Only the living are drawn. A body that has been eliminated is kept
         // for the board, not for the map: a corpse lying where somebody died
         // for the rest of the match is scenery nobody asked for.
+        //
+        // And nobody is told how hurt anybody else is: this goes to the whole
+        // match, so every body is sent at full health and each recipient's
+        // own entry is given its real figure below. A player's health is told
+        // to them and, as damage, to whoever hurt them - never to everybody
+        // watching a websocket.
         let players: Vec<PlayerSnapshot> = game
             .bodies
             .iter()
             .filter(|(_, body)| body.state.is_alive())
             .map(|(id, body)| PlayerSnapshot {
                 id: *id,
-                state: body.state,
+                state: PlayerState {
+                    health: MAX_HEALTH,
+                    ..body.state
+                },
                 reloading: body.arms.reloading(),
                 aiming: body.previous_buttons.aim(),
                 weapon: body.arms.weapon(),
@@ -3237,13 +3260,11 @@ impl Lobby {
             }
             // Each client gets its own acknowledgement, so the payload differs
             // per recipient and cannot be a single shared broadcast. So does
-            // their own entry while a guess stands in for their late commands:
-            // everybody else sees the guess, and its owner where their own
-            // commands left them.
+            // their own entry: it carries their real health, and while a
+            // guess stands in for their late commands everybody else sees the
+            // guess, and its owner where their own commands left them.
             let mut players = players.clone();
-            if body.guess.is_some()
-                && let Some(mine) = players.iter_mut().find(|p| p.id == *id)
-            {
+            if let Some(mine) = players.iter_mut().find(|p| p.id == *id) {
                 mine.state = body.reported_state();
             }
             connection.send(ServerMsg::Snapshot {

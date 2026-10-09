@@ -257,8 +257,7 @@ pub fn judge(record: &Record) -> Vec<&'static str> {
 /// and no reactions: those are judged over every life.
 pub fn judge_sniper(record: &Record) -> Vec<&'static str> {
     let mut reasons = Vec::new();
-    if record.shots_fired >= SNIPER_ACCURACY_MIN_SHOTS
-        && record.accuracy() >= SNIPER_ACCURACY_LINE
+    if record.shots_fired >= SNIPER_ACCURACY_MIN_SHOTS && record.accuracy() >= SNIPER_ACCURACY_LINE
     {
         reasons.push("sniper accuracy");
     }
@@ -820,7 +819,10 @@ mod tests {
         let (record, sniper) = recent_records(&pool, cheat).await.unwrap();
         assert_eq!(record.lives, 3);
         assert_eq!(record.shots_hit, 5 + 57 + 57);
-        assert_eq!(sniper.lives, 0, "none of them was played with the sniper rifle");
+        assert_eq!(
+            sniper.lives, 0,
+            "none of them was played with the sniper rifle"
+        );
 
         let (_, held) = crate::ledger::balance_and_review(&pool, cheat)
             .await
@@ -844,17 +846,24 @@ mod tests {
         // A sniper's lives are counted apart: a good sniper's three in four
         // to the head is not the automatic weapons' business.
         let marksman = PlayerId::new();
-        let mut scoped = life(marksman, Counts {
-            shots_fired: 12,
-            shots_hit: 8,
-            headshots: 6,
-            reactions: 2,
-            ..Counts::default()
-        });
+        let mut scoped = life(
+            marksman,
+            Counts {
+                shots_fired: 12,
+                shots_hit: 8,
+                headshots: 6,
+                reactions: 2,
+                ..Counts::default()
+            },
+        );
         scoped.weapon = "sniper";
         for _ in 0..4 {
             scoped.match_id = MatchId::new();
-            assert_eq!(write(&pool, &scoped).await.unwrap(), None, "a good sniper is not flagged");
+            assert_eq!(
+                write(&pool, &scoped).await.unwrap(),
+                None,
+                "a good sniper is not flagged"
+            );
         }
         let (automatic, sniper) = recent_records(&pool, marksman).await.unwrap();
         assert_eq!((automatic.lives, sniper.lives), (0, 4));

@@ -1009,7 +1009,10 @@ mod tests {
             optic: Optic::RedDot,
         };
         let wire = encode(&plain).unwrap();
-        assert!(!wire.contains("weapon") && !wire.contains("optic"), "{wire}");
+        assert!(
+            !wire.contains("weapon") && !wire.contains("optic"),
+            "{wire}"
+        );
         assert_eq!(decode::<PlayerSnapshot>(&wire).unwrap(), plain);
 
         let scoped = PlayerSnapshot {
