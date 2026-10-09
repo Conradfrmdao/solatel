@@ -1,0 +1,10 @@
+[Unit]
+Description=Solatel: back up the database every night
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

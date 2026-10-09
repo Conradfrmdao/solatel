@@ -1,0 +1,9 @@
+[Unit]
+Description=Solatel: look for a new version every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target

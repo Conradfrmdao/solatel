@@ -40,7 +40,8 @@ keep the values in the platform's secret store.
 | `SOLATEL_QUEUE_WAIT`, `SOLATEL_MATCH_FLOOR`, `SOLATEL_WARMUP` | matchmaking; defaults are 120 s, 4, 15 s | no |
 | `RUST_LOG` | the image defaults to `solatel_server=info` | no |
 
-Never set these anywhere a real player can reach:
+Never set these anywhere a real player can reach, except a test server
+that takes no real money and says so (*One VPS*, below):
 
 - `SOLATEL_DEV_GRANT` hands every new player free money (and turns
   withdrawals off, so it cannot leave).
@@ -99,6 +100,66 @@ resume token brings the player back. Put no cache of your own in front of
 the page: a CDN that keeps `index.html` despite `no-store` serves a page
 whose files a deploy has deleted.
 `node client/stale.mjs` checks that without a server.
+
+## One VPS
+
+How the game runs today: one rented server (an OVHcloud VPS in Europe, for
+the test month that began in October 2026), set up by one command and kept
+up to date by itself. Everything is in `deploy/`.
+
+**Setting one up.** Point the domain's DNS at the machine first - an `A`
+record for the bare name and one for `www`, both to its IPv4 address - then,
+on a fresh Ubuntu 24.04 (or Debian 12):
+
+    curl -fsSL https://raw.githubusercontent.com/Conradfrmdao/solatel/main/deploy/install.sh | sudo bash -s -- example.com
+
+It installs Postgres, Caddy (which gets the domain's certificate and renews
+it), the services and the firewall, and starts the first build, which takes
+about twenty minutes. Running it again is safe and is how a broken install
+is repaired.
+
+**What runs, and as whom.** The server is `solatel.service`, as the system
+user `solatel`, on `127.0.0.1:8080` behind Caddy. It reaches Postgres
+through its socket as that same user, so the database has no password at
+all. The build runs as `solatel-build`, in a copy of the code of its own,
+and can change nothing root or the server runs. The admin token is made on
+the machine and never leaves it: `sudo cat /etc/solatel/secret.env`.
+
+**Deploying is merging into main.** `solatel-update.timer` runs every two
+minutes: it fetches main, builds it if it moved (`deploy/update.sh`), and
+switches to it when `/health` shows nothing in escrow - stop the old
+server, point `/opt/solatel/current` at the new release, start it, and wait
+for `/health` to answer 200. A release that does not come up healthy is
+rolled back to the one before, and a commit that failed is not tried again
+until main moves. The update script is run from main as it is fetched, so a
+fix to the deploy reaches the machine the same way as any other change.
+
+**Watching it from anywhere**: `https://<domain>/deploy.json` says what
+the updater is doing - `building`, `waiting` (built, and matches have money
+in them), `switching`, `live` or `failed` - with the commit, and on a
+failure the end of the log that explains it. On the machine:
+
+    sudo journalctl -fu solatel           # the server
+    sudo journalctl -fu solatel-update    # the updater
+    sudo solatel-update --now             # switch now, ending matches in progress
+    sudo solatel-update --retry           # build again a commit that failed
+
+**Settings** are `deploy/solatel.env`, copied into each release, so a change
+is a commit and goes live like any other. Nothing secret may go in it.
+`/etc/solatel/local.env`, written by hand on the machine, overrides it there
+alone. The test month's settings are there, and **every one of them goes
+before real money**, with the rest of *Before real money*.
+
+**Backups.** The database is dumped every night at 03:30 UTC into
+`/var/backups/solatel`, kept fourteen days; OVHcloud also keeps a copy of
+the whole machine every day. To restore one, with the server stopped:
+
+    sudo systemctl stop solatel
+    sudo -u solatel pg_restore --clean --if-exists -d solatel /var/backups/solatel/<file>
+    sudo systemctl start solatel
+
+Those are copies of a ledger: restoring one rewinds everybody's balance to
+that night, so it is Conrad's decision, never a fix.
 
 ## Watching it
 

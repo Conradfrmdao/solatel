@@ -1,0 +1,14 @@
+# A copy of the database every night, kept a fortnight, in
+# /var/backups/solatel. Restore with pg_restore (documents/RUNBOOK.md).
+[Unit]
+Description=Solatel: back up the database
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=solatel
+Group=solatel
+ExecStart=/bin/bash /opt/solatel/src/deploy/backup.sh
+Nice=19
+IOWeight=10

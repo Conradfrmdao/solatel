@@ -2452,6 +2452,23 @@ down on SIGTERM as well as Ctrl-C and releases the lease on the way out. A
 tab left on the old client reloads itself once per server version or client
 build (`reloadForNewBuild` in `net.js`).
 
+**The game is live on one VPS, and merging into main deploys it**
+(`deploy/`, *One VPS* in the runbook). A timer on the machine fetches main
+every two minutes, builds it there, and switches when `/health` shows
+escrow empty, rolling back a release that does not come up healthy - both
+rules above, kept by the machine. Nothing here can reach it: this
+container's network passes web traffic only, so there is no SSH and the
+machine pulls rather than being pushed to. What it is doing is public at
+`https://<domain>/deploy.json`, which is how a session watches a deploy
+land, and the update script runs from main as fetched, so a broken deploy
+is fixed with a commit like anything else. Its settings are
+`deploy/solatel.env`, in the repository and never secret: the database is
+reached through Postgres's socket as the server's own system user, with no
+password, and the admin token is made on the machine and stays there. A
+merge that breaks the build or the start leaves the last good release
+serving and says why in `deploy.json` - so run the checks before merging,
+not after.
+
 ## Phase 2 note
 
 Movement and shooting feel cannot be tuned by guessing at numbers. Build a

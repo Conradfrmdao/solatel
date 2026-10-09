@@ -1,0 +1,45 @@
+# The game server. Written by deploy/update.sh from the repository's copy;
+# change that one, not this.
+#
+# Stop-then-start is the only safe way to replace it (documents/RUNBOOK.md):
+# the new process takes the escrow lease the old one gives up on SIGTERM.
+[Unit]
+Description=Solatel game server
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+# Nothing to run until the first build has been put in place.
+ConditionPathExists=/opt/solatel/current/solatel-server
+
+[Service]
+User=solatel
+Group=solatel
+WorkingDirectory=/opt/solatel/current
+# The release's own settings, then this machine's secrets, then anything set
+# by hand here - later files win.
+EnvironmentFile=/opt/solatel/current/solatel.env
+EnvironmentFile=-/etc/solatel/secret.env
+EnvironmentFile=-/etc/solatel/local.env
+ExecStart=/opt/solatel/current/solatel-server
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+LimitNOFILE=65536
+
+# It reads its release and talks to Postgres and the network; it writes
+# nothing.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
