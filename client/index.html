@@ -769,31 +769,16 @@
         filter: blur(28px) brightness(0.45) saturate(1.1);
       }
       /* The art carries the name, so the heading is the art: its text is
-         for whatever cannot see it. */
+         for whatever cannot see it. It fills the whole window, cropped
+         at the edges rather than shrunk inside a blur (Conrad's call). */
       #boot h1 {
         position: absolute;
-        top: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: min(100vw, 177.8vh);
-        aspect-ratio: 1254 / 705;
+        inset: 0;
         z-index: -1;
         margin: 0;
         font-size: 0;
         color: transparent;
-        background: url(assets/menu/splash.webp) center / cover no-repeat;
-        -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
-        mask-image: linear-gradient(to bottom, #000 70%, transparent);
-      }
-      /* Wider than the art, its sides fade into the blur as well. */
-      @media (min-aspect-ratio: 16/9) {
-        #boot h1 {
-          -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
-          mask-image:
-            linear-gradient(to bottom, #000 70%, transparent),
-            linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
-          mask-composite: intersect;
-        }
+        background: url(assets/menu/splash.webp) center 30% / cover no-repeat;
       }
       /* What is loading reads over whatever is under it. */
       #boot-status,
