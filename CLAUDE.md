@@ -732,6 +732,15 @@ with `{ unadjustedMovement: true }`. Sensitivity is a slider in the HUD and
 persists in `localStorage`; it is the setting players are most particular about
 and no single value is right.
 
+**The game takes the whole screen** (`fullscreen.js`), at Conrad's asking:
+pressing a stake asks for fullscreen, because a browser grants it only in
+answer to a click, and the top bar has a button for it; the settings can
+turn the first off. In fullscreen Escape is locked to the page where the
+browser allows (`navigator.keyboard.lock`, Chrome and Edge), so a short
+press frees the mouse - `input.js` does what the browser would have - and
+holding it leaves fullscreen. Without that lock every Escape that freed the
+mouse would throw the player out of fullscreen too.
+
 `?debug=1` exposes `window.solatel`. `?nolock=1` lets the keyboard work without
 pointer lock, which is the only way an automated browser can drive the game -
 synthetic clicks do not earn a lock. `node client/smoke.mjs --tabs 2 --shot

@@ -20,6 +20,7 @@
 import qrcode from 'qrcode-generator';
 import { asset } from './assets.js';
 import { prefetchMap } from './prefetch.js';
+import { enterFullscreen, fullscreenWanted, isFullscreen, setFullscreenWanted, toggleFullscreen } from './fullscreen.js';
 import { OPTICS, PRIMARIES, SIM, WEAPONS } from './sim.js';
 import { SKINS, storeSkin, storedSkin } from './skins.js';
 import {
@@ -151,6 +152,16 @@ export class Menu {
     this.maps = root.querySelector('#menu-maps');
     this.tables = root.querySelector('#menu-tables');
     this.battle = root.querySelector('#battle');
+    // The whole screen: the button in the top bar, and whether play takes it.
+    const fullscreen = root.querySelector('#fullscreen');
+    fullscreen.addEventListener('click', () => toggleFullscreen());
+    document.addEventListener('fullscreenchange', () => {
+      fullscreen.classList.toggle('on', isFullscreen());
+      fullscreen.innerHTML = isFullscreen() ? ICON.shrink : ICON.expand;
+    });
+    const onPlay = root.querySelector('#fullscreen-on-play');
+    onPlay.checked = fullscreenWanted();
+    onPlay.addEventListener('change', () => setFullscreenWanted(onPlay.checked));
     // The play screen is laid out to the window (see `showPane`).
     root.dataset.pane = 'play';
     this.skinName = root.querySelector('#menu-skin-name');
@@ -267,6 +278,9 @@ export class Menu {
       }
       this._drawTables();
       if (this.chosenMap && this._onQueue) {
+        // The whole screen for the match, asked for here because a browser
+        // gives it only in answer to a click (`fullscreen.js`).
+        if (fullscreenWanted()) enterFullscreen();
         this._onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
       }
     });
@@ -1184,6 +1198,8 @@ const ICON = {
   person: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg>',
   shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8-7.5 9.5-4.3-1.5-7.5-5-7.5-9.5V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 2.8h3.4l.5 2.4 1.7.7 2-1.4 2.4 2.4-1.4 2 .7 1.7 2.4.5v3.4l-2.4.5-.7 1.7 1.4 2-2.4 2.4-2-1.4-1.7.7-.5 2.4h-3.4l-.5-2.4-1.7-.7-2 1.4-2.4-2.4 1.4-2-.7-1.7-2.4-.5v-3.4l2.4-.5.7-1.7-1.4-2 2.4-2.4 2 1.4 1.7-.7z"/><circle cx="12" cy="12" r="3.2"/></svg>',
+  expand: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+  shrink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
   gift: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h16v10H4zM3 7h18v3H3zM12 7v13"/><path d="M12 7c-1.5-3-5-3.5-5-1.2C7 7 9.5 7 12 7c2.5 0 5 0 5-1.2C17 3.5 13.5 4 12 7z"/></svg>',
   bars: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-5M10 20v-9M15 20V7M20 20V4"/></svg>',
   people: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="16.5" cy="9.5" r="2.6"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>',
@@ -1205,6 +1221,7 @@ const TEMPLATE = `
         <button type="button" data-pane="profile">${ICON.person}<span>Profile</span></button>
         <button type="button" data-pane="fair">${ICON.shield}<span>Fair play</span></button>
         <button type="button" data-pane="settings" class="gear" title="settings" aria-label="settings">${ICON.gear}</button>
+        <button type="button" id="fullscreen" class="gear" title="full screen" aria-label="full screen">${ICON.expand}</button>
       </nav>
       <div class="me">
         <span class="avatar" id="me-avatar" aria-hidden="true"></span>
@@ -1494,6 +1511,11 @@ const TEMPLATE = `
           volume
           <input id="volume" type="range" min="0" max="100" step="1" />
           <span id="volume-value"></span>
+        </label>
+        <label class="check">
+          full screen
+          <input id="fullscreen-on-play" type="checkbox" />
+          <span>take the whole screen when you press play; hold Esc to leave it</span>
         </label>
         <label class="check">
           raw mouse
