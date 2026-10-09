@@ -13,6 +13,7 @@
 // Needs a running server and a built client. Touches no money: nothing here
 // queues for a match.
 
+import zlib from 'node:zlib';
 import puppeteer from 'puppeteer-core';
 
 const args = process.argv.slice(2);
@@ -33,21 +34,33 @@ const names = JSON.parse(/<script id="solatel-manifest" type="application\/json"
 const build = /<meta name="solatel-build" content="([^"]+)"/.exec(html)[1];
 const script = /<script type="module" src="([^"]+)"/.exec(html)[1];
 
-// 2. Every file it names: kept for good, and compressed where that pays.
+// 2. Every file it names: kept for good, and compressed where that pays -
+// which for a file sent plain is judged here the way the build judges it
+// (`WORTH` in build.mjs): a model that is mostly compressed textures, like
+// the guns, does not shrink enough to be worth a copy.
 const COMPRESSED = /\.(js|wasm|glb|hdr)$/;
+const WORTH = 0.9;
+const pays = (bytes) =>
+  zlib.brotliCompressSync(bytes, {
+    params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+      [zlib.constants.BROTLI_PARAM_LGWIN]: 24,
+      [zlib.constants.BROTLI_PARAM_SIZE_HINT]: bytes.length,
+    },
+  }).length <= bytes.length * WORTH;
 const published = [script, ...Object.values(names)];
 let wrong = 0;
 let wire = 0;
 for (const name of published) {
   const response = await fetch(`${base}/${name}`, { headers: { 'accept-encoding': 'br, gzip' } });
-  await response.arrayBuffer();
+  const body = new Uint8Array(await response.arrayBuffer());
   wire += Number(response.headers.get('content-length') ?? 0);
   const cache = response.headers.get('cache-control') ?? '';
   const encoding = response.headers.get('content-encoding');
   if (response.status !== 200 || !cache.includes('immutable')) {
     console.log(`     ${name}: ${response.status}, cache-control ${cache}`);
     wrong += 1;
-  } else if (COMPRESSED.test(name) && encoding !== 'br') {
+  } else if (COMPRESSED.test(name) && encoding !== 'br' && (encoding || pays(body))) {
     console.log(`     ${name}: sent ${encoding ?? 'uncompressed'}`);
     wrong += 1;
   }
