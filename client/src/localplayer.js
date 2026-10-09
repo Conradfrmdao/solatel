@@ -24,9 +24,13 @@ import {
   BUTTON_FIRE,
   BUTTON_JUMP,
   BUTTON_RELOAD,
+  BUTTON_SIDEARM,
   BUTTON_THROW,
 } from './net.js';
-import { Predictor, SIM } from './sim.js';
+import { Predictor, SIM, WEAPONS } from './sim.js';
+
+/** The loadout everybody has until a match says otherwise. */
+const DEFAULT_LOADOUT = Object.freeze({ primary: 'rifle', optic: 'red_dot' });
 
 /**
  * How many recent commands ride along in each message.
@@ -208,16 +212,34 @@ export class LocalPlayer {
     this.zoneRadius = Infinity;
     /** Milliseconds left in the match, for the clock in the HUD. */
     this.matchRemainingMs = 0;
-    /** Simulation time, in ticks' worth of seconds, for the fire rate. */
-    this.gameTime = 0;
-    this.lastPredictedShot = -Infinity;
-    /** Shots this client expects the server to have fired, not yet shown. */
-    this.predictedShots = 0;
-    /** Rounds in the magazine. The server's figure, run down locally between
-     *  snapshots only so the kick stops on the shot the server will refuse. */
-    this.ammo = SIM.magazine ?? 30;
-    /** Milliseconds of reload left, from the server, run down locally. */
-    this.reloadMs = 0;
+    /** Ticks this client has simulated, for the rate of fire. Every timer a
+     *  gun has is in ticks on the server, and is predicted in ticks here. */
+    this.ticks = 0;
+    this.nextFireTick = 0;
+    this._fireHeld = false;
+    /** Shots this client expects the server to have fired, not yet shown:
+     *  `{ weapon, from, velocity }` each, for the kick, the sound and the
+     *  tracer, the moment the trigger is pulled. */
+    this.predictedShots = [];
+    /** What this player carries, as the server settled it for the match. */
+    this.loadout = DEFAULT_LOADOUT;
+    /** Which gun is in hand - 'primary' or 'sidearm' - and the ticks left
+     *  of drawing it. Changed the tick the key is pressed, as the server
+     *  will change it when that command arrives. */
+    this.held = 'primary';
+    this.drawTicks = 0;
+    /** Rounds in each gun's magazine. The server's figures, run down locally
+     *  between snapshots only so the kick stops on the shot the server will
+     *  refuse. */
+    this.rounds = { primary: 30, sidearm: 15 };
+    /** Ticks of reload left on the gun in hand. */
+    this.reloadTicks = 0;
+    /** The newest command that fired, reloaded or changed guns here. A
+     *  snapshot that has not yet acknowledged it knows nothing about the
+     *  guns that this client does not, and is not taken over it. */
+    this.armsSeq = 0;
+    /** Set when the gun in hand changes, for the viewmodel, once. */
+    this.switched = false;
     /** Grenades left this life. */
     this.grenades = SIM.grenadesPerLife ?? 2;
     /** Grenades still to go off, `{id, position}`, straight from the server. */
@@ -300,6 +322,8 @@ export class LocalPlayer {
     if (intent.throw) buttons |= BUTTON_THROW;
     // Raised to aim, so everybody else sees the rifle come up.
     if (this.input.aiming) buttons |= BUTTON_AIM;
+    // Which gun is a posture, held for as long as the pistol is wanted.
+    if (this.input.sidearm) buttons |= BUTTON_SIDEARM;
 
     const command = {
       seq: this.nextSeq,
@@ -328,38 +352,13 @@ export class LocalPlayer {
     this.unacked.push(command);
     while (this.unacked.length > MAX_UNACKED) this.unacked.shift();
 
-    // The shot, as far as this player's own hands are concerned. The server
-    // enforces the same interval on the same ticks and decides what the shot
-    // hit; this only lets the kick and the flash happen now rather than a
-    // round trip from now. A predicted shot the server refused costs one
-    // flash that meant nothing.
-    this.gameTime += dt;
-    this.reloadMs = Math.max(0, this.reloadMs - dt * 1000);
+    // The guns, as far as this player's own hands are concerned. The server
+    // keeps the same timers in the same ticks and decides what every shot
+    // hit; this only lets the kick, the flash and the tracer happen now
+    // rather than a round trip from now. A predicted shot the server refused
+    // costs one flash that meant nothing.
     const armed = this.matchId && !this.eliminated && this.health > 0;
-    // A reload is the server's to start and finish; this only shows it
-    // starting now rather than a round trip from now, on the same rules: a
-    // full magazine does not reload, and pulling the trigger on an empty one
-    // does.
-    if (
-      armed &&
-      this.reloadMs === 0 &&
-      this.ammo < SIM.magazine &&
-      (intent.reload || (intent.fire && this.ammo === 0))
-    ) {
-      this.reloadMs = SIM.reloadSeconds * 1000;
-      this.reloadStarted = true;
-    }
-    if (
-      intent.fire &&
-      armed &&
-      this.reloadMs === 0 &&
-      this.ammo > 0 &&
-      this.gameTime - this.lastPredictedShot >= SIM.weaponFireInterval
-    ) {
-      this.lastPredictedShot = this.gameTime;
-      this.predictedShots += 1;
-      this.ammo -= 1;
-    }
+    this._predictArms(intent, command);
     if (intent.throw && !this._throwHeld && armed && this.grenades > 0) {
       this.thrown = true;
     }
@@ -390,7 +389,7 @@ export class LocalPlayer {
    * forms around this player, so a line that never fills costs nothing - and
    * this is safe to call from a button somebody can mash.
    */
-  queue(mapName, dollars) {
+  queue(mapName, dollars, loadout = DEFAULT_LOADOUT, skin = 0) {
     // Whatever happened in the last match is behind them the moment they ask
     // for the next one. Leaving the banner up means a player who has queued
     // is still being told how they died.
@@ -400,7 +399,11 @@ export class LocalPlayer {
     this.broke = false;
     this.queueRequested = { map: mapName, dollars, at: performance.now() };
     if (this.queuedAt === null) this.queuedAt = performance.now();
-    this.link.send({ t: 'queue', map: mapName, tier_dollars: dollars });
+    // The guns go with the stake: what a life is played with is chosen
+    // with it, and the server makes it into something the game allows.
+    // And how they are dressed, which everybody in the match will see.
+    this.skin = skin;
+    this.link.send({ t: 'queue', map: mapName, tier_dollars: dollars, loadout, skin });
   }
 
   /** Give up the place in line. No money has moved, so nothing comes back. */
@@ -470,13 +473,22 @@ export class LocalPlayer {
         if (typeof message.match_remaining_ms === 'number') {
           this.matchRemainingMs = message.match_remaining_ms;
         }
-        // The weapon's state is the server's. A reload the server has not
-        // heard about yet is left running rather than cancelled by a
-        // snapshot that was on its way before the key was pressed.
+        // The guns' state is the server's - once it has heard every command
+        // that changed it here. Until then a snapshot was on its way before
+        // the shot, the reload or the change of gun, and taking it would
+        // undo what the player has just done. Its timers are wound on by the
+        // commands it has not seen, which this client has already run.
         if (typeof message.ammo === 'number') {
-          if (message.reload_ms > 0 || this.reloadMs === 0) {
-            this.ammo = message.ammo;
-            this.reloadMs = message.reload_ms ?? 0;
+          if ((message.ack_input_seq ?? 0) >= this.armsSeq) {
+            const since = this.unacked.filter((c) => c.seq > message.ack_input_seq).length;
+            const ticks = (ms) => Math.max(0, Math.round((ms ?? 0) / (SIM.tickDt * 1000)) - since);
+            const held = message.weapon === 'pistol' ? 'sidearm' : 'primary';
+            if (held !== this.held) this.switched = true;
+            this.held = held;
+            this.rounds[held] = message.ammo;
+            this.rounds[held === 'primary' ? 'sidearm' : 'primary'] = message.spare_ammo ?? 0;
+            this.reloadTicks = ticks(message.reload_ms);
+            this.drawTicks = ticks(message.switch_ms);
           }
           this.grenades = message.grenades ?? this.grenades;
         }
@@ -594,11 +606,12 @@ export class LocalPlayer {
         this.unacked.length = 0;
         this.predictionError = 0;
         this.clearCorrection();
-        this.ammo = SIM.magazine;
-        this.reloadMs = 0;
+        this._arm(message.loadout);
+        this.armsSeq = 0;
         this.grenades = SIM.grenadesPerLife;
         this.liveGrenades = [];
         this.input.resetCrouch?.();
+        this.input.resetSidearm?.();
         return true;
 
       case 'match_ended':
@@ -634,10 +647,16 @@ export class LocalPlayer {
       }
 
       case 'shot_fired':
-        if (message.shooter === this.id && message.hit_player) {
+        if (message.shooter === this.id && message.landed?.hit_player) {
           this.hitMarker = HIT_MARKER_SECONDS;
         }
         return false; // The world also wants this, for the tracer.
+
+      case 'shot_landed':
+        if (message.shooter === this.id && message.landing?.hit_player) {
+          this.hitMarker = HIT_MARKER_SECONDS;
+        }
+        return false; // And this, for where it came down.
 
       default:
         return false;
@@ -737,8 +756,124 @@ export class LocalPlayer {
   /** Shots fired since this was last asked, once. */
   takePredictedShots() {
     const shots = this.predictedShots;
-    this.predictedShots = 0;
+    this.predictedShots = [];
     return shots;
+  }
+
+  /** Whether the gun in hand changed since this was last asked, once. */
+  takeSwitch() {
+    const switched = this.switched;
+    this.switched = false;
+    return switched;
+  }
+
+  /** The gun in hand, by its name on the wire. */
+  get weapon() {
+    return this.held === 'sidearm' ? 'pistol' : this.loadout.primary;
+  }
+
+  /** Everything the shared table says about the gun in hand. */
+  get gun() {
+    return WEAPONS[this.weapon] ?? WEAPONS.rifle;
+  }
+
+  /** What the gun in hand is aimed through. */
+  get optic() {
+    return this.held === 'sidearm' ? 'irons' : this.loadout.optic;
+  }
+
+  /** Rounds in the gun in hand, and in the other one. */
+  get ammo() {
+    return this.rounds[this.held];
+  }
+
+  get spareAmmo() {
+    return this.rounds[this.held === 'primary' ? 'sidearm' : 'primary'];
+  }
+
+  get reloadMs() {
+    return this.reloadTicks * SIM.tickDt * 1000;
+  }
+
+  get switchMs() {
+    return this.drawTicks * SIM.tickDt * 1000;
+  }
+
+  /** Back to a fresh life's guns: the primary in hand, both full. */
+  _arm(loadout) {
+    this.loadout = loadout ?? DEFAULT_LOADOUT;
+    this.held = 'primary';
+    this.drawTicks = 0;
+    this.reloadTicks = 0;
+    this.nextFireTick = 0;
+    this._fireHeld = false;
+    this.rounds = {
+      primary: WEAPONS[this.loadout.primary]?.magazine ?? 30,
+      sidearm: WEAPONS.pistol?.magazine ?? 15,
+    };
+    this.switched = true;
+  }
+
+  /**
+   * One tick of the guns, on the server's rules and in its order: a reload
+   * or a draw running down, a change of gun, a reload asked for, and the
+   * trigger - which a pistol or a bolt answers once a pull, and an automatic
+   * for as long as it is held, never faster than its own rate.
+   */
+  _predictArms(intent, command) {
+    this.ticks += 1;
+    const armed = this.matchId && !this.eliminated && this.health > 0;
+    if (this.drawTicks > 0) this.drawTicks -= 1;
+    if (this.reloadTicks > 0) {
+      this.reloadTicks -= 1;
+      if (this.reloadTicks === 0) this.rounds[this.held] = this.gun.magazine;
+    }
+    const wanted = this.input.sidearm ? 'sidearm' : 'primary';
+    if (wanted !== this.held) {
+      // Out with the other gun: its own time to draw, and a reload half done
+      // put away with the one going back.
+      this.held = wanted;
+      this.drawTicks = Math.round(this.gun.drawSeconds / SIM.tickDt);
+      this.reloadTicks = 0;
+      this.armsSeq = command.seq;
+      this.switched = true;
+    }
+    const gun = this.gun;
+    const pulled = intent.fire && (gun.automatic || !this._fireHeld);
+    this._fireHeld = intent.fire;
+    const ready = armed && this.drawTicks === 0 && this.reloadTicks === 0;
+    const reload = () => {
+      if (this.rounds[this.held] >= gun.magazine) return;
+      this.reloadTicks = Math.round(gun.reloadSeconds / SIM.tickDt);
+      this.reloadStarted = true;
+      this.armsSeq = command.seq;
+    };
+    if (ready && intent.reload) reload();
+    if (pulled && armed && this.drawTicks === 0 && this.reloadTicks === 0 && this.ticks >= this.nextFireTick) {
+      if (this.rounds[this.held] === 0) {
+        // Pulling the trigger on an empty magazine starts putting one in.
+        reload();
+        return;
+      }
+      this.nextFireTick = this.ticks + gun.fireTicks;
+      this.rounds[this.held] -= 1;
+      this.armsSeq = command.seq;
+      // From the eye, along the aim, raised by the gun's zero - exactly as
+      // the server launches it - so the tracer drawn now flies where the
+      // server's round will.
+      const up = command.pitch + gun.zeroAngle;
+      const speed = gun.muzzleVelocity;
+      this.predictedShots.push({
+        weapon: this.weapon,
+        from: [this.current.x, this.current.y + (this.eyeOffset ?? SIM.eyeOffset), this.current.z],
+        velocity: [
+          -Math.sin(command.yaw) * Math.cos(up) * speed,
+          Math.sin(up) * speed,
+          -Math.cos(command.yaw) * Math.cos(up) * speed,
+        ],
+      });
+      if (this.rounds[this.held] === 0) reload();
+    }
   }
 
   /** Whether a reload started since this was last asked, once. */

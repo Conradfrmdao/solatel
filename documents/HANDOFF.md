@@ -4,7 +4,66 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
-## The next session's brief (written 2026-10-01)
+## Status, 9 October 2026 (evening): going live, and intensity
+
+**The game goes live this month on one VPS** that Conrad is buying -
+recommended: OVHcloud VPS-3 in Europe (6 vCores, 12 GB, unlimited
+traffic, anti-DDoS, about €12 a month), France or Germany; Johannesburg was
+the low-ping choice for Uganda, Europe the better machine and the middle of
+a global audience. He has bought a domain. The whole month is a test,
+played on that server while it is improved. `deploy/` holds the install
+command and the updater (*One VPS* in the runbook, *Deploying* in
+CLAUDE.md): once installed, **merging into main is deploying**, and
+`https://<domain>/deploy.json` is how to watch it land. Waiting on Conrad:
+the server's IP address, the domain, and his yes to the test month's
+settings in `deploy/solatel.env` (development money, the $1 table only, a
+match with whoever is in line after 45 seconds) - that file is not
+committed until he says so, because he asked to be asked before any
+environment variable's value goes into a commit. Then: tell him the two DNS
+records and the command, watch `deploy.json`, and ask him to play.
+
+**Intensity, from his brief below**: recorded gunshots near and far,
+footsteps by surface heard by distance, rounds cracking past, cries of
+pain and death, bodies falling; blood sprayed and pooled; somebody killed
+now falls (they used to vanish); hits taken mark the screen with blood and
+say where they came from; and ten original skins (protocol 20). See
+*Sound, blood and dying* and *Skins* in CLAUDE.md.
+
+## Status, 9 October 2026: weapons, and Conrad's next brief
+
+**Weapons are built** (protocol 19; *The guns* and *Shooting, and what it
+is worth* in CLAUDE.md). Five guns - the MP5 (SMG), AK-47 (assault rifle),
+RPK (machine gun, 75-round drum), M700 (bolt sniper) and the M1911 everybody
+carries - with a red dot, a 2x prism and 3x and 4x scopes; a loadout chosen
+with the stake; real cartridges' speeds and drag, rounds that fly and drop,
+lag-compensated a tick at a time; damage by range band; the sniper rifle
+kills with one headshot (Conrad's to change). He said the first,
+code-built guns looked fake, so the models are now real CC0 ones (Stein
+Games' pack and 3DModelsCC0's scope, `scripts/build-guns.sh`), the RPK made
+from the AK; parts move (bolts, the M700's bolt worked by hand, slides,
+triggers, hammer, magazines in reloads). `cheat.mjs` tries the loadout and
+the fire rates; the cache driver now judges compression the way the build
+does.
+
+**His brief since, in his words**: maps may be **50 to 100 MB each** "if
+browsers can handle" it and "most PCs can handle", without killing quality;
+more quality and quantity in the game and its maps; make it intense - good
+movement, kill animations, gun sounds, death sounds, blood when shot, close
+footsteps of opponents heard, knowing which direction a shot came from; and
+**ten skins** for the soldier "completely made up from our game" (references
+allowed, the result ours). Also still open from his previous message: a
+better picture of the yard on its menu card (the aerial one "makes it look
+like a cartoon map"), and finding everything not yet done and continuing.
+
+What exists towards that: damage arcs already say where a hit came from;
+CC0 sound sources were found - the Free Firearm Sound Library (field
+recordings of an AK-47, a 1911, a Carl Gustav M45 and a Tikka bolt rifle),
+Kenney's Impact Sounds (footsteps by surface) and HaelDB's yells - none yet
+in the game. A skin must never be a visibility advantage on real stakes:
+the same brightness and contrast as the others, and nothing that matches a
+map's own colours.
+
+## The brief before that (written 2026-10-01)
 
 Conrad's goal, in his words: make the game *perfect* - "so this can happen in
 a browser?" - with graphics pushed much further and gameplay that is smooth:
@@ -286,12 +345,12 @@ before building.
 - **Solana stays on devnet** until Conrad explicitly says otherwise.
   `solana::Cluster::devnet()` is the only cluster, and nothing may be able to
   move mainnet funds by accident.
-- **Protocol changes bump `PROTOCOL_VERSION`** (currently 16) in the same
+- **Protocol changes bump `PROTOCOL_VERSION`** (currently 19) in the same
   commit.
 - **Never commit secrets.** `.env` is gitignored and never in the repo.
 - The yard map's licence is Conrad's word, still to be found in writing. The
-  rifle model, which had no licence, was replaced by one built in code
-  (`client/src/rifle.js`) and deleted.
+  rifle model, which had no licence, was replaced by one built in code, and
+  that by real CC0 guns (`assets/guns`, ATTRIBUTION.md).
 
 ## The game as Conrad has decided it
 

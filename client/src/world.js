@@ -25,6 +25,7 @@ import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
 import { scatterRubbish } from './scatter.js';
 import { Blasts } from './blast.js';
+import { Rounds } from './rounds.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { asset } from './assets.js';
@@ -42,11 +43,6 @@ import {
 } from './light.js';
 import { PHOTO_DECLARATIONS, PHOTO_NORMAL, PHOTO_ROUGHNESS, loadPhotos, photoUniforms } from './photo.js';
 
-/** How long a tracer stays on screen. */
-const TRACER_SECONDS = 0.06;
-
-/** How many tracers can be in flight at once before the oldest is reused. */
-const MAX_TRACERS = 48;
 
 /**
  * A vertical gradient, mapped as if it were a sky sphere.
@@ -869,8 +865,6 @@ export class World {
     this.sunOffset = new THREE.Vector3(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
     this.arena = null;
     this.bounds = new THREE.Box3();
-    this._tracers = [];
-    this._nextTracer = 0;
 
     this._buildLighting();
     this._buildSky();
@@ -1284,27 +1278,8 @@ export class World {
   }
 
   _buildTracerPool() {
-    // One reused pool rather than allocating geometry per shot. At the fire
-    // rate this game runs, allocating would have the collector running during
-    // firefights.
-    const material = new THREE.LineBasicMaterial({
-      color: 0xffe9a8,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-    });
-    for (let i = 0; i < MAX_TRACERS; i += 1) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(new Float32Array(6), 3),
-      );
-      const line = new THREE.Line(geometry, material.clone());
-      line.visible = false;
-      line.frustumCulled = false;
-      this.scene.add(line);
-      this._tracers.push({ line, remaining: 0 });
-    }
+    // Rounds in flight, from one reused pool of streaks: see `rounds.js`.
+    this.rounds = new Rounds(this.scene);
   }
 
   /**
@@ -1457,18 +1432,27 @@ export class World {
   }
 
   /** Draws the tracer for a shot the server says happened. */
-  addTracer(from, to, hitPlayer) {
-    const slot = this._tracers[this._nextTracer];
-    this._nextTracer = (this._nextTracer + 1) % this._tracers.length;
+  /** A round out of a gun, flown as a streak: see `Rounds.add`. */
+  /** What a foot at world `x, y, z` comes down on, for the sound of the
+   *  step: grass where the map grows it, and otherwise the hard ground most
+   *  of every map is. */
+  surfaceAt(x, y, z) {
+    return this.arena?.userData.nature?.grassAt?.(x, y, z) ? 'grass' : 'concrete';
+  }
 
-    const positions = slot.line.geometry.getAttribute('position');
-    positions.setXYZ(0, from[0], from[1], from[2]);
-    positions.setXYZ(1, to[0], to[1], to[2]);
-    positions.needsUpdate = true;
+  addRound(round) {
+    this.rounds.add(round);
+  }
 
-    slot.line.material.color.setHex(hitPlayer ? 0xff8a4d : 0xffe9a8);
-    slot.line.visible = true;
-    slot.remaining = TRACER_SECONDS;
+  /** Somebody else's rounds going past `eye`: see `Rounds.listen`. */
+  listenRounds(eye, onPass) {
+    this.rounds.listen(eye, onPass);
+  }
+
+  /** Where a round came down, and what to do when it gets there: see
+   *  `Rounds.land`. */
+  landRound(key, landing, delay, own, onArrive) {
+    this.rounds.land(key, landing, delay, own, onArrive);
   }
 
   /**
@@ -1515,15 +1499,7 @@ export class World {
       }
     }
     this.blasts.update(dt);
-    for (const slot of this._tracers) {
-      if (slot.remaining <= 0) continue;
-      slot.remaining -= dt;
-      if (slot.remaining <= 0) {
-        slot.line.visible = false;
-      } else {
-        slot.line.material.opacity = Math.max(0, slot.remaining / TRACER_SECONDS);
-      }
-    }
+    this.rounds.update(dt);
   }
 
   /**

@@ -13,6 +13,14 @@
 //! than a person reacts - each with a minimum sample under which it says
 //! nothing at all. Cross any line and a review is opened.
 //!
+//! Lives played with the sniper rifle are summed apart and held to lines of
+//! their own (see [`judge_sniper`]). One round to the head kills with it, so
+//! it is aimed at heads, one round at a time and with time to aim: a good
+//! sniper lands more of fewer shots, and more of them in the head, than
+//! anybody with an automatic weapon does, and the automatic lines would
+//! flag every good one. Reactions are the same for everybody and are judged
+//! over every life.
+//!
 //! A review decides nothing. It is a question for a person, and until one
 //! answers it the player cannot withdraw: what they have won stays in their
 //! balance and they can keep playing with it, but it does not leave for the
@@ -78,6 +86,20 @@ pub const SNAP_MIN_HITS: i64 = 15;
 /// degrees a second, sustained right up to the shot.
 pub const SNAP_DEGREES: f32 = 30.0;
 pub const SNAP_WINDOW_SECONDS: f32 = 0.1;
+
+/// The sniper rifle's lines. A bolt action aimed through a 4x scope at a
+/// head lands half its shots and more, and most of what lands is in the
+/// head, because that is what the gun is for; so these sit far above the
+/// automatic weapons' lines, at what nobody sustains over a sample:
+/// eighty-five percent of thirty shots, eighty-five percent of twenty hits
+/// in the head, three quarters of fifteen hits at the end of a flick.
+/// Starting points, like every line here.
+pub const SNIPER_ACCURACY_LINE: f64 = 0.85;
+pub const SNIPER_ACCURACY_MIN_SHOTS: i64 = 30;
+pub const SNIPER_HEADSHOT_LINE: f64 = 0.85;
+pub const SNIPER_HEADSHOT_MIN_HITS: i64 = 20;
+pub const SNIPER_SNAP_LINE: f64 = 0.75;
+pub const SNIPER_SNAP_MIN_HITS: i64 = 15;
 
 /// Engagements opened quicker than [`REACTION_QUICK_MS`], over engagements
 /// measured, over at least this many.
@@ -160,6 +182,8 @@ pub struct Life {
     /// The name it was played under, as the match had it when it formed.
     pub name: String,
     pub map: &'static str,
+    /// The primary it was played with, by its name on the wire.
+    pub weapon: &'static str,
     pub stake: MicroUsd,
     pub outcome: Outcome,
     pub counts: Counts,
@@ -224,6 +248,26 @@ pub fn judge(record: &Record) -> Vec<&'static str> {
     }
     if record.reactions >= REACTION_MIN_SAMPLES && record.quick_share() >= REACTION_LINE {
         reasons.push("reactions");
+    }
+    reasons
+}
+
+/// Which of the sniper rifle's lines a record of sniper lives crosses. The
+/// same shape as [`judge`], with its own lines and its own names for them,
+/// and no reactions: those are judged over every life.
+pub fn judge_sniper(record: &Record) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if record.shots_fired >= SNIPER_ACCURACY_MIN_SHOTS && record.accuracy() >= SNIPER_ACCURACY_LINE
+    {
+        reasons.push("sniper accuracy");
+    }
+    if record.shots_hit >= SNIPER_HEADSHOT_MIN_HITS
+        && record.headshot_share() >= SNIPER_HEADSHOT_LINE
+    {
+        reasons.push("sniper headshots");
+    }
+    if record.shots_hit >= SNIPER_SNAP_MIN_HITS && record.snap_share() >= SNIPER_SNAP_LINE {
+        reasons.push("sniper snaps");
     }
     reasons
 }
@@ -426,9 +470,9 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
          INSERT INTO match_lives
              (match_id, player_id, map, stake_micro_usd, outcome, killer_id,
               kills, shots_fired, shots_hit, headshots, damage_dealt, snap_hits,
-              winnings_micro_usd, alive_ms, reactions, quick_reactions, name)
+              winnings_micro_usd, alive_ms, reactions, quick_reactions, name, weapon)
          VALUES ($1, $2, $3, $4, $5::life_outcome, $6,
-                 $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                 $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          ON CONFLICT (match_id, player_id) DO NOTHING",
     )
     .bind(life.match_id.as_uuid())
@@ -448,6 +492,7 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
     .bind(c.reactions as i32)
     .bind(c.quick_reactions.min(c.reactions) as i32)
     .bind(&life.name)
+    .bind(life.weapon)
     .execute(pool)
     .await
     .context("writing a life")?;
@@ -456,8 +501,9 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
         return Ok(None);
     }
 
-    let record = recent_record(pool, life.player_id).await?;
-    let reasons = judge(&record);
+    let (record, sniper) = recent_records(pool, life.player_id).await?;
+    let mut reasons = judge(&record);
+    reasons.extend(judge_sniper(&sniper));
     if reasons.is_empty() {
         return Ok(None);
     }
@@ -475,6 +521,17 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
         "reactions": record.reactions,
         "quick_reactions": record.quick_reactions,
         "quick_share": record.quick_share(),
+        "sniper": {
+            "lives": sniper.lives,
+            "kills": sniper.kills,
+            "shots_fired": sniper.shots_fired,
+            "shots_hit": sniper.shots_hit,
+            "headshots": sniper.headshots,
+            "snap_hits": sniper.snap_hits,
+            "accuracy": sniper.accuracy(),
+            "headshot_share": sniper.headshot_share(),
+            "snap_share": sniper.snap_share(),
+        },
         "lines": {
             "accuracy": { "at_least": ACCURACY_LINE, "over_shots": ACCURACY_MIN_SHOTS },
             "headshots": { "at_least": HEADSHOT_LINE, "over_hits": HEADSHOT_MIN_HITS },
@@ -490,6 +547,15 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
                 "under_ms": REACTION_QUICK_MS,
                 "within_ms": REACTION_WINDOW_MS,
             },
+            "sniper accuracy": {
+                "at_least": SNIPER_ACCURACY_LINE,
+                "over_shots": SNIPER_ACCURACY_MIN_SHOTS,
+            },
+            "sniper headshots": {
+                "at_least": SNIPER_HEADSHOT_LINE,
+                "over_hits": SNIPER_HEADSHOT_MIN_HITS,
+            },
+            "sniper snaps": { "at_least": SNIPER_SNAP_LINE, "over_hits": SNIPER_SNAP_MIN_HITS },
         },
     });
     let opened = sqlx::query(
@@ -507,18 +573,43 @@ async fn write(pool: &PgPool, life: &Life) -> Result<Option<Vec<&'static str>>> 
     Ok((opened.rows_affected() > 0).then_some(reasons))
 }
 
-/// A player's last [`RECENT_LIVES`] lives, summed.
-pub async fn recent_record(pool: &PgPool, player_id: PlayerId) -> Result<Record> {
-    let row: (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT count(*),
-                coalesce(sum(kills), 0)::bigint,
-                coalesce(sum(shots_fired), 0)::bigint,
-                coalesce(sum(shots_hit), 0)::bigint,
-                coalesce(sum(headshots), 0)::bigint,
-                coalesce(sum(snap_hits), 0)::bigint,
+/// A player's last [`RECENT_LIVES`] lives, summed: those played with
+/// anything but the sniper rifle, with every life's reactions, and then
+/// those played with the sniper rifle, for [`judge_sniper`].
+pub async fn recent_records(pool: &PgPool, player_id: PlayerId) -> Result<(Record, Record)> {
+    #[allow(clippy::type_complexity)]
+    let row: (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE NOT sniper),
+                coalesce(sum(kills) FILTER (WHERE NOT sniper), 0)::bigint,
+                coalesce(sum(shots_fired) FILTER (WHERE NOT sniper), 0)::bigint,
+                coalesce(sum(shots_hit) FILTER (WHERE NOT sniper), 0)::bigint,
+                coalesce(sum(headshots) FILTER (WHERE NOT sniper), 0)::bigint,
+                coalesce(sum(snap_hits) FILTER (WHERE NOT sniper), 0)::bigint,
                 coalesce(sum(reactions), 0)::bigint,
-                coalesce(sum(quick_reactions), 0)::bigint
-           FROM (SELECT * FROM match_lives
+                coalesce(sum(quick_reactions), 0)::bigint,
+                count(*) FILTER (WHERE sniper),
+                coalesce(sum(kills) FILTER (WHERE sniper), 0)::bigint,
+                coalesce(sum(shots_fired) FILTER (WHERE sniper), 0)::bigint,
+                coalesce(sum(shots_hit) FILTER (WHERE sniper), 0)::bigint,
+                coalesce(sum(headshots) FILTER (WHERE sniper), 0)::bigint,
+                coalesce(sum(snap_hits) FILTER (WHERE sniper), 0)::bigint
+           FROM (SELECT *, weapon IS NOT DISTINCT FROM 'sniper' AS sniper
+                   FROM match_lives
                   WHERE player_id = $1
                   ORDER BY ended_at DESC
                   LIMIT $2) recent",
@@ -528,16 +619,27 @@ pub async fn recent_record(pool: &PgPool, player_id: PlayerId) -> Result<Record>
     .fetch_one(pool)
     .await
     .context("reading a player's recent record")?;
-    Ok(Record {
-        lives: row.0,
-        kills: row.1,
-        shots_fired: row.2,
-        shots_hit: row.3,
-        headshots: row.4,
-        snap_hits: row.5,
-        reactions: row.6,
-        quick_reactions: row.7,
-    })
+    Ok((
+        Record {
+            lives: row.0,
+            kills: row.1,
+            shots_fired: row.2,
+            shots_hit: row.3,
+            headshots: row.4,
+            snap_hits: row.5,
+            reactions: row.6,
+            quick_reactions: row.7,
+        },
+        Record {
+            lives: row.8,
+            kills: row.9,
+            shots_fired: row.10,
+            shots_hit: row.11,
+            headshots: row.12,
+            snap_hits: row.13,
+            ..Record::default()
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -619,6 +721,23 @@ mod tests {
     }
 
     #[test]
+    fn a_good_sniper_is_not_an_aimbot() {
+        // Half of thirty shots landed, three quarters of those in the head:
+        // a sniper doing what the gun is for. Over the automatic lines it
+        // would be a headshot flag every time.
+        let good = record(60, 32, 24, 8);
+        assert_eq!(judge(&good), vec!["headshots"]);
+        assert!(judge_sniper(&good).is_empty());
+        // Every shot, every one a head, all flicks: that is not a person.
+        assert_eq!(
+            judge_sniper(&record(40, 38, 36, 34)),
+            vec!["sniper accuracy", "sniper headshots", "sniper snaps"]
+        );
+        // And a short run of perfect shots says nothing.
+        assert!(judge_sniper(&record(10, 10, 10, 10)).is_empty());
+    }
+
+    #[test]
     fn the_lines_are_inclusive_at_exactly_the_minimum_sample() {
         let shots = ACCURACY_MIN_SHOTS;
         let hits = (shots as f64 * ACCURACY_LINE).ceil() as i64;
@@ -646,6 +765,7 @@ mod tests {
             player_id,
             name: "Tester".to_string(),
             map: "arena",
+            weapon: "rifle",
             stake: MicroUsd::from_usd(1),
             outcome: Outcome::Survived,
             counts,
@@ -696,9 +816,13 @@ mod tests {
             assert_eq!(write(&pool, &life(honest, ordinary)).await.unwrap(), None);
         }
 
-        let record = recent_record(&pool, cheat).await.unwrap();
+        let (record, sniper) = recent_records(&pool, cheat).await.unwrap();
         assert_eq!(record.lives, 3);
         assert_eq!(record.shots_hit, 5 + 57 + 57);
+        assert_eq!(
+            sniper.lives, 0,
+            "none of them was played with the sniper rifle"
+        );
 
         let (_, held) = crate::ledger::balance_and_review(&pool, cheat)
             .await
@@ -717,7 +841,34 @@ mod tests {
         let twice = life(honest, ordinary);
         write(&pool, &twice).await.unwrap();
         write(&pool, &twice).await.unwrap();
-        assert_eq!(recent_record(&pool, honest).await.unwrap().lives, 4);
+        assert_eq!(recent_records(&pool, honest).await.unwrap().0.lives, 4);
+
+        // A sniper's lives are counted apart: a good sniper's three in four
+        // to the head is not the automatic weapons' business.
+        let marksman = PlayerId::new();
+        let mut scoped = life(
+            marksman,
+            Counts {
+                shots_fired: 12,
+                shots_hit: 8,
+                headshots: 6,
+                reactions: 2,
+                ..Counts::default()
+            },
+        );
+        scoped.weapon = "sniper";
+        for _ in 0..4 {
+            scoped.match_id = MatchId::new();
+            assert_eq!(
+                write(&pool, &scoped).await.unwrap(),
+                None,
+                "a good sniper is not flagged"
+            );
+        }
+        let (automatic, sniper) = recent_records(&pool, marksman).await.unwrap();
+        assert_eq!((automatic.lives, sniper.lives), (0, 4));
+        assert_eq!(sniper.headshots, 24);
+        assert_eq!(automatic.reactions, 8, "reactions are every life's");
     }
 
     /// Against a real Postgres: a recording is stored, an old one nobody
@@ -767,6 +918,7 @@ mod tests {
             player_id: suspect,
             name: "Suspect".to_string(),
             map: "arena",
+            weapon: "rifle",
             stake: MicroUsd::from_usd(1),
             outcome: Outcome::Survived,
             counts: Counts::default(),

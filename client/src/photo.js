@@ -104,6 +104,13 @@ export function initPhotos(renderer) {
   ktx2 = new KTX2Loader(manager).setTranscoderPath('basis/').detectSupport(renderer);
 }
 
+/** The KTX2 loader, for anything else that ships compressed textures - the
+ *  guns' (`guns.js`), inside their glTF files. */
+export function ktx2Loader() {
+  if (!ktx2) throw new Error('initPhotos has not been called');
+  return ktx2;
+}
+
 async function loadCompressed(url, colorSpace) {
   if (!ktx2) throw new Error('initPhotos has not been called');
   const texture = await ktx2.loadAsync(url);

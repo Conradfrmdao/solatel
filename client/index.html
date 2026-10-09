@@ -187,7 +187,11 @@
         text-align: right;
         text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
       }
+      #weapon .gun { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: #d7dde6; }
+      #weapon .gun .spare { margin-left: 12px; color: var(--dim); }
+      #weapon .gun .spare::before { content: 'Q · '; opacity: 0.7; }
       #weapon .ammo { font-size: 22px; color: var(--dim); }
+      #weapon .ammo.drawing b { color: var(--dim); }
       #weapon .ammo b { font-size: 34px; color: #eaf1fb; }
       #weapon .ammo.low b { color: #f0c26a; }
       #weapon .ammo.empty b { color: var(--bad); }
@@ -230,6 +234,31 @@
         background: radial-gradient(ellipse at center, transparent 55%, rgba(190, 20, 20, 0.55));
       }
       #hurt-flash.flash { animation: hurt 450ms ease-out; }
+      /* Blood thrown across the edges of the view when hit (hud.bleed). */
+      #blood-screen {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0;
+        background-size: 100% 100%;
+        background-repeat: no-repeat;
+      }
+      /* Badly hurt: red at the edges, beating. --low is how badly. */
+      #low-health {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0;
+        background: radial-gradient(ellipse at center, transparent 48%, rgba(120, 0, 0, 0.75));
+        transition: opacity 400ms ease;
+      }
+      #low-health.on { animation: low-beat 1.05s ease-in-out infinite; }
+      @keyframes low-beat {
+        0%, 100% { opacity: calc(var(--low, 0.5) * 0.75); }
+        18% { opacity: var(--low, 0.5); }
+        36% { opacity: calc(var(--low, 0.5) * 0.8); }
+        52% { opacity: calc(var(--low, 0.5) * 0.95); }
+      }
       /* Where a hit came from: an arc round the crosshair on that side. */
       #damage-dirs { position: absolute; inset: 0; pointer-events: none; }
       #damage-dirs .dmg {
@@ -251,6 +280,12 @@
         filter: drop-shadow(0 0 6px rgba(255, 40, 30, 0.7));
         -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
         mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+      }
+      /* A round gone past: thinner and paler than a hit's arc. */
+      #damage-dirs .dmg.miss i {
+        border-top: 4px solid rgba(255, 236, 200, 0.85);
+        filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.8));
+        width: 120px;
       }
       @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
       .kill .cause { margin-left: 6px; font-size: 0.8em; opacity: 0.7; }
@@ -424,6 +459,34 @@
       .mm-card[data-phase='loading'] .mm-radar span { animation: none; opacity: 0; }
       .mm-card[data-phase='found'] .mm-radar i { inset: 18px; transition: inset 200ms ease; }
 
+      /* Through a scope: the world in a round eyepiece, black round it, a
+         thin shadow ring at its edge, and the reticle over the middle. */
+      #scope {
+        --eye: 300px;
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(
+          circle at 50% 50%,
+          transparent calc(var(--eye) - 3px),
+          rgba(0, 0, 0, 0.55) calc(var(--eye) - 1px),
+          rgba(4, 5, 6, 0.97) calc(var(--eye) + 2px),
+          #030304 100%
+        );
+      }
+      #scope::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: calc(var(--eye) * 2);
+        height: calc(var(--eye) * 2);
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        box-shadow: inset 0 0 calc(var(--eye) * 0.22) rgba(0, 0, 0, 0.65);
+      }
+      #scope .reticle { position: absolute; inset: 0; width: 100%; height: 100%; }
+
       #crosshair,
       #hitmarker {
         position: absolute;
@@ -465,6 +528,29 @@
           linear-gradient(to bottom left, transparent 44%, var(--bad) 44%, var(--bad) 56%, transparent 56%);
       }
       #hitmarker.show { opacity: 1; }
+      /* A kill: a bigger red X that pops and fades, over the hit marker. */
+      #killmarker {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 34px;
+        height: 34px;
+        opacity: 0;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        background:
+          linear-gradient(to bottom right, transparent 42%, #e8231d 42%, #e8231d 58%, transparent 58%),
+          linear-gradient(to bottom left, transparent 42%, #e8231d 42%, #e8231d 58%, transparent 58%);
+        filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.85));
+      }
+      #killmarker.show { animation: kill-pop 520ms ease-out; }
+      #killmarker.head { width: 42px; height: 42px; }
+      @keyframes kill-pop {
+        0% { opacity: 1; transform: translate(-50%, -50%) scale(1.7) rotate(-8deg); }
+        25% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+        70% { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+      }
       /* A headshot is worth twice a body shot, so it gets its own colour
          rather than the same X twice. */
       #hitmarker.head {
@@ -925,6 +1011,15 @@
         background: linear-gradient(180deg, var(--amber-hot), var(--amber));
       }
       #purse:hover { border-color: rgba(246, 162, 27, 0.6); }
+      #purse .tag {
+        font: 700 10px/1 var(--shout);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--amber);
+        border: 1px solid rgba(246, 162, 27, 0.55);
+        border-radius: 3px;
+        padding: 3px 4px 2px 5px;
+      }
 
       /* What the player is in the middle of: a line, another tab, no money. */
       #menu-status {
@@ -1131,6 +1226,125 @@
         text-transform: uppercase;
       }
       .map .busy { font-size: 12px; color: #b5bfcc; font-variant-numeric: tabular-nums; }
+
+      /* The gun a life is played with: a picture of each, what it is for,
+         and bars for what it does, then the optics it can carry. */
+      .arms {
+        display: grid;
+        gap: 14px;
+        padding: 20px 22px;
+        border-radius: 10px;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+      }
+      .arms .sub { margin-top: -8px; }
+      .arms kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font: 600 12px/1.4 var(--shout);
+        background: var(--well);
+        border: 1px solid #2c394b;
+      }
+      #menu-guns {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 12px;
+      }
+      .gun {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+        padding: 12px 14px 14px;
+        border-radius: 8px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .gun:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .gun.on {
+        border: 2px solid var(--amber);
+        background: linear-gradient(180deg, rgba(246, 162, 27, 0.16), rgba(246, 162, 27, 0.03));
+        box-shadow: 0 0 24px rgba(246, 162, 27, 0.14);
+      }
+      .gun .art {
+        display: block;
+        width: 100%;
+        aspect-ratio: 480 / 170;
+        object-fit: contain;
+        background: radial-gradient(ellipse at 50% 60%, rgba(246, 162, 27, 0.1), transparent 70%);
+      }
+      .gun .name { font: 800 24px/1 var(--shout); letter-spacing: 0.03em; text-transform: uppercase; }
+      .gun.on .name { color: var(--amber-hot); }
+      .gun .blurb { font-size: 13px; line-height: 1.35; color: #c3ccd8; min-height: 2.7em; }
+      .gun .stats { display: grid; gap: 5px; }
+      .gun .stat {
+        display: grid;
+        grid-template-columns: 70px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--dim);
+      }
+      .gun .stat .label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+      .gun .stat .track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+      .gun .stat .fill { display: block; height: 100%; background: linear-gradient(90deg, #c47c12, var(--amber-hot)); }
+      .gun .stat .value { color: #d7dde6; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      #menu-optics { display: flex; flex-wrap: wrap; gap: 10px; }
+      .optic {
+        display: grid;
+        gap: 2px;
+        padding: 9px 16px;
+        border-radius: 6px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+      }
+      .optic b { font: 800 18px/1 var(--shout); letter-spacing: 0.04em; text-transform: uppercase; }
+      .optic span { font-size: 12px; color: var(--dim); }
+      .optic:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .optic.on { border: 2px solid var(--amber); }
+      .optic.on b { color: var(--amber-hot); }
+      #menu-carrying { color: #d7dde6; }
+      /* How a player is dressed: the soldier in each skin. */
+      #menu-skins {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+        gap: 10px;
+      }
+      .skin {
+        display: grid;
+        gap: 4px;
+        align-content: start;
+        padding: 8px 8px 10px;
+        border-radius: 8px;
+        text-align: left;
+        color: var(--chalk);
+        background: var(--well);
+        border: 1px solid #2c394b;
+        cursor: pointer;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .skin:hover { border-color: rgba(246, 162, 27, 0.55); }
+      .skin.on {
+        border: 2px solid var(--amber);
+        background: linear-gradient(180deg, rgba(246, 162, 27, 0.16), rgba(246, 162, 27, 0.03));
+      }
+      .skin .art {
+        display: block;
+        width: 100%;
+        aspect-ratio: 3 / 4;
+        object-fit: contain;
+        background: radial-gradient(ellipse at 50% 55%, rgba(246, 162, 27, 0.12), transparent 70%);
+      }
+      .skin .name { font: 800 16px/1 var(--shout); letter-spacing: 0.04em; text-transform: uppercase; }
+      .skin.on .name { color: var(--amber-hot); }
+      .skin .blurb { font-size: 11px; line-height: 1.3; color: #b5bfcc; }
 
       /* The entry fee, the button that plays, and the way to fund it. */
       .play-row {

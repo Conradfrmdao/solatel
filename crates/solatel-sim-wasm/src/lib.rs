@@ -33,11 +33,11 @@ use solatel_protocol::{
     net::{INTERPOLATION_DELAY_MS, PROTOCOL_VERSION, SNAPSHOT_HZ, TICK_DT, TICK_HZ},
     sim::{
         Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
-        InputCommand, MAGAZINE, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
-        REGEN_DELAY, REGEN_SECONDS, RELOAD_SECONDS, WEAPON_FIRE_INTERVAL, WEAPON_RANGE,
-        ZONE_FINAL_RADIUS,
+        InputCommand, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState, REGEN_DELAY,
+        REGEN_SECONDS, ZONE_FINAL_RADIUS, hitscan,
         map::{self, MAP_VERSION},
         step_tick,
+        weapon::{BULLET_GRAVITY, Optic, Round, Weapon},
     },
 };
 use wasm_bindgen::prelude::*;
@@ -252,10 +252,7 @@ pub fn constants() -> Vec<f32> {
         EYE_OFFSET,
         MAX_PITCH,
         MAX_HEALTH as f32,
-        WEAPON_FIRE_INTERVAL,
         CROUCH_DROP,
-        MAGAZINE as f32,
-        RELOAD_SECONDS,
         GRENADES_PER_LIFE as f32,
         GRENADE_FUSE,
         GRENADE_RADIUS,
@@ -264,8 +261,8 @@ pub fn constants() -> Vec<f32> {
         map::active().scale,
         map::active().half_x,
         map::active().half_z,
-        WEAPON_RANGE,
         ZONE_FINAL_RADIUS,
+        BULLET_GRAVITY,
     ]
 }
 
@@ -286,10 +283,7 @@ pub fn constant_names() -> Vec<String> {
         "eyeOffset",
         "maxPitch",
         "maxHealth",
-        "weaponFireInterval",
         "crouchDrop",
-        "magazine",
-        "reloadSeconds",
         "grenadesPerLife",
         "grenadeFuse",
         "grenadeRadius",
@@ -298,10 +292,184 @@ pub fn constant_names() -> Vec<String> {
         "arenaScale",
         "arenaHalfX",
         "arenaHalfZ",
-        "weaponRange",
         "zoneFinalRadius",
+        "bulletGravity",
     ]
     .iter()
     .map(|s| (*s).to_string())
     .collect()
+}
+
+/// Most range bands any gun has; `weapons()` pads every row to this many.
+const BANDS: usize = 3;
+
+/// Every gun, in the order of `weapon_ids()`, one row of `weapon_fields()`
+/// each: the client predicts its own fire, reload and change of weapon from
+/// these, and shows them in the menu, so it reads them from the table the
+/// server enforces rather than keeping a copy.
+#[wasm_bindgen]
+pub fn weapons() -> Vec<f32> {
+    let mut out = Vec::new();
+    for weapon in Weapon::ALL {
+        let s = weapon.stats();
+        let tick = TICK_DT;
+        out.extend_from_slice(&[
+            if s.automatic { 1.0 } else { 0.0 },
+            s.fire_ticks as f32,
+            s.magazine as f32,
+            s.reload_ticks as f32 * tick,
+            s.draw_ticks as f32 * tick,
+            s.muzzle_velocity,
+            s.drag,
+            s.zero,
+            s.range,
+            weapon.zero_angle(),
+            s.bands.len() as f32,
+        ]);
+        for i in 0..BANDS {
+            match s.bands.get(i) {
+                Some(b) => out.extend_from_slice(&[
+                    f32::from(b.from),
+                    f32::from(b.head),
+                    f32::from(b.body),
+                    f32::from(b.legs),
+                ]),
+                None => out.extend_from_slice(&[0.0; 4]),
+            }
+        }
+    }
+    out
+}
+
+/// The columns of `weapons()`, in order.
+#[wasm_bindgen]
+pub fn weapon_fields() -> Vec<String> {
+    let mut names: Vec<String> = [
+        "automatic",
+        "fireTicks",
+        "magazine",
+        "reloadSeconds",
+        "drawSeconds",
+        "muzzleVelocity",
+        "drag",
+        "zero",
+        "range",
+        "zeroAngle",
+        "bandCount",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    for i in 0..BANDS {
+        for field in ["From", "Head", "Body", "Legs"] {
+            names.push(format!("band{i}{field}"));
+        }
+    }
+    names
+}
+
+/// The guns' names on the wire, in the order of `weapons()`.
+#[wasm_bindgen]
+pub fn weapon_ids() -> Vec<String> {
+    Weapon::ALL.iter().map(|w| w.id().to_string()).collect()
+}
+
+/// What the menu and the killfeed call each gun, in the same order.
+#[wasm_bindgen]
+pub fn weapon_names() -> Vec<String> {
+    Weapon::ALL
+        .iter()
+        .map(|w| w.stats().name.to_string())
+        .collect()
+}
+
+/// The optics a gun can carry, by their names on the wire, its default
+/// first.
+#[wasm_bindgen]
+pub fn weapon_optics(weapon: u8) -> Vec<String> {
+    let Some(weapon) = Weapon::ALL.get(usize::from(weapon)) else {
+        return Vec::new();
+    };
+    weapon.optics().iter().map(|o| o.id().to_string()).collect()
+}
+
+/// Every optic's name on the wire, and how much each magnifies.
+#[wasm_bindgen]
+pub fn optic_ids() -> Vec<String> {
+    Optic::ALL.iter().map(|o| o.id().to_string()).collect()
+}
+
+#[wasm_bindgen]
+pub fn optic_magnifications() -> Vec<f32> {
+    Optic::ALL.iter().map(|o| o.magnification()).collect()
+}
+
+/// A round's flight from where and how it left, a position per tick for
+/// up to `seconds`: x, y, z in threes, ending where it first meets the active
+/// map, if it does, or where it is spent. For drawing tracers, and the marks
+/// on a scope's reticle, along the flight the server judges and against the
+/// walls it collides with - never for deciding anything: players are not in
+/// it, and where a round lands is the server's to say.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn round_path(
+    weapon: u8,
+    x: f32,
+    y: f32,
+    z: f32,
+    vx: f32,
+    vy: f32,
+    vz: f32,
+    seconds: f32,
+) -> Vec<f32> {
+    let Some(weapon) = Weapon::ALL.get(usize::from(weapon)) else {
+        return Vec::new();
+    };
+    let stats = weapon.stats();
+    let mut round = Round {
+        position: glam_vec(x, y, z),
+        velocity: glam_vec(vx, vy, vz),
+    };
+    let ground = map::active();
+    let steps = (seconds.clamp(0.0, 4.0) / TICK_DT).ceil() as usize;
+    let mut out = Vec::with_capacity((steps + 1) * 3);
+    out.extend_from_slice(&[x, y, z]);
+    let mut travelled = 0.0;
+    for _ in 0..steps {
+        let from = round.position;
+        round.step(stats.drag, TICK_DT);
+        let delta = round.position - from;
+        let length = delta.length();
+        if length <= f32::EPSILON {
+            break;
+        }
+        let direction = delta / length;
+        let reach = length.min((stats.range - travelled).max(0.0));
+        if let Some(hit) = hitscan::trace_world(from, direction, reach, ground) {
+            let at = from + direction * hit;
+            out.extend_from_slice(&[at.x, at.y, at.z]);
+            break;
+        }
+        travelled += reach;
+        let at = from + direction * reach;
+        out.extend_from_slice(&[at.x, at.y, at.z]);
+        if travelled >= stats.range {
+            break;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_table_has_a_name_for_every_column() {
+        assert_eq!(constants().len(), constant_names().len());
+        assert_eq!(weapons().len(), weapon_fields().len() * weapon_ids().len());
+        assert_eq!(weapon_ids().len(), Weapon::ALL.len());
+        assert_eq!(optic_ids().len(), optic_magnifications().len());
+        assert!(Weapon::ALL.iter().all(|w| w.stats().bands.len() <= BANDS));
+    }
 }

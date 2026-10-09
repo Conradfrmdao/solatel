@@ -640,6 +640,10 @@ function tuftGeometry(clump) {
   return b.geometry();
 }
 
+/** Above this, in world metres, a foot is on something standing on the
+ *  ground rather than on the ground the grass grows from. */
+const GRASS_FOOT = 0.6;
+
 function decodeGround(ground) {
   const [width, height] = ground.size;
   const cells = new Uint8Array(width * height);
@@ -1040,8 +1044,18 @@ export async function growNature(map) {
   const smoke = Array.isArray(extras.smoke) && extras.smoke.length ? new Smoke(group, extras.smoke) : null;
   const birds = trees.length ? new Birds(group) : null;
   const local = new THREE.Vector3();
+  const foot = new THREE.Vector3();
   let last = wind.value;
   return {
+    /** Whether a foot at world `x, y, z` comes down in grass: where the map
+     *  grows it, and at the level of the ground it grows on rather than on a
+     *  roof over it. For the sound of a step. */
+    grassAt(x, y, z) {
+      if (!grass || y > GRASS_FOOT) return false;
+      foot.set(x, y, z);
+      map.worldToLocal(foot);
+      return grass.heightAt(foot.x, foot.z) >= 0;
+    },
     update(eye) {
       const dt = Math.min(0.1, Math.max(0, wind.value - last));
       last = wind.value;

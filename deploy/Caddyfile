@@ -1,0 +1,24 @@
+# Caddy in front of the game: the certificate for the domain, got and renewed
+# by itself, and everything passed through to the server on port 8080. The
+# server compresses its own files ahead of time and says how long each may be
+# kept, so nothing here re-encodes or caches.
+#
+# Written to /etc/caddy/Caddyfile by deploy/update.sh, with the placeholder
+# below replaced by the domain the server was installed for; change this one.
+
+SOLATEL_DOMAIN {
+	# What the updater is doing, for whoever is watching from outside.
+	handle /deploy.json {
+		root * /var/lib/solatel/public
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}
+
+www.SOLATEL_DOMAIN {
+	redir https://SOLATEL_DOMAIN{uri} permanent
+}

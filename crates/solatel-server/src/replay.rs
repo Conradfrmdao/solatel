@@ -51,6 +51,10 @@ fn cause_code(cause: DeathCause) -> i32 {
         DeathCause::Grenade => 1,
         DeathCause::Zone => 2,
         DeathCause::Fall => 3,
+        DeathCause::Pistol => 4,
+        DeathCause::Smg => 5,
+        DeathCause::Lmg => 6,
+        DeathCause::Sniper => 7,
     }
 }
 
@@ -74,8 +78,12 @@ pub struct Recorder {
     /// One per sample: the tick, then seven numbers per living body -
     /// player, x, y, z, yaw, pitch, health.
     frames: Vec<Vec<i32>>,
-    /// tick, shooter, from x y z, to x y z, whether it hit a player.
+    /// tick, shooter, from x y z, to x y z, whether it hit a player. The
+    /// tick is when it was fired, and the shot is kept when it lands.
     shots: Vec<[i32; 9]>,
+    /// Rounds fired and not yet landed, by the match's number for the shot:
+    /// when, by whom, and from where.
+    flying: HashMap<u32, (i32, i32, Vec3)>,
     /// tick, killer (-1 for nobody), victim, cause, headshot.
     kills: Vec<[i32; 5]>,
     /// tick, thrower, x y z.
@@ -143,23 +151,24 @@ impl Recorder {
         match msg {
             ServerMsg::ShotFired {
                 shooter,
+                shot,
                 from,
-                to,
-                hit_player,
+                landed,
+                ..
             } => {
                 let t = self.at(tick);
                 let who = self.who(*shooter);
-                self.shots.push([
-                    t,
-                    who,
-                    dm(from.x),
-                    dm(from.y),
-                    dm(from.z),
-                    dm(to.x),
-                    dm(to.y),
-                    dm(to.z),
-                    i32::from(*hit_player),
-                ]);
+                match landed {
+                    Some(landing) => self.shot(t, who, *from, landing.at, landing.hit_player),
+                    None => {
+                        self.flying.insert(*shot, (t, who, *from));
+                    }
+                }
+            }
+            ServerMsg::ShotLanded { shot, landing, .. } => {
+                if let Some((t, who, from)) = self.flying.remove(shot) {
+                    self.shot(t, who, from, landing.at, landing.hit_player);
+                }
             }
             ServerMsg::Killed {
                 victim,
@@ -181,6 +190,20 @@ impl Recorder {
             }
             _ => {}
         }
+    }
+
+    fn shot(&mut self, t: i32, who: i32, from: Vec3, to: Vec3, hit_player: bool) {
+        self.shots.push([
+            t,
+            who,
+            dm(from.x),
+            dm(from.y),
+            dm(from.z),
+            dm(to.x),
+            dm(to.y),
+            dm(to.z),
+            i32::from(hit_player),
+        ]);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -270,9 +293,40 @@ mod tests {
             805,
             &ServerMsg::ShotFired {
                 shooter: a,
+                shot: 1,
+                weapon: solatel_protocol::sim::weapon::Weapon::Rifle,
                 from: Vec3::new(1.0, 1.7, -3.0),
-                to: Vec3::new(10.0, 1.2, 4.0),
-                hit_player: true,
+                velocity: Vec3::new(910.0, 0.0, 0.0),
+                landed: Some(solatel_protocol::net::Landing {
+                    at: Vec3::new(10.0, 1.2, 4.0),
+                    hit_player: true,
+                    struck: true,
+                }),
+            },
+        );
+        // A long one: fired now, kept when it lands, at the time it was
+        // fired.
+        r.heard(
+            805,
+            &ServerMsg::ShotFired {
+                shooter: b,
+                shot: 2,
+                weapon: solatel_protocol::sim::weapon::Weapon::Sniper,
+                from: Vec3::new(10.0, 1.7, 4.0),
+                velocity: Vec3::new(-790.0, 0.0, 0.0),
+                landed: None,
+            },
+        );
+        r.heard(
+            830,
+            &ServerMsg::ShotLanded {
+                shooter: b,
+                shot: 2,
+                landing: solatel_protocol::net::Landing {
+                    at: Vec3::new(-200.0, 1.0, 4.0),
+                    hit_player: false,
+                    struck: true,
+                },
             },
         );
         r.heard(
@@ -298,6 +352,10 @@ mod tests {
             json!([0, 0, 13, 9, -30, 150, -10, 100, 1, 100, 9, 40, -300, 0, 70])
         );
         assert_eq!(out["shots"][0], json!([5, 0, 10, 17, -30, 100, 12, 40, 1]));
+        assert_eq!(
+            out["shots"][1],
+            json!([5, 1, 100, 17, 40, -2000, 10, 40, 0])
+        );
         assert_eq!(out["kills"][0], json!([6, 0, 1, 0, 1]));
     }
 

@@ -22,6 +22,7 @@ pub mod collide;
 pub mod grenade;
 pub mod hitscan;
 pub mod map;
+pub mod weapon;
 
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -79,17 +80,12 @@ pub const EYE_OFFSET: f32 = 0.8;
 /// the look direction degenerate.
 pub const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
-// --- Weapon --------------------------------------------------------------
+// --- Health --------------------------------------------------------------
 
+/// What every gun's damage is measured against: see [`weapon`].
 pub const MAX_HEALTH: i16 = 100;
 
-/// Four shots to kill with a body shot, which is the common case.
-///
-/// Every region divides into [`MAX_HEALTH`] exactly, so the shots-to-kill are
-/// the numbers rather than something that falls out of rounding.
-pub const WEAPON_DAMAGE: i16 = 25;
-
-// --- Crouching, the magazine, grenades, and getting health back ----------
+// --- Crouching, grenades, and getting health back ------------------------
 
 /// Running speed while crouched. Under half of standing, so crouching is a
 /// choice to be steadier and smaller, not a way to move.
@@ -101,10 +97,6 @@ pub const CROUCH_SPEED: f32 = 3.6;
 /// player cannot get under anything a standing one cannot, which keeps the
 /// map's collision one shape for everybody.
 pub const CROUCH_DROP: f32 = 0.55;
-
-/// Rounds in a magazine, and seconds to put a fresh one in.
-pub const MAGAZINE: u32 = 30;
-pub const RELOAD_SECONDS: f32 = 2.2;
 
 /// Grenades a player starts a life with.
 pub const GRENADES_PER_LIFE: u32 = 2;
@@ -137,41 +129,14 @@ pub const KILL_CREDIT_SECONDS: f32 = 15.0;
 ///
 /// A single box for the whole body makes every shot worth the same, so aim
 /// stops mattering past "did the crosshair touch them" - which in a game
-/// paying by the kill is the difference between a skill and a lottery.
+/// paying by the kill is the difference between a skill and a lottery. What
+/// each region is worth is each gun's, by range: see [`weapon::Weapon::damage`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HitRegion {
     Head,
     Body,
     Legs,
-}
-
-impl HitRegion {
-    /// Damage is stated per region rather than as a multiplier on a base.
-    ///
-    /// A multiplier means a rounding rule, and a rounding rule is one more
-    /// thing that has to match between whatever computes the number and
-    /// whatever checks it. These are the numbers, and the shots-to-kill they
-    /// imply are the design: two to the head, four to the body, five to the
-    /// legs, against [`MAX_HEALTH`].
-    ///
-    /// Longer than it was. A four-shot body kill leaves time to react to
-    /// being shot at - to break line of sight, or to shoot back - which is
-    /// what makes the difference between a duel and whoever clicked first.
-    /// The head stays at two, so aiming up is worth twice as much as it is
-    /// worth being quick.
-    pub const fn damage(self) -> i16 {
-        match self {
-            // 2 shots. Deliberately not 100: a one-shot kill from any range
-            // means whoever saw the other first wins outright, and there is
-            // nothing to play for in the second between seeing and dying.
-            HitRegion::Head => 50,
-            // 4 shots, and the common case.
-            HitRegion::Body => WEAPON_DAMAGE,
-            // 5 shots. Worth landing, worth less than aiming higher.
-            HitRegion::Legs => 20,
-        }
-    }
 }
 
 /// How high up the player box the legs stop, measured from their centre.
@@ -390,12 +355,6 @@ pub fn zone_damage_per_second(elapsed: f32) -> f32 {
     ZONE_DAMAGE_PER_SECOND[stage]
 }
 
-/// Minimum seconds between shots.
-pub const WEAPON_FIRE_INTERVAL: f32 = 0.12;
-
-/// Beyond this, shots do not register at all.
-pub const WEAPON_RANGE: f32 = 120.0;
-
 // --- State and input -----------------------------------------------------
 
 /// Everything the simulation needs to know about one player.
@@ -474,6 +433,11 @@ impl Buttons {
     /// is the same either way - and is told to everybody, because a rifle
     /// brought up to the shoulder is seen by anybody looking.
     pub const AIM: u8 = 1 << 5;
+    /// Held to have the pistol in hand rather than the primary. A posture,
+    /// like a crouch: the client holds it for as long as it wants the
+    /// pistol, and the server changes weapon - taking the time the gun takes
+    /// to draw - whenever it differs from what is in hand.
+    pub const SIDEARM: u8 = 1 << 6;
 
     pub const fn empty() -> Self {
         Self(0)
@@ -513,6 +477,10 @@ impl Buttons {
 
     pub const fn aim(self) -> bool {
         self.contains(Self::AIM)
+    }
+
+    pub const fn sidearm(self) -> bool {
+        self.contains(Self::SIDEARM)
     }
 }
 
@@ -989,10 +957,11 @@ mod tests {
     }
 
     #[test]
-    fn the_regions_give_the_shots_to_kill_they_claim() {
+    fn the_rifle_up_close_gives_the_shots_to_kill_it_claims() {
         // These are the design, and the numbers are meant to be read off
-        // here rather than worked out: two to the head, three to the body,
-        // four to the legs.
+        // here rather than worked out: two to the head, four to the body,
+        // five to the legs. The other guns are in `weapon`.
+        let rifle = weapon::Weapon::Rifle;
         for (region, expected) in [
             (HitRegion::Head, 2),
             (HitRegion::Body, 4),
@@ -1001,7 +970,7 @@ mod tests {
             let mut health = MAX_HEALTH;
             let mut shots = 0;
             while health > 0 {
-                health -= region.damage();
+                health -= rifle.damage(region, 10.0);
                 shots += 1;
                 assert!(shots < 20, "{region:?} never kills");
             }
@@ -1010,15 +979,26 @@ mod tests {
     }
 
     #[test]
-    fn a_headshot_is_worth_more_than_a_body_shot_but_is_not_a_kill() {
-        assert!(HitRegion::Head.damage() > HitRegion::Body.damage());
-        assert!(HitRegion::Body.damage() > HitRegion::Legs.damage());
-        // A one-shot kill would mean whoever saw the other first wins
-        // outright, with nothing to play for in between.
-        assert!(
-            HitRegion::Head.damage() < MAX_HEALTH,
-            "a headshot should not end a life on its own"
-        );
+    fn a_headshot_is_worth_more_than_a_body_shot_and_only_a_sniper_kills_with_one() {
+        for gun in weapon::Weapon::ALL {
+            for distance in [0.0, 30.0, 80.0, 200.0] {
+                let head = gun.damage(HitRegion::Head, distance);
+                let body = gun.damage(HitRegion::Body, distance);
+                assert!(head > body, "{gun:?} at {distance} m");
+                assert!(
+                    body > gun.damage(HitRegion::Legs, distance),
+                    "{gun:?} at {distance} m"
+                );
+                // A one-shot kill means whoever saw the other first wins
+                // outright, with nothing to play for in between - except
+                // with a bolt action, whose round has to be led.
+                assert_eq!(
+                    head >= MAX_HEALTH,
+                    gun == weapon::Weapon::Sniper,
+                    "{gun:?} at {distance} m"
+                );
+            }
+        }
     }
 
     #[test]

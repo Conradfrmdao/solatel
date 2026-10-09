@@ -43,11 +43,18 @@ const TURN_SECONDS = 1.3;
 export const DEATH_TIME_SCALE = 0.3;
 
 const CAUSES = {
-  rifle: 'rifle',
+  rifle: 'assault rifle',
+  pistol: 'pistol',
+  smg: 'smg',
+  lmg: 'machine gun',
+  sniper: 'sniper rifle',
   grenade: 'grenade',
   zone: 'caught outside the zone',
   fall: 'fell',
 };
+
+/** The causes that are a gun: a headshot is said of these. */
+const SHOT = new Set(['rifle', 'pistol', 'smg', 'lmg', 'sniper']);
 
 const easeIn = (t) => t * t;
 const easeOut = (t) => 1 - (1 - t) * (1 - t);
@@ -156,8 +163,8 @@ export class Death {
     const who = report.killerName;
     this.by.textContent = who ? `by ${who}` : '';
     const how = [];
-    if (report.cause === 'rifle' && report.headshot) how.push('headshot');
-    else how.push(CAUSES[report.cause] ?? report.cause);
+    how.push(CAUSES[report.cause] ?? report.cause);
+    if (SHOT.has(report.cause) && report.headshot) how.push('headshot');
     if (distance !== null && report.cause !== 'zone' && report.cause !== 'fall') how.push(`${Math.round(distance)} m`);
     this.how.textContent = how.join(' · ');
     const lines = [];

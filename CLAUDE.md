@@ -303,6 +303,10 @@ tests for the canvas rather than listing the things to stay off.
 **A player's balance is asked for when they arrive** (`LedgerRequest::
 ReadBalance`), so the wallet reads `$0.00` rather than a dash. A menu that
 shows a dash cannot tell "you have nothing" from "we have not looked".
+On a server handing out development money the purse wears a **test** tag
+and the wallet says the first match brings test money, both from `/proof`,
+read when the menu is built: a balance on a public test server must never be
+taken for real money.
 
 **Fair play is the proof, and the credits.** Early players of a real-money
 game expect to be farmed, and the PRD's answer is visible proof of payouts.
@@ -1076,15 +1080,14 @@ ground. The overcast yard is the wettest map, the arena the driest.
 
 ### The weapon in your hands
 
-**The rifle is ours** (`rifle.js`). The downloaded model had no licence and
-was deleted; this one is an M4-pattern carbine built from extruded side
-profiles and turned sections with bevelled edges, in three materials
-(anodised, steel, polymer, plus a near-black for recesses) and merged to one
-mesh per material, since every player carries one. It is built in the old
-model's frame and units on purpose: the muzzle face at z -2.306, the bore at
-0.065, the carry handle's top at 0.49 under the red dot, the grip at `GRIP`,
-the magazine where `remotes.js` reaches, the ejection port where the cases
-leave. Move a landmark and those numbers have to move with it.
+**The guns are real ones** - see *The guns* below for what each is and
+where it came from. Everything that holds one was measured against the
+rifle model the game started with, in its units (0.18 m each in the first
+person), with the pistol grip at `GRIP`, so every gun is drawn in that frame
+and its landmarks - the sights, the muzzle, the ejection port, the support
+hand's place, the magazine - are read off its own file (`POINTS` in
+`guns.js`) and handed to the feel (`feelFor`). Nothing in the controller
+knows which gun it is holding.
 
 `viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
 in it, nothing hard-coded in the controller. The pose each frame is layers
@@ -1094,14 +1097,15 @@ a lift in the air and a dip on landing, then recoil. Every layer eases with
 an exponential that takes `dt`, so the feel is the same at any frame rate,
 and most of them are steadied with the sights up.
 
-**Aiming down the sights is solved, not tuned.** `weapons.js` gives the two
-sight points in the model's own units; the rig is pitched until the line
-between them is level and moved so the front point is on the view axis. The
-rifle carries a **red-dot sight** (`optic`), built in code on the carry
-handle - a lathed tube with turrets, tinted glass and an unlit dot - and the
-sight points are the two ends of its tube, so aiming looks down it: a near
-rim, a far rim, the dot in the middle. It is added to the rifle model itself,
-so everyone else's rifle carries it too. The world camera narrows by scaling the tangent of its
+**Aiming down the sights is solved, not tuned.** The gun's model gives the
+two sight points - the optic's tube ends, or the iron sights - and the rig
+is pitched until the line between them is level and moved so the front
+point is on the view axis, **with the eye on the stock**: a cheek on the
+comb, `CHEEK` behind the grip in `guns.js`, not a fixed distance behind
+whatever sight is mounted. A fixed distance put the eye over the AK's grip,
+because its rail is further forward than the old rifle's carry handle, and
+the hands filled the screen. The pistol, held out at arm's length, keeps
+`ads.eyeRelief`. The world camera narrows by scaling the tangent of its
 half-angle (`ads.zoom`), and turning is scaled by the same factor so a flick
 covers the same part of the screen. The weapon's own camera narrows by its
 own factor (`ads.weaponZoom`) to draw the sights larger; they are on the view
@@ -1121,12 +1125,21 @@ line. They are Conrad's decision and server work first. Magazines, reloading,
 crouching and grenades went that way round - server first - and are in
 *Health, the circle, and what a life carries*.
 
-**Reloading and throwing are drawn, not animated.** `setReload` tips the
-rifle over to show the magazine well, seats the new one two thirds of the way
-through and brings it back, all as an envelope over the whole pose; `onThrow`
-drops the rifle out of the way for 0.65 s. The sights cannot come up during a
-reload. Mixamo has reload and throw clips for the third-person body; they are
-not in `soldier.glb` yet.
+**The weapon is drawn with a view of its own**, 70 degrees across
+(`WEAPON_HORIZONTAL_FOV` in `main.js`), whatever the player sets the world's
+to: at the default 90 a gun a hand's breadth from the eye is stretched into a
+wedge. The sights are on the view's axis, so it moves nothing aimed.
+
+**The parts move** (`_workParts`, tuned by `action` in `weapons.js`): the
+AK's carrier and handle and the pistol's slide run back with each shot and
+the pistol's hammer falls and is cocked again, the M700's bolt is worked by
+hand after its shot - lifted, run back (which is when the case comes out),
+home and down - and every trigger is pulled. A reload cants the gun to show
+the magazine well (`reloadPose`), the left hand takes the magazine out,
+goes away for the next one and seats it, and the AK, the RPK, the MP5 and
+the pistol are racked at the end. The sights cannot come up during a reload;
+`onThrow` drops the gun out of the way for 0.65 s. Mixamo has reload and
+throw clips for the third-person body; they are not in `soldier.glb` yet.
 
 **The arms are the soldier's own.** `setArms` clones the same Mixamo soldier
 other players are drawn with and keeps only the triangles skinned to the arm
@@ -1226,8 +1239,21 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
 - **The rifle is not parented to a bone.** Each frame it is put in the right
   palm and laid along that line, so raised it points exactly where the
   player looks, and either way the left hand is on it.
-- Death plays the death clip once and leaves the body where it fell for five
-  seconds; landing dips the hips; shots flash the muzzle.
+- **A death is drawn by `kill`, not by the snapshot.** The server stops
+  naming the dead (`a_dead_body_is_kept_for_the_board_and_off_the_map`),
+  and for months that meant somebody killed simply vanished where they
+  stood - no fall, nothing - which was most of why kills felt flat. Now the
+  `killed` message plays the death clip from where they were last drawn,
+  the body turned (at most a right angle, over 0.3 s) so they go down away
+  from whoever killed them, and leaves them lying for 15 s, gone after that
+  the first moment nobody is looking. Snapshots still naming them for the
+  interpolation delay are ignored. Which way the clip falls is measured
+  off the clip at load (`fallOf`).
+- **A round landing jolts the body** away from it (`hit`): leaning from the
+  feet for a tenth of a second, and the head snapped back on a shot that
+  struck it. Whose body is whoever is drawn there - the server's landing
+  says only that a player was hit, and the round in them is visible.
+- Landing dips the hips; shots flash the muzzle.
 - **Reloads and throws are placed, not played** - there are no clips for
   them. A reload cants and dips the rifle in the right hand while the left
   arm is solved (two-bone IK) to the magazine, down to the pouch at the hip,
@@ -1256,9 +1282,94 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
   frame, and again into the shadow map, wherever they stood. Together that
   took a twelve-player arena from 1.39 to 0.73 million triangles.
 
-The rifle is a clone of the viewmodel's, which carries that rig's offset and
-scale. Both are reset on the copy - inheriting them is what once made every
-other player hold a toy.
+Each gun is a clone of the one `buildGun` makes, placed by the hands rather
+than inheriting any rig's offset or scale - inheriting them is what once made
+every other player hold a toy. The left hand is put on the gun's own support
+by two-bone IK (`_reachLeft`) on every gun, because the soldier's poses were
+made for the rifle the game started with and no real gun's handguard is
+where that one's was.
+
+## Sound, blood and dying
+
+Conrad asked for the game to be intense: gun sounds, death sounds, blood,
+footsteps heard close by, and knowing where shots come from. None of it
+decides anything; all of it is drawn or heard from what the server already
+says.
+
+**The sounds are recordings** (`assets/sounds`, `scripts/build-sounds.py`,
+ATTRIBUTION.md): every gun from beside the shooter and from mid distance,
+footsteps by surface, rounds into bodies and ground and metal, bodies
+falling, and four men's voices. 1.2 MB, fetched at boot (`audio.preload`)
+and decoded when the audio device starts. What a recording would not help -
+the till, the hit tick, the countdown, a reload's clicks, the crack of a
+round going by - is still synthesised, and so is a gunshot heard before its
+recording decodes. MP3 because every browser decodes it; each sound's onset
+is found when it is decoded (`onsetOf`), because not every decoder removes
+the encoder's padding and a late gunshot feels late.
+
+- **Placed in three dimensions** - an HRTF panner set where the sound is
+  relative to the listener, so behind is heard as behind - with distance
+  applied by the game's own curve, and the speed of sound as before.
+- **Near and far are different recordings**, crossed between 14 and 70 m,
+  then dulled by the air. A shooter's last shot is turned down over a tenth
+  of a second when the next one starts, so automatic fire does not stack
+  ten tails and the last one rings out. A limiter on the master holds a
+  firefight under clipping.
+- **Footsteps** (`takeSteps` in `remotes.js`, `step` in `audio.js`): a
+  footfall every stride on the ground, longer at speed; heard to 30 m
+  running, 16 walking, 6 crouched - moving slowly to be unheard works. On
+  grass where the map grows it (`world.surfaceAt`), otherwise hard ground.
+  A player's own steps are heard too, quietly.
+- **A round going past** within 5 m (`Rounds.listen`) cracks from where it
+  passed - buzzes, for the pistol's slower-than-sound .45 - before the
+  report arrives, and a thin pale arc on the HUD says where it was fired
+  from (`hud.shotAt`), under the red one for a hit.
+- **Voices**: a cry of pain on a hit (at most every 0.55 s), a death cry and
+  the body hitting the ground; each player keeps one of the four voices for
+  the match, by their id (`voiceOf`), the same on every client.
+
+**Blood** (`blood.js`): a hit throws a spray out of the far side and a little
+back out of the near, and drops that fall and leave spots where they land;
+a death leaves a pool spreading from under the chest once the body is down.
+The marks lie flat on the floor at the victim's feet - the server's height
+for where they stood - and never on a wall, where the client does not know
+the surface (see `impacts.js`). Pooled, the same at every graphics level,
+gone over 45 s (spots) and 90 s (pools), cleared for a new match.
+
+**On the player's own screen**: blood at the edges when hit (`hud.bleed`),
+the edges red and beating under 35 health with the heart heard
+(`audio.pulse`), their own voice crying out, and a kill marked by a red X
+that pops (`hud.killed`).
+
+## Skins
+
+Protocol 20. Eleven ways to dress the soldier: 0 is Mixamo's grey digital
+camouflage, 1 to 10 are Solatel's own (`skins.js`). Chosen in the menu
+under the guns, kept per browser, sent with `Queue` (`skin`), and on
+everybody's board (`ScoreEntry.skin`, left off the wire for 0) - the board
+is sent when a match starts, and to a page that comes back mid-match. The
+server only keeps the number honest (`net::skin`).
+
+**A pattern is drawn in the shader, from where the cloth sits on the body
+at rest** - the mesh's own bind pose, in metres - not from its texture
+coordinates, which are cut into islands: drawn on the body it runs across
+the seams and stays put on a body that runs. Which texels are cloth is a
+mask made from the soldier's texture (`scripts/build-skins.py`,
+`soldier-cloth.webp`, 18 KB); the cloth keeps its own folds and grime by
+scaling the pattern with the original texture blurred until its
+camouflage is gone. Patterns: blots, squares, stripes, mottle, splinters,
+a honeycomb. Every skin is one shader program; skins differ in uniforms.
+
+**A skin may not hide its wearer**, on real stakes. Every skin's cloth is
+brought to the same average brightness as the soldier's own (`CLOTH_MEAN`,
+measured by the script) whatever its colours, and the gear is tinted at
+its own brightness, never darkened. What a skin changes is hue and
+pattern. None copies a map's surfaces. Adding a skin means adding it to
+`SKINS` in `skins.js` and raising `net::SKINS` (a protocol change).
+
+The menu's pictures of each skin are drawn from the soldier himself at
+boot (`soldierPortraits`), and the player's own sleeves in first person
+wear their skin (`viewmodel.setSkin`).
 
 ## Assets
 
@@ -1272,8 +1383,9 @@ the arena 34.4 MB, the yard 31.9 and the facility 49.6, almost all of it
 photographs (see *Photographs, sky and light*); the baked light is 1.8,
 2.0 and 2.5 MB of that, and the models themselves 0.06, 0.23 and 0.64 MB as
 brotli. The facility is the one nearest the limit: anything added to it has
-to be paid for there. The soldier is 1.5 MB on top, once, and the rifle
-nothing - it is built in code.
+to be paid for there. The soldier is 1.5 MB on top, once, and the guns
+9.3 MB - every gun, since anybody may carry any - loaded at boot with the
+soldier and kept for good.
 
 `prepare-assets.py` strips normals and texture coordinates from the maps, which
 is most of that 11 MB. Neither is ever read — there are no textures in either
@@ -1829,17 +1941,90 @@ jitter and frame hitches / 40 ms with a 250 ms stall every six seconds):
 The watcher's figures are for drawing, not the server: the old server
 drawn by the server's clock steadies too.
 
+## The guns
+
+Protocol 19. `sim/weapon.rs` is the one description of every gun, shared by
+the server, which enforces it, and the client, which predicts its own shots
+and draws everybody's rounds from it.
+
+**A loadout is bought with the stake.** Before queueing a player picks a
+primary - the SMG, the assault rifle, the machine gun or the sniper rifle -
+and an optic it can carry, and everybody carries the pistol as well
+(`Queue.loadout`, `MatchStarted.loadout`). The server fills in the default
+for anything missing and refuses nothing over it. Nothing lies on the map:
+one entry fee buys one life with the gun its owner chose, and nobody dies
+for being unlucky with what spawned near them. 1, 2, Q or the wheel swap
+guns; the swap is the server's, timed in ticks like everything else
+(`switch_ms`), and the sidearm is a posture bit (`Buttons::SIDEARM`) that a
+guessed command carries and a warm-up hold lets through.
+
+**Everything that decides a fight is in that table**: the fire interval in
+whole ticks, semi or automatic (a semi fires on the trigger's edge), the
+magazine, the reload, how long the gun takes to bring up, the round's muzzle
+velocity and drag, the zero, the range, and the damage bands. The SMG wins
+up close, the rifle in the middle, the machine gun at range for as long as
+its drum lasts, the sniper rifle wherever its owner can put a round on a
+head. The machine gun's 75-round drum and 4 s reload are the RPK's.
+
+**Rounds fly.** Real gravity (9.81, not the players' heavier one), drag in
+proportion to the square of the speed, and the real cartridges' speeds and
+drag - .45 ACP, 9 mm, 7.62x39 and .308 - with every sight zeroed, so the
+round is launched a fraction of a degree up and crosses the line of sight at
+the gun's zero. The flight table at the top of `weapon.rs` is checked by its
+tests. A round is stepped a tick at a time and judged on the segment between
+one tick's position and the next, against the world as it was at that tick:
+the ticks a shooter was behind are caught up at once against the rewound
+world (the same lag compensation a shot always had), and after that a round
+still in the air is stepped live (`step_rounds`, `Flying`). `ShotFired`
+says where it left and how fast; `ShotLanded` where it came down, and
+whether on somebody. The client flies a streak along the same flight
+(`round_path` in the wasm, `rounds.js`) at the round's own speed and puts the
+dust where the server said, when the streak gets there.
+
+**Optics change what is seen, never where a round goes.** A red dot, a 2x
+prism, and a 3x and 4x scope. Through a magnified one, at full aim, the
+picture is the scope's own: the world at its magnification in a round
+eyepiece, the gun hidden, and a reticle whose holdover marks are worked out
+from the shared flight (`hud.js`).
+
+**The models are real ones**: an AK-47, an MP5, an M700 and an M1911 from
+Stein Games' CC0 pack, the scope from 3DModelsCC0's (ATTRIBUTION.md), and
+an RPK made from the AK - its barrel stretched, a drum and a folded bipod
+turned in code and textured from the AK's own sheet. `scripts/build-guns.sh`
+makes `assets/guns/` from the downloads, which are not in the repository:
+each gun cut into rigid parts along the bones it was skinned to (`body`,
+`magazine`, `bolt`, `trigger`, `hammer`, and the `rail`, drawn only with an
+optic on it), sockets for the muzzle, the port, the sights and the support
+hand, and KTX2 textures - colour as ETC1S at 2048, the normal map as UASTC,
+both 1k and packed into glTF's order. A file per model, so the RPK shares
+the AK's sheet. Re-run the script after changing anything about how they are
+cut or placed; the measurements it works from are in its `GUNS` table.
+
+The guns they replaced were built in code, and Conrad said they looked fake
+next to a photographed map, which they did.
+
+**A sniper's record is judged on its own lines.** Its lives are recorded with
+their weapon (migration 0015), and the anti-cheat's accuracy and headshot
+lines for the sniper rifle sit higher (`SNIPER_*` in `records.rs`): a good
+sniper's ratios are a cheater's on a rifle. Reactions are judged over every
+life.
+
 ## Shooting, and what it is worth
 
-Damage is stated per region rather than as a multiplier on a base, because a
-multiplier means a rounding rule and a rounding rule is one more thing that
-has to match between whatever computes the number and whatever checks it. Two
-shots to the head, three to the body, four to the legs, and the test that says
-so counts them out against `MAX_HEALTH` rather than restating the constants.
+Damage is stated per weapon, per region and per band of range (`Band` in
+`sim/weapon.rs`) rather than as a multiplier on a base, because a multiplier
+means a rounding rule and a rounding rule is one more thing that has to match
+between whatever computes the number and whatever checks it. The rifle up
+close is two to the head, four to the body, five to the legs, and the test
+that says so (`shots_to_kill_are_the_design`) counts them out against
+`MAX_HEALTH` rather than restating the constants.
 
-A headshot is deliberately not a kill on its own. One-shot kills mean whoever
-saw the other first wins outright, and there is nothing to play for in the
-second between seeing and dying.
+A headshot is a kill on its own from one gun only: the sniper rifle, at any
+range. Everywhere else one-shot kills would mean whoever saw the other first
+wins outright, with nothing to play for in the second between seeing and
+dying; the sniper rifle pays for it with a bolt action, five rounds, a second
+and a quarter between them, and a round in flight long enough to have to be
+led. Whether it should is Conrad's to change.
 
 **The head box is layered over the full body box, never carved out of it.**
 Tiling the silhouette into three sounds tidier and is wrong: a head is
@@ -1872,7 +2057,10 @@ are in the lobby the instant they die.
 
 Damage is told to the victim and the shooter and to nobody else. Broadcasting
 it would tell every other player in the match how hurt their opponents are,
-which is information nobody earned. The killfeed is the exception, and it
+which is information nobody earned. That includes the snapshot, which goes to
+the whole match: every body in it is sent at full health and only the
+recipient's own entry carries the real figure. It was once sent whole, to
+everybody, for months; `nobody_is_told_how_hurt_anybody_else_is` pins it. The killfeed is the exception, and it
 carries both names *in the event* rather than looking them up in the
 scoreboard afterwards — the most interesting kill in a match is frequently the
 one where somebody then leaves, and a feed that says "‹unknown› killed you" is
@@ -1964,8 +2152,9 @@ the idle clip's feet and lowered the hips, which bent both legs the same way
 and read as a deformed squat. Moving crouched cannot be a kneel, so it blends
 to the run clip's stride with the hips lowered 0.38 m.
 
-**A magazine is thirty rounds and a reload is 2.2 seconds** (R, or pulling
-the trigger on an empty magazine). The trigger does nothing while reloading.
+**Each gun's magazine and reload are its own** (`weapon.rs`; the rifle's are
+thirty rounds and 2.2 seconds) - R, or pulling the trigger on an empty
+magazine. The trigger does nothing while reloading.
 The client runs its ammunition down between snapshots only so the kick stops
 on the round the server will refuse; the count it displays is the server's.
 What is in somebody else's magazine is not sent to anybody else; whether
@@ -2266,6 +2455,23 @@ abandons and that charges players the rake for our deploy. The server shuts
 down on SIGTERM as well as Ctrl-C and releases the lease on the way out. A
 tab left on the old client reloads itself once per server version or client
 build (`reloadForNewBuild` in `net.js`).
+
+**The game is live on one VPS, and merging into main deploys it**
+(`deploy/`, *One VPS* in the runbook). A timer on the machine fetches main
+every two minutes, builds it there, and switches when `/health` shows
+escrow empty, rolling back a release that does not come up healthy - both
+rules above, kept by the machine. Nothing here can reach it: this
+container's network passes web traffic only, so there is no SSH and the
+machine pulls rather than being pushed to. What it is doing is public at
+`https://<domain>/deploy.json`, which is how a session watches a deploy
+land, and the update script runs from main as fetched, so a broken deploy
+is fixed with a commit like anything else. Its settings are
+`deploy/solatel.env`, in the repository and never secret: the database is
+reached through Postgres's socket as the server's own system user, with no
+password, and the admin token is made on the machine and stays there. A
+merge that breaks the build or the start leaves the last good release
+serving and says why in `deploy.json` - so run the checks before merging,
+not after.
 
 ## Phase 2 note
 

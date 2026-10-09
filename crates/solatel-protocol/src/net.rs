@@ -24,6 +24,7 @@
 //! bulk of the traffic and will be the reason to do it.
 
 use crate::ids::{MatchId, PlayerId, ResumeToken, SessionId, WithdrawalId};
+use crate::sim::weapon::{Loadout, Optic, Weapon};
 use crate::sim::{HitRegion, InputCommand, PlayerState};
 use glam::Vec3;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -31,11 +32,23 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 18;
+pub const PROTOCOL_VERSION: u16 = 20;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
 pub const TICK_HZ: u32 = 64;
+
+/// How many ways a soldier can be dressed: 0 is the soldier as he came, and
+/// 1 to 10 are Solatel's own (`skins.js` draws them). Cosmetic and nothing
+/// else - a skin decides nothing the server decides - so the server only
+/// keeps the number honest and passes it on.
+pub const SKINS: u8 = 11;
+
+/// A skin a client asked for, as the game allows it: one there is, or the
+/// soldier as he came.
+pub fn skin(asked: u8) -> u8 {
+    if asked < SKINS { asked } else { 0 }
+}
 
 /// Length of one server tick, in seconds.
 pub const TICK_DT: f32 = 1.0 / TICK_HZ as f32;
@@ -149,6 +162,17 @@ pub enum ClientMsg {
         /// Which stake, in whole dollars. One the server named; anything else
         /// is ignored.
         tier_dollars: i64,
+        /// The gun and optic to play the life with. Chosen with the stake,
+        /// because it is part of what the stake buys; asking again while in
+        /// line changes it. Anything the game does not allow is made into
+        /// something it does - see [`Loadout::sanitized`] - and the match
+        /// says what was settled on when it starts.
+        #[serde(default)]
+        loadout: Loadout,
+        /// How they are dressed, seen by everybody in the match (see
+        /// [`SKINS`]). One the game does not have is the soldier as he came.
+        #[serde(default)]
+        skin: u8,
     },
     /// Give up the place in line. No money has moved, so nothing is returned.
     LeaveQueue,
@@ -185,10 +209,11 @@ pub enum ClientMsg {
 }
 
 /// One player as the server sees them.
-/// What ended a life.
+/// What ended a life. A shot is named by the gun that fired it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeathCause {
+    /// The assault rifle.
     #[default]
     Rifle,
     Grenade,
@@ -196,6 +221,34 @@ pub enum DeathCause {
     Zone,
     /// Out of the world, or the resume window closing.
     Fall,
+    Pistol,
+    Smg,
+    Lmg,
+    Sniper,
+}
+
+impl From<Weapon> for DeathCause {
+    fn from(weapon: Weapon) -> Self {
+        match weapon {
+            Weapon::Pistol => DeathCause::Pistol,
+            Weapon::Smg => DeathCause::Smg,
+            Weapon::Rifle => DeathCause::Rifle,
+            Weapon::Lmg => DeathCause::Lmg,
+            Weapon::Sniper => DeathCause::Sniper,
+        }
+    }
+}
+
+/// Where a round came down, and on what.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Landing {
+    pub at: Vec3,
+    /// It hit a player, so the shooter gets a hit marker and the impact is a
+    /// mist rather than dust.
+    pub hit_player: bool,
+    /// It hit something at all. A round that ran out of range in the open
+    /// came down nowhere in particular and raises nothing.
+    pub struck: bool,
 }
 
 /// A grenade that has not gone off yet.
@@ -221,6 +274,22 @@ pub struct PlayerSnapshot {
     /// it changes nothing the server decides.
     #[serde(default)]
     pub aiming: bool,
+    /// The gun in their hands - which is in plain view - and the optic on
+    /// their primary. Left off the wire when they are the rifle and the red
+    /// dot, which most of them are, because this goes out twenty times a
+    /// second for every player.
+    #[serde(default, skip_serializing_if = "is_rifle")]
+    pub weapon: Weapon,
+    #[serde(default, skip_serializing_if = "is_red_dot")]
+    pub optic: Optic,
+}
+
+fn is_rifle(weapon: &Weapon) -> bool {
+    *weapon == Weapon::Rifle
+}
+
+fn is_red_dot(optic: &Optic) -> bool {
+    *optic == Optic::RedDot
 }
 
 /// One player's match record, as counted by the server.
@@ -256,6 +325,17 @@ pub struct ScoreEntry {
     /// so this is a statement of where the balance came from rather than a
     /// promise of something still to be paid.
     pub winnings_micro_usd: i64,
+    /// How they are dressed: everybody in the match sees it. On the board
+    /// rather than in the snapshot, because it is fixed for the match and
+    /// the board is sent when the match starts; twenty times a second would
+    /// be saying it again for nothing. Left off the wire for the soldier as
+    /// he came.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skin: u8,
+}
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 /// One map this server runs.
@@ -445,14 +525,22 @@ pub enum ServerMsg {
         match_remaining_ms: u32,
         server_time_ms: f64,
         players: Vec<PlayerSnapshot>,
-        /// The receiving player's own weapon: rounds in the magazine,
-        /// milliseconds of reload left (0 when not reloading), and grenades
-        /// left. Only ever about the player it is sent to - what is in
-        /// somebody else's magazine is not theirs to know.
+        /// The receiving player's own weapons: which is in hand, rounds in
+        /// its magazine and in the other's, milliseconds of reload left (0
+        /// when not reloading), milliseconds until the gun in hand is ready
+        /// after a change of weapon, and grenades left. Only ever about the
+        /// player it is sent to - what is in somebody else's magazine is not
+        /// theirs to know.
+        #[serde(default)]
+        weapon: Weapon,
         #[serde(default)]
         ammo: u32,
         #[serde(default)]
+        spare_ammo: u32,
+        #[serde(default)]
         reload_ms: u32,
+        #[serde(default)]
+        switch_ms: u32,
         #[serde(default)]
         grenades: u32,
         /// Grenades in the air or on the ground, still to go off.
@@ -477,14 +565,32 @@ pub enum ServerMsg {
         #[serde(default)]
         gathered: bool,
     },
-    /// A shot was fired, for drawing tracers. Purely cosmetic: the damage it
-    /// did, if any, arrives as [`ServerMsg::Damaged`].
+    /// A shot was fired, for the flash, the sound and the tracer. Purely
+    /// cosmetic: the damage it did, if any, arrives as
+    /// [`ServerMsg::Damaged`].
+    ///
+    /// A round flies, so where it lands may not be known yet. It is when the
+    /// flight is shorter than the shooter's lag - the server judges that
+    /// part at once, against the world as the shooter saw it - which is most
+    /// shots; otherwise a [`ServerMsg::ShotLanded`] with the same `shot`
+    /// follows when it comes down.
     ShotFired {
         shooter: PlayerId,
+        /// This match's number for the shot, to pair it with its landing.
+        shot: u32,
+        weapon: Weapon,
         from: Vec3,
-        to: Vec3,
-        /// Whether it connected, so the shooter can be given a hit marker.
-        hit_player: bool,
+        /// How the round left: its direction and speed, in metres per
+        /// second. The client flies a tracer along it with the shared
+        /// flight.
+        velocity: Vec3,
+        landed: Option<Landing>,
+    },
+    /// A round fired earlier came down.
+    ShotLanded {
+        shooter: PlayerId,
+        shot: u32,
+        landing: Landing,
     },
     /// This client took damage.
     Damaged {
@@ -590,6 +696,9 @@ pub enum ServerMsg {
         /// Milliseconds of warm-up left: see `Snapshot::starts_in_ms`.
         #[serde(default)]
         starts_in_ms: u32,
+        /// What this player is carrying, as the server settled it.
+        #[serde(default)]
+        loadout: Loadout,
     },
     /// The match is over. The board is final, and a new one starts now.
     ///
@@ -748,9 +857,14 @@ mod tests {
                 state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
                 reloading: true,
                 aiming: true,
+                weapon: Weapon::Sniper,
+                optic: Optic::X3,
             }],
+            weapon: Weapon::Pistol,
             ammo: 30,
+            spare_ammo: 5,
             reload_ms: 0,
+            switch_ms: 120,
             grenades: 2,
             live_grenades: vec![GrenadeSnapshot {
                 id: 1,
@@ -802,6 +916,7 @@ mod tests {
                 damage_dealt: 340,
                 alive: false,
                 winnings_micro_usd: 2_700_000,
+                skin: 4,
             }],
         })
         .unwrap();
@@ -817,6 +932,7 @@ mod tests {
             "\"damage_dealt\":340",
             "\"alive\":false",
             "\"winnings_micro_usd\":2700000",
+            "\"skin\":4",
         ] {
             assert!(wire.contains(field), "{field} missing from {wire}");
         }
@@ -907,6 +1023,131 @@ mod tests {
             decode::<ClientMsg>(old),
             Ok(ClientMsg::Hello { account: None, .. })
         ));
+    }
+
+    #[test]
+    fn a_rifle_with_a_red_dot_costs_nothing_on_the_wire() {
+        // Twenty times a second for every player: the common case is left
+        // off, and read back as itself.
+        let plain = PlayerSnapshot {
+            id: PlayerId::new(),
+            state: PlayerState::spawned_at(TEST_MAP.spawn(0)),
+            reloading: false,
+            aiming: false,
+            weapon: Weapon::Rifle,
+            optic: Optic::RedDot,
+        };
+        let wire = encode(&plain).unwrap();
+        assert!(
+            !wire.contains("weapon") && !wire.contains("optic"),
+            "{wire}"
+        );
+        assert_eq!(decode::<PlayerSnapshot>(&wire).unwrap(), plain);
+
+        let scoped = PlayerSnapshot {
+            weapon: Weapon::Sniper,
+            optic: Optic::X4,
+            ..plain
+        };
+        let wire = encode(&scoped).unwrap();
+        assert!(wire.contains("\"weapon\":\"sniper\""), "{wire}");
+        assert!(wire.contains("\"optic\":\"x4\""), "{wire}");
+        assert_eq!(decode::<PlayerSnapshot>(&wire).unwrap(), scoped);
+    }
+
+    #[test]
+    fn a_queue_names_its_loadout_and_an_old_one_gets_the_rifle() {
+        let asked = r#"{"t":"queue","map":"yard","tier_dollars":1,"loadout":{"primary":"lmg","optic":"x3"}}"#;
+        let Ok(ClientMsg::Queue { loadout, .. }) = decode::<ClientMsg>(asked) else {
+            panic!("a queue with a loadout did not decode");
+        };
+        assert_eq!(
+            loadout,
+            Loadout {
+                primary: Weapon::Lmg,
+                optic: Optic::X3
+            }
+        );
+        let bare = r#"{"t":"queue","map":"yard","tier_dollars":1}"#;
+        let Ok(ClientMsg::Queue { loadout, .. }) = decode::<ClientMsg>(bare) else {
+            panic!("a queue without a loadout did not decode");
+        };
+        assert_eq!(loadout, Loadout::default());
+    }
+
+    #[test]
+    fn a_skin_is_one_there_is_and_the_plain_soldier_costs_nothing_on_the_wire() {
+        let dressed = r#"{"t":"queue","map":"yard","tier_dollars":1,"skin":7}"#;
+        let Ok(ClientMsg::Queue { skin, .. }) = decode::<ClientMsg>(dressed) else {
+            panic!("a queue with a skin did not decode");
+        };
+        assert_eq!(skin, 7);
+        let bare = r#"{"t":"queue","map":"yard","tier_dollars":1}"#;
+        let Ok(ClientMsg::Queue { skin, .. }) = decode::<ClientMsg>(bare) else {
+            panic!("a queue without a skin did not decode");
+        };
+        assert_eq!(skin, 0);
+        assert_eq!(super::skin(SKINS - 1), SKINS - 1);
+        assert_eq!(super::skin(SKINS), 0);
+        assert_eq!(super::skin(255), 0);
+
+        let plain = ScoreEntry {
+            id: PlayerId::new(),
+            name: "Plain".into(),
+            kills: 0,
+            deaths: 0,
+            shots_fired: 0,
+            shots_hit: 0,
+            headshots: 0,
+            damage_dealt: 0,
+            alive: true,
+            winnings_micro_usd: 0,
+            skin: 0,
+        };
+        let wire = encode(&plain).unwrap();
+        assert!(!wire.contains("skin"), "{wire}");
+        assert_eq!(decode::<ScoreEntry>(&wire).unwrap(), plain);
+    }
+
+    #[test]
+    fn a_shot_says_where_it_landed_when_it_knows() {
+        let fired = encode(&ServerMsg::ShotFired {
+            shooter: PlayerId::new(),
+            shot: 7,
+            weapon: Weapon::Smg,
+            from: Vec3::new(1.0, 2.0, 3.0),
+            velocity: Vec3::new(0.0, 0.0, -735.0),
+            landed: Some(Landing {
+                at: Vec3::new(1.0, 2.0, -20.0),
+                hit_player: true,
+                struck: true,
+            }),
+        })
+        .unwrap();
+        for field in [
+            "\"t\":\"shot_fired\"",
+            "\"shot\":7",
+            "\"weapon\":\"smg\"",
+            "\"hit_player\":true",
+        ] {
+            assert!(fired.contains(field), "{field} missing from {fired}");
+        }
+        let later = encode(&ServerMsg::ShotLanded {
+            shooter: PlayerId::new(),
+            shot: 8,
+            landing: Landing {
+                at: Vec3::ZERO,
+                hit_player: false,
+                struck: false,
+            },
+        })
+        .unwrap();
+        assert!(later.contains("\"t\":\"shot_landed\""), "{later}");
+        assert!(later.contains("\"struck\":false"), "{later}");
+        assert_eq!(
+            encode(&DeathCause::from(Weapon::Sniper)).unwrap(),
+            "\"sniper\""
+        );
     }
 
     #[test]

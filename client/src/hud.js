@@ -13,7 +13,7 @@
 // browser never delivering it?
 
 import { LinkState } from './net.js';
-import { SIM } from './sim.js';
+import { SIM, WEAPONS, roundPath } from './sim.js';
 
 export class Hud {
   constructor(root) {
@@ -26,6 +26,13 @@ export class Hud {
     this.healthText = root.querySelector('#health .value');
     this.weapon = root.querySelector('#weapon');
     this.ammo = root.querySelector('#weapon .ammo');
+    this.gunName = root.querySelector('#weapon .gun .name');
+    this.gunSpare = root.querySelector('#weapon .gun .spare');
+    this.scope = root.querySelector('#scope');
+    this.reticle = root.querySelector('#scope .reticle');
+    /** What the reticle was last drawn for, so it is drawn again only when
+     *  that changes. */
+    this._reticleFor = null;
     this.reloadBar = root.querySelector('#weapon .reload .fill');
     this.grenadeCount = root.querySelector('#weapon .grenades');
     this.zoneWarning = root.querySelector('#zone-warning');
@@ -37,6 +44,13 @@ export class Hud {
     this.go = root.querySelector('#go');
     this._wasWarming = false;
     this.hurtFlash = root.querySelector('#hurt-flash');
+    this.lowHealth = root.querySelector('#low-health');
+    this.bloodScreen = root.querySelector('#blood-screen');
+    this.bloodScreen.style.backgroundImage = `url(${splatterImage()})`;
+    /** How bloody the view is, and since when it has been clearing. */
+    this._bleed = 0;
+    this._bleedAt = 0;
+    this.killMarker = root.querySelector('#killmarker');
     this.damageRing = root.querySelector('#damage-dirs');
     /** Where recent hits came from, each kept until it fades. */
     this._damage = [];
@@ -176,11 +190,11 @@ export class Hud {
       const how = { zone: 'burned in the zone', grenade: 'blew up', fall: 'fell' }[event.cause] ?? 'fell';
       line.innerHTML = `<span class="who">${victim}</span><span class="hs">${how}</span>`;
     }
-    // A kill by something other than the rifle says so, because a grenade
+    // What did it, because a sniper's round across the yard, a grenade
     // through a doorway and a zone that finished off a wounded player are
     // different stories about the same fight.
-    if (event.killer_name && event.cause && event.cause !== 'rifle') {
-      const how = { grenade: 'grenade', zone: 'zone', fall: 'fall' }[event.cause];
+    if (event.killer_name && event.cause) {
+      const how = CAUSE_NAMES[event.cause];
       if (how) line.insertAdjacentHTML('beforeend', `<span class="cause">${how}</span>`);
     }
 
@@ -230,8 +244,8 @@ export class Hud {
       tags.appendChild(span);
     };
     if (event.headshot) tag('HEADSHOT', 'head');
-    const how = { grenade: 'GRENADE', zone: 'ZONE', fall: 'FALL' }[event.cause];
-    if (how) tag(how, 'cause');
+    const how = event.cause && event.cause !== 'rifle' ? CAUSE_NAMES[event.cause] : null;
+    if (how) tag(how.toUpperCase(), 'cause');
     if (this._streak >= 2) tag(streakName(this._streak), 'streak');
     const victim = document.createElement('div');
     victim.className = 'victim';
@@ -456,10 +470,36 @@ export class Hud {
    *  is where the shot goes, and a player on real stakes should always see
    *  it. */
   setCrosshairOpacity(opacity) {
-    const value = opacity.toFixed(2);
+    const value = (opacity * (1 - (this._scoped ?? 0))).toFixed(2);
     if (value === this._crosshairOpacity) return;
     this._crosshairOpacity = value;
     this.crosshair.style.opacity = value;
+  }
+
+  /**
+   * Through a magnified optic: the world in a round eyepiece, black round
+   * it, and the optic's reticle over the middle. `amount` is how far into
+   * the scope's picture the view is (`Viewmodel.scope`), `rig` the gun and
+   * optic in hand, and `camera` the world camera at its zoomed angle, which
+   * is what the holdover marks are placed by: each sits as far under the
+   * middle as the gun's own round falls at that range, worked out from the
+   * shared flight, so the 300 m mark is where to hold at 300 m.
+   */
+  setScope(amount, rig, zoom, camera) {
+    const on = amount > 0.001 && rig;
+    this._scoped = on ? amount : 0;
+    this.scope.classList.toggle('hidden', !on);
+    if (!on) return;
+    this.scope.style.opacity = amount.toFixed(3);
+    const height = window.innerHeight;
+    const width = window.innerWidth;
+    const radius = Math.round(height * (EYEPIECE[rig.optic] ?? 0.36));
+    this.scope.style.setProperty('--eye', `${radius}px`);
+    const key = `${rig.weapon}:${rig.optic}:${width}x${height}:${camera.fov.toFixed(2)}`;
+    if (key === this._reticleFor) return;
+    this._reticleFor = key;
+    this.reticle.setAttribute('viewBox', `${-width / 2} ${-height / 2} ${width} ${height}`);
+    this.reticle.innerHTML = reticle(rig, radius, height, camera.fov);
   }
 
   /**
@@ -471,7 +511,7 @@ export class Hud {
   damageFrom(now, from, amount) {
     if (!from || !this.damageRing) return;
     // One arc per attacker: a second hit from the same place refreshes it.
-    let entry = this._damage.find((d) => d.from.distanceToSquared(from) < 4);
+    let entry = this._damage.find((d) => !d.miss && d.from.distanceToSquared(from) < 4);
     if (!entry) {
       const el = document.createElement('div');
       el.className = 'dmg';
@@ -485,8 +525,55 @@ export class Hud {
     entry.weight = Math.min(1, 0.45 + amount / 50);
   }
 
+  /**
+   * A round gone past this player from somebody at `from`: a thin pale arc
+   * on that side, briefer than a hit's. Being shot at says where from before
+   * anything lands - which is what a player hears in a real firefight, and
+   * the reason the crack of a round going by is played at all.
+   */
+  shotAt(now, from) {
+    if (!from || !this.damageRing) return;
+    let entry = this._damage.find((d) => d.miss && d.from.distanceToSquared(from) < 4);
+    if (!entry) {
+      const el = document.createElement('div');
+      el.className = 'dmg miss';
+      el.appendChild(document.createElement('i'));
+      this.damageRing.appendChild(el);
+      entry = { el, from: from.clone(), miss: true };
+      this._damage.push(entry);
+    }
+    entry.from.copy(from);
+    entry.until = now + MISS_SHOW_MS;
+    entry.weight = 0.85;
+  }
+
+  /** Hurt: blood at the edges of the view, heavier the harder the hit,
+   *  clearing over a couple of seconds. Turned a different way each time, so
+   *  it is not the same stain twice. */
+  bleed(now, amount) {
+    const left = this._bleedLeft(now);
+    this._bleed = Math.min(1, left + 0.25 + amount / 45);
+    this._bleedAt = now;
+    const turn = Math.floor(Math.random() * 4);
+    this.bloodScreen.style.transform = `scale(${turn & 1 ? -1 : 1}, ${turn & 2 ? -1 : 1})`;
+  }
+
+  _bleedLeft(now) {
+    return this._bleed * Math.exp(-(now - this._bleedAt) / BLEED_CLEARS_MS);
+  }
+
+  /** This player's shot killed somebody: a bigger, redder X that pops. */
+  killed(headshot) {
+    const el = this.killMarker;
+    el.classList.remove('show', 'head');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('show');
+    if (headshot) el.classList.add('head');
+  }
+
   /** Turns each arc to where its hit came from, as the view turns. */
   updateDamage(now, eye, yaw) {
+    this.bloodScreen.style.opacity = String(Math.min(0.9, this._bleedLeft(now)));
     this._damage = this._damage.filter((d) => {
       const left = d.until - now;
       if (left <= 0) {
@@ -496,7 +583,7 @@ export class Hud {
       const toYaw = Math.atan2(-(d.from.x - eye.x), -(d.from.z - eye.z));
       const relative = toYaw - yaw;
       d.el.style.transform = `translate(-50%, -50%) rotate(${-relative}rad)`;
-      d.el.style.opacity = String(Math.min(1, left / 600) * d.weight);
+      d.el.style.opacity = String(Math.min(1, left / (d.miss ? 300 : 600)) * d.weight);
       return true;
     });
   }
@@ -596,6 +683,11 @@ export class Hud {
     this.healthText.textContent = String(hp);
     this.healthFill.style.transform = `scaleX(${hp / max})`;
     this.health.classList.toggle('hurt', hp <= max / 3);
+    // Badly hurt: the edges of the view go red and beat with the heart
+    // (`audio.pulse`), deeper the lower it is, until it comes back.
+    const low = local.inMatch && hp > 0 && hp <= LOW_HEALTH ? 1 - hp / LOW_HEALTH : 0;
+    this.lowHealth.style.setProperty('--low', String(0.35 + 0.65 * low));
+    this.lowHealth.classList.toggle('on', low > 0);
     if (this._lastHealth !== null && hp < this._lastHealth && local.inMatch) {
       this.hurtFlash.classList.remove('flash');
       void this.hurtFlash.offsetWidth; // restart the animation
@@ -604,15 +696,28 @@ export class Hud {
     this.health.classList.toggle('regen', this._lastHealth !== null && hp > this._lastHealth);
     this._lastHealth = hp;
 
+    // The gun in hand, its magazine, and the other gun's, which is one key
+    // away (Q). All of it the server's figures, run down between snapshots.
+    const gun = local.gun;
     const reloading = local.reloadMs > 0;
-    this.ammo.innerHTML = reloading
+    const drawing = local.switchMs > 0;
+    const ammo = reloading
       ? '<span class="reloading">RELOADING</span>'
-      : `<b>${local.ammo}</b> / ${SIM.magazine}`;
+      : `<b>${local.ammo}</b> / ${gun.magazine}`;
+    if (ammo !== this._ammoHtml) {
+      this.ammo.innerHTML = ammo;
+      this._ammoHtml = ammo;
+    }
     this.ammo.classList.toggle('empty', !reloading && local.ammo === 0);
-    this.ammo.classList.toggle('low', !reloading && local.ammo > 0 && local.ammo <= SIM.magazine / 5);
+    this.ammo.classList.toggle('low', !reloading && local.ammo > 0 && local.ammo <= gun.magazine / 5);
+    this.ammo.classList.toggle('drawing', drawing);
+    if (this.gunName.textContent !== gun.name) this.gunName.textContent = gun.name;
+    const other = local.held === 'primary' ? WEAPONS.pistol : WEAPONS[local.loadout.primary];
+    const spare = other ? `${other.name} ${local.spareAmmo}` : '';
+    if (this.gunSpare.textContent !== spare) this.gunSpare.textContent = spare;
     this.reloadBar.parentElement.classList.toggle('hidden', !reloading);
     if (reloading) {
-      const done = 1 - local.reloadMs / (SIM.reloadSeconds * 1000);
+      const done = 1 - local.reloadMs / (gun.reloadSeconds * 1000);
       this.reloadBar.style.transform = `scaleX(${Math.min(1, Math.max(0, done))})`;
     }
     this.grenadeCount.textContent = '●'.repeat(local.grenades) + '○'.repeat(
@@ -703,6 +808,70 @@ const KILLFEED_MS = 6000;
 /** How long an arc saying where a hit came from stays up. */
 const DAMAGE_SHOW_MS = 2200;
 
+/** How long an arc saying where a round that went past came from stays up. */
+const MISS_SHOW_MS = 1300;
+
+/** Over how long blood on the view clears: a time constant, in ms. */
+const BLEED_CLEARS_MS = 1600;
+
+/** Under this much health the view goes red at the edges. */
+export const LOW_HEALTH = 35;
+
+/**
+ * Blood thrown across the edges of a view, as an image: drawn once, in
+ * code, into a canvas. Splashes and runs from the edges and corners, a
+ * clear middle - nothing over the crosshair, where the next shot goes.
+ */
+function splatterImage() {
+  const w = 1280;
+  const h = 720;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext('2d');
+  let seed = 11;
+  const random = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const blob = (x, y, r, alpha) => {
+    const gradient = g.createRadialGradient(x, y, r * 0.2, x, y, r);
+    gradient.addColorStop(0, `rgba(105, 6, 6, ${alpha})`);
+    gradient.addColorStop(0.7, `rgba(80, 4, 4, ${alpha * 0.85})`);
+    gradient.addColorStop(1, 'rgba(60, 2, 2, 0)');
+    g.fillStyle = gradient;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  };
+  // Heavy at the edges, thinning inward; never within the middle third.
+  for (let i = 0; i < 70; i += 1) {
+    const side = Math.floor(random() * 4);
+    const along = random();
+    const depth = random() ** 2.2 * 0.3;
+    const x = side === 0 ? depth * w : side === 1 ? w - depth * w : along * w;
+    const y = side === 2 ? depth * h : side === 3 ? h - depth * h : along * h;
+    const r = 18 + random() * 70 * (1 - depth * 2);
+    blob(x, y, r, 0.55 + random() * 0.35);
+    // Droplets thrown off it.
+    for (let k = 0; k < 6; k += 1) {
+      const a = random() * Math.PI * 2;
+      const d = r * (1 + random() * 1.4);
+      blob(x + Math.cos(a) * d, y + Math.sin(a) * d, 2 + random() * 7, 0.7);
+    }
+    // And a run down from the higher ones.
+    if (random() < 0.3) {
+      g.strokeStyle = 'rgba(90, 5, 5, 0.6)';
+      g.lineWidth = 2 + random() * 5;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (random() - 0.5) * 12, y + 40 + random() * 120);
+      g.stroke();
+    }
+  }
+  return canvas.toDataURL('image/png');
+}
+
 /** How long a payout sits under the crosshair before it flies to the
  *  counter, and how long the flight takes. */
 const PAYOUT_HOLD_MS = 900;
@@ -759,7 +928,9 @@ function formatMoney(micros) {
 const TEMPLATE = `
   <pre id="stats"></pre>
   <div id="health"><span class="value">100</span><span class="bar"><span class="fill"></span></span></div>
+  <div id="scope" class="hidden"><svg class="reticle" xmlns="http://www.w3.org/2000/svg"></svg></div>
   <div id="weapon">
+    <div class="gun"><span class="name">Assault rifle</span><span class="spare"></span></div>
     <div class="ammo"><b>30</b> / 30</div>
     <div class="reload hidden"><span class="fill"></span></div>
     <div class="grenades" title="grenades (G)">●●</div>
@@ -772,6 +943,8 @@ const TEMPLATE = `
     <div class="hint"></div>
   </div>
   <div id="go">GO</div>
+  <div id="blood-screen"></div>
+  <div id="low-health"></div>
   <div id="hurt-flash"></div>
   <div id="damage-dirs"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
@@ -780,9 +953,107 @@ const TEMPLATE = `
   <div id="matchclock"></div>
   <div id="crosshair"><i class="n"></i><i class="s"></i><i class="w"></i><i class="e"></i><b></b></div>
   <div id="hitmarker"></div>
+  <div id="killmarker"></div>
   <div id="payouts"></div>
   <div id="killfeed"></div>
   <div id="scoreboard" class="hidden"></div>
   <div id="lock-hint">click to capture the mouse &middot; escape to release</div>
   <div id="banner" class="hidden"></div>
 `;
+
+/** What killed somebody, as the feed says it. */
+const CAUSE_NAMES = {
+  rifle: 'rifle',
+  pistol: 'pistol',
+  smg: 'smg',
+  lmg: 'machine gun',
+  sniper: 'sniper',
+  grenade: 'grenade',
+  zone: 'zone',
+  fall: 'fall',
+};
+
+/** How big each optic's eyepiece is on screen, as a share of its height. A
+ *  stronger optic has a smaller exit pupil and is a smaller circle. */
+const EYEPIECE = { x2: 0.44, x3: 0.4, x4: 0.37 };
+
+/** Ranges the holdover marks are drawn for, in metres. */
+const HOLDOVER = [200, 300, 400];
+
+/**
+ * How far below the middle of the screen, in pixels, a round from `weapon`
+ * lands at `distance` metres, with the view `fov` degrees tall and `height`
+ * pixels: its drop under the line of sight, from the shared flight with
+ * the sights' zero, turned into an angle and that angle into pixels.
+ */
+function holdover(weapon, distance, fov, height) {
+  const gun = WEAPONS[weapon] ?? WEAPONS.rifle;
+  const speed = gun.muzzleVelocity;
+  const up = gun.zeroAngle;
+  // Level, from nowhere near anything: drop is a property of the round.
+  const path = roundPath(weapon, [0, 1000, 0], [0, Math.sin(up) * speed, -Math.cos(up) * speed], 2);
+  for (let i = 3; i < path.length; i += 3) {
+    const run = -path[i + 2];
+    if (run >= distance) {
+      const before = -path[i - 1];
+      const f = (distance - before) / Math.max(1e-6, run - before);
+      const y = path[i - 2] + (path[i + 1] - path[i - 2]) * f - 1000;
+      const angle = Math.atan2(-y, distance);
+      return (Math.tan(angle) / Math.tan(((fov / 2) * Math.PI) / 180)) * (height / 2);
+    }
+  }
+  return null;
+}
+
+/** The reticle of `rig`'s optic, as SVG drawn about the middle of the
+ *  screen, for an eyepiece `radius` pixels across. */
+function reticle(rig, radius, height, fov) {
+  const ink = '#0b0c0d';
+  const glow = 'rgba(255, 70, 40, 0.95)';
+  const r = radius;
+  const parts = [];
+  const line = (x1, y1, x2, y2, w = 2, colour = ink) =>
+    parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colour}" stroke-width="${w}" />`);
+  const marks = () => {
+    for (const range of HOLDOVER) {
+      const y = holdover(rig.weapon, range, fov, height);
+      if (y === null || y > r * 0.9) continue;
+      const w = Math.max(6, r * (0.05 + range / 4000));
+      line(-w, y, w, y, 2);
+      parts.push(`<text x="${w + 6}" y="${y + 4}" font-size="12" font-family="Barlow, sans-serif" fill="${ink}">${range / 100}</text>`);
+    }
+  };
+  if (rig.weapon === 'sniper') {
+    // A duplex crosshair: heavy posts from the edge, fine lines across the
+    // middle, and the holdover marks down the vertical.
+    line(-r, 0, -r * 0.35, 0, 6);
+    line(r * 0.35, 0, r, 0, 6);
+    line(0, r * 0.35, 0, r, 6);
+    line(0, -r, 0, -r * 0.35, 6);
+    line(-r * 0.35, 0, r * 0.35, 0, 1.4);
+    line(0, -r * 0.35, 0, r * 0.35, 1.4);
+    marks();
+  } else if (rig.optic === 'x2') {
+    // A lit ring and dot, quick to put on somebody close.
+    parts.push(`<circle cx="0" cy="0" r="${Math.max(10, r * 0.09)}" fill="none" stroke="${glow}" stroke-width="2" />`);
+    parts.push(`<circle cx="0" cy="0" r="2.4" fill="${glow}" />`);
+  } else if (rig.optic === 'x3') {
+    // A lit horseshoe round the point of aim, a dot, and the holdover
+    // marks under it.
+    const h = Math.max(12, r * 0.1);
+    parts.push(`<path d="M ${-h} ${h * 0.4} A ${h} ${h} 0 1 1 ${h} ${h * 0.4}" fill="none" stroke="${glow}" stroke-width="2.2" />`);
+    parts.push(`<circle cx="0" cy="0" r="2.2" fill="${glow}" />`);
+    line(0, h * 1.2, 0, r * 0.75, 1.4);
+    marks();
+  } else {
+    // A lit chevron whose tip is the point of aim, and the holdover marks
+    // down the post under it.
+    const c = Math.max(10, r * 0.07);
+    parts.push(`<path d="M ${-c} ${c * 1.1} L 0 0 L ${c} ${c * 1.1}" fill="none" stroke="${glow}" stroke-width="2.6" stroke-linejoin="miter" />`);
+    line(0, c * 1.3, 0, r * 0.75, 1.6);
+    line(-r, 0, -r * 0.4, 0, 1.6);
+    line(r * 0.4, 0, r, 0, 1.6);
+    marks();
+  }
+  return parts.join('');
+}

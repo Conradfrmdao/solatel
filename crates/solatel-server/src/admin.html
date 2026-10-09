@@ -341,7 +341,7 @@ async function matches(id, focusPlayer) {
 
 const COLOURS = ['#7fd49a', '#f2c14e', '#7fb3f2', '#ef6f6c', '#c792ea', '#f78c6c', '#89ddff', '#c3e88d',
   '#ffcb6b', '#ff5370', '#82aaff', '#b2ccd6'];
-const CAUSE = ['rifle', 'grenade', 'zone', 'fall'];
+const CAUSE = ['rifle', 'grenade', 'zone', 'fall', 'pistol', 'smg', 'machine gun', 'sniper'];
 
 async function replayView(matchId, focusPlayer) {
   const res = await fetch(`/admin/api/matches/${matchId}/replay`, { headers: { authorization: `Bearer ${token}` } });

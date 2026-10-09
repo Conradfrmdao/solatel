@@ -16,8 +16,16 @@ import init, {
   constants,
   constant_names,
   map_name,
+  optic_ids,
+  optic_magnifications,
+  round_path,
   select_map,
   spawns,
+  weapon_fields,
+  weapon_ids,
+  weapon_names,
+  weapon_optics,
+  weapons,
 } from '../generated/solatel_sim.js';
 
 /** @type {Record<string, number>} */
@@ -28,6 +36,39 @@ export let BRUSHES = [];
 
 /** Spawn points as [x, y, z, yaw] per entry. */
 export let SPAWNS = [];
+
+/**
+ * Every gun, by its name on the wire: what it is called, how fast it fires,
+ * its magazine, reload and draw, how its round flies, its damage by range and
+ * the optics it can carry. The table the server enforces, read out of the
+ * same Rust, so the client predicts a shot on the tick the server will
+ * allow it and the menu states what a gun does rather than a copy of it.
+ *
+ * @type {Record<string, {
+ *   id: string, index: number, name: string, automatic: boolean,
+ *   fireTicks: number, magazine: number, reloadSeconds: number, drawSeconds: number,
+ *   muzzleVelocity: number, drag: number, zero: number, range: number, zeroAngle: number,
+ *   bands: {from: number, head: number, body: number, legs: number}[],
+ *   optics: string[],
+ * }>}
+ */
+export let WEAPONS = {};
+
+/** How much each optic magnifies, by its name on the wire. */
+export let OPTICS = {};
+
+/** The guns a player may choose; the pistol is everybody's second. */
+export const PRIMARIES = ['smg', 'rifle', 'lmg', 'sniper'];
+
+/**
+ * A round's flight from `from` (x, y, z) at `velocity` (metres per second), a
+ * position per tick for `seconds`, along the flight the server judges. For
+ * drawing a tracer and the marks on a scope's reticle; it decides nothing.
+ */
+export function roundPath(weapon, from, velocity, seconds) {
+  const gun = WEAPONS[weapon] ?? WEAPONS.rifle;
+  return round_path(gun.index, from[0], from[1], from[2], velocity[0], velocity[1], velocity[2], seconds);
+}
 
 export { Predictor };
 
@@ -41,7 +82,55 @@ export { Predictor };
 export async function loadSim(wasmUrl) {
   await init({ module_or_path: wasmUrl });
   readTables();
+  readWeapons();
   return SIM;
+}
+
+function readWeapons() {
+  const fields = weapon_fields();
+  const rows = weapons();
+  const ids = weapon_ids();
+  const names = weapon_names();
+  const table = {};
+  ids.forEach((id, index) => {
+    const row = {};
+    fields.forEach((field, column) => {
+      row[field] = rows[index * fields.length + column];
+    });
+    const bands = [];
+    for (let b = 0; b < row.bandCount; b += 1) {
+      bands.push({
+        from: row[`band${b}From`],
+        head: row[`band${b}Head`],
+        body: row[`band${b}Body`],
+        legs: row[`band${b}Legs`],
+      });
+    }
+    table[id] = Object.freeze({
+      id,
+      index,
+      name: names[index],
+      automatic: row.automatic > 0.5,
+      fireTicks: row.fireTicks,
+      magazine: row.magazine,
+      reloadSeconds: row.reloadSeconds,
+      drawSeconds: row.drawSeconds,
+      muzzleVelocity: row.muzzleVelocity,
+      drag: row.drag,
+      zero: row.zero,
+      range: row.range,
+      zeroAngle: row.zeroAngle,
+      bands: Object.freeze(bands),
+      optics: Object.freeze(weapon_optics(index)),
+    });
+  });
+  WEAPONS = Object.freeze(table);
+  const optics = {};
+  const magnifications = optic_magnifications();
+  optic_ids().forEach((id, i) => {
+    optics[id] = magnifications[i];
+  });
+  OPTICS = Object.freeze(optics);
 }
 
 /**

@@ -1,0 +1,17 @@
+# Builds main when it moves and switches to it when no match has money in
+# it (deploy/update.sh). Run by solatel-update.timer; run it by hand with
+# `sudo solatel-update`.
+[Unit]
+Description=Solatel: build and deploy main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/solatel-update
+# A build must never take the CPU from a match in progress.
+Nice=19
+CPUWeight=10
+IOWeight=10
+# The first build compiles everything; later ones take a few minutes.
+TimeoutStartSec=3h
