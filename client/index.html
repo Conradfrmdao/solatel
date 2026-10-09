@@ -1214,16 +1214,7 @@
 
       /* The gun a life is played with: a picture of each, what it is for,
          and bars for what it does, then the optics it can carry. */
-      .arms {
-        display: grid;
-        gap: 14px;
-        padding: 20px 22px;
-        border-radius: 10px;
-        background: var(--deck);
-        border: 1px solid var(--rule);
-      }
-      .arms .sub { margin-top: -8px; }
-      .arms kbd {
+      .gear-box kbd {
         display: inline-block;
         padding: 1px 6px;
         border-radius: 3px;
@@ -1331,23 +1322,157 @@
       .skin.on .name { color: var(--amber-hot); }
       .skin .blurb { font-size: 11px; line-height: 1.3; color: #b5bfcc; }
 
-      /* The entry fee, the button that plays, and the way to fund it. */
-      .play-row {
+      /* ---- the play screen: one window, no scrolling ------------------
+         The maps first; picking one opens the gear and the stakes under
+         them, all in the window at once, the way a console shooter's lobby
+         is - and picking a stake is pressing play. The other panes are
+         pages, and scroll. */
+      #menu { display: flex; flex-direction: column; }
+      #menu > * { flex: none; }
+      #menu[data-pane='play'] > .menu-shell {
+        flex: 1 1 0;
+        min-height: 560px;
+        width: min(100%, 1640px);
+        padding: 14px 20px 16px;
+        grid-template-rows: minmax(0, 1fr);
+        align-content: stretch;
+      }
+      .pane[data-pane='play'] { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+      .battle { flex: 1 1 0; display: grid; gap: 14px; min-height: 0; }
+      .battle[data-phase='pick'] { grid-template-rows: auto minmax(0, 1fr) auto; }
+      .battle[data-phase='gear'] { grid-template-rows: auto minmax(0, 1fr); }
+      .battle[data-phase='gear'] > .hero,
+      .battle[data-phase='gear'] > .activity,
+      .battle[data-phase='pick'] > .gear { display: none; }
+      .battle > .hero { min-height: 0; padding-top: 22px; padding-bottom: 22px; }
+      .battle > .hero h1 { font-size: clamp(34px, 4.4vw, 60px); }
+
+      /* The maps: as large as the window allows while they are the choice,
+         a strip once one is picked, the picked one saying how far its
+         download has come. */
+      .battle #menu-maps { grid-template-columns: repeat(3, minmax(0, 1fr)); min-height: 0; }
+      .battle[data-phase='pick'] .map { min-height: 0; height: 100%; }
+      .battle[data-phase='gear'] #menu-maps { grid-auto-rows: clamp(96px, 15vh, 150px); }
+      .battle[data-phase='gear'] .map { min-height: 0; padding: 12px 16px; gap: 3px; }
+      .battle[data-phase='gear'] .map .name { font-size: clamp(26px, 2.6vw, 36px); }
+      .battle[data-phase='gear'] .map .blurb,
+      .battle[data-phase='gear'] .map .badge { display: none; }
+      .battle[data-phase='gear'] .map:not(.on) { opacity: 0.7; }
+      .battle[data-phase='gear'] .map:not(.on):hover { opacity: 1; }
+      .battle[data-phase='gear'] .map .seats { top: 12px; bottom: auto; }
+      .map .fetch { display: grid; gap: 4px; width: min(100%, 360px); margin-top: 3px; }
+      .map .fetch .bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.16); overflow: hidden; }
+      .map .fetch i {
+        display: block;
+        width: 4%;
+        height: 100%;
+        background: linear-gradient(90deg, #c47c12, var(--amber-hot));
+        transition: width 0.3s ease;
+      }
+      .map .fetch .what { font: 600 12px/1.2 var(--shout); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-hot); }
+      .map .fetch.done i { background: var(--money); }
+      .map .fetch.done .what { color: var(--money); }
+
+      /* The gear: the gun and its sight, the outfit, the stake. */
+      .gear {
         display: grid;
-        grid-template-columns: minmax(0, 2.15fr) minmax(280px, 1fr);
-        gap: 18px;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(250px, 0.8fr);
+        gap: 14px;
+        min-height: 0;
       }
-      .lower-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-        gap: 18px;
+      .gear-box {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 0;
+        min-height: 0;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+        overflow: auto;
       }
-      @media (max-width: 920px) {
-        .play-row,
-        .lower-row { grid-template-columns: minmax(0, 1fr); }
+      .pane .gear-box h3 {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        font: 800 20px/1 var(--shout);
+        letter-spacing: 0.06em;
       }
-      .fees,
-      .side,
+      .gear-box .note { font: 400 13px/1.35 var(--read); letter-spacing: 0; text-transform: none; color: var(--dim); }
+      .gear-box p.note { margin: -4px 0 0; }
+      .gear #menu-guns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .gear .gun { gap: 4px; padding: 8px 10px 10px; }
+      .gear .gun .art { aspect-ratio: auto; height: clamp(40px, 9vh, 104px); }
+      .gear .gun .name { font-size: 19px; }
+      .gear .gun .blurb { display: none; }
+      .gear .gun .stats { gap: 2px; }
+      .gear .gun .stat { grid-template-columns: 62px 1fr auto; gap: 6px; font-size: 11px; }
+      .gear #menu-optics { gap: 8px; }
+      .gear .optic { padding: 7px 12px; }
+      .gear .optic b { font-size: 16px; }
+      .gear #menu-skins { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; align-content: start; }
+      .gear .skin { gap: 2px; padding: 4px 4px 6px; }
+      .gear .skin .name { font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .gear #menu-tables { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+      .gear .table {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas: 'stake pays go' 'stake busy go';
+        column-gap: 14px;
+        padding: 12px 12px 12px 16px;
+      }
+      .gear .table .stake { grid-area: stake; font-size: 36px; }
+      .gear .table .pays { grid-area: pays; align-self: end; }
+      .gear .table .busy { grid-area: busy; align-self: start; margin: 0; white-space: nowrap; }
+      .gear .table .go {
+        grid-area: go;
+        padding: 13px 22px;
+        border-radius: 6px;
+        font: 800 22px/1 var(--shout);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--amber-ink);
+        background: linear-gradient(180deg, var(--amber-hot), var(--amber) 60%, #e08a0b);
+        box-shadow: 0 8px 20px rgba(246, 162, 27, 0.22), inset 0 -3px 0 rgba(0, 0, 0, 0.2);
+      }
+      .gear .table:hover:not(:disabled) .go { filter: brightness(1.08); }
+      .gear .table:disabled { cursor: default; opacity: 0.6; }
+      .gear .table:disabled .go { box-shadow: none; }
+      .gear .table.on::after { display: none; }
+      .gear #menu-carrying { margin-top: auto; }
+
+      /* What has been won lately, under the maps while they are the choice. */
+      .battle > .activity { padding: 12px 18px; gap: 8px; }
+      .battle > .activity ul.feed { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 18px; }
+      .battle > .activity ul.feed li:nth-child(n + 4) { display: none; }
+
+      /* A tall window has room for the outfits at a size worth looking at. */
+      @media (min-height: 860px) {
+        .gear #menu-skins { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .gear .skin .name { font-size: 13px; }
+      }
+      /* A short window - a laptop's - keeps the essentials. */
+      @media (max-height: 780px) {
+        .gear .gun .stat:nth-child(n + 3) { display: none; }
+        .gear .gun .art { height: 40px; }
+        .battle > .hero { padding-top: 14px; padding-bottom: 14px; }
+        .gear #menu-tables { gap: 7px; }
+        .gear .table { padding: 7px 8px 7px 14px; }
+        .gear .table .stake { font-size: 30px; }
+        .gear .table .go { padding: 10px 18px; font-size: 20px; }
+        .gear-box { padding: 12px 14px; gap: 8px; }
+      }
+      /* A narrow one stacks the gear and scrolls. */
+      @media (max-width: 1000px) {
+        #menu[data-pane='play'] > .menu-shell { flex: none; }
+        .gear { grid-template-columns: minmax(0, 1fr); }
+        .battle #menu-maps { grid-template-columns: minmax(0, 1fr); }
+        .battle[data-phase='pick'] .map { min-height: 200px; }
+        .battle > .activity ul.feed { grid-template-columns: minmax(0, 1fr); }
+      }
+
+      /* The entry fee, and what has been won lately. */
       .activity {
         display: grid;
         gap: 14px;
@@ -1358,7 +1483,6 @@
         border: 1px solid var(--rule);
         min-width: 0;
       }
-      .fees .sub, .side .sub { margin-top: -8px; }
       #menu-tables {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -1402,81 +1526,6 @@
         border-bottom: 3px solid var(--amber);
         transform: rotate(-45deg);
       }
-      .go { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; margin-top: 4px; }
-      #menu-play {
-        padding: 15px 34px;
-        border-radius: 6px;
-        font: 800 25px/1 var(--shout);
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--amber-ink);
-        background: linear-gradient(180deg, var(--amber-hot), var(--amber) 60%, #e08a0b);
-        border: 0;
-        box-shadow: 0 10px 26px rgba(246, 162, 27, 0.25), inset 0 -3px 0 rgba(0, 0, 0, 0.2);
-        cursor: pointer;
-      }
-      #menu-play span { font-weight: 600; letter-spacing: 0.05em; opacity: 0.8; margin-left: 6px; }
-      #menu-play:hover:not(:disabled) { filter: brightness(1.07); }
-      #menu-play:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
-      .go .fine { max-width: 44ch; }
-      .side .deposit {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 14px 18px;
-        border-radius: 6px;
-        font: 800 26px/1 var(--shout);
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        color: #fff;
-        background: linear-gradient(180deg, var(--go-hot), var(--go));
-        border: 1px solid rgba(80, 230, 130, 0.35);
-        box-shadow: 0 8px 22px rgba(35, 161, 77, 0.22);
-        cursor: pointer;
-      }
-      .side .deposit svg { width: 30px; height: 30px; }
-      .side i { margin-left: auto; font: 600 26px/1 var(--shout); font-style: normal; }
-      .side .links { display: grid; gap: 8px; }
-      .side .links button {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 11px 14px;
-        border-radius: 6px;
-        font: 600 16px/1 var(--shout);
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--chalk);
-        background: var(--well);
-        border: 1px solid var(--rule);
-        cursor: pointer;
-      }
-      .side .links button:hover { border-color: rgba(246, 162, 27, 0.55); }
-      .side .links svg { color: var(--amber); }
-      .side .links i { font-size: 20px; color: var(--dim); }
-
-      /* The key art's soldier again, and what the game is in three words. */
-      .slogan {
-        display: grid;
-        align-content: center;
-        justify-items: end;
-        gap: 2px;
-        min-height: 180px;
-        padding: 22px 28px;
-        border-radius: 10px;
-        overflow: hidden;
-        text-align: right;
-        border: 1px solid var(--rule);
-        background:
-          linear-gradient(90deg, rgba(8, 11, 16, 0.05) 0%, rgba(8, 11, 16, 0.55) 45%, rgba(8, 11, 16, 0.92) 100%),
-          url(assets/menu/banner.webp) left center / cover no-repeat,
-          var(--deck);
-        font: 800 italic 30px/1 var(--shout);
-        text-transform: uppercase;
-        color: var(--chalk);
-        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
-      }
-      .slogan b { color: var(--amber); font-weight: 800; margin-top: 6px; }
       .activity h3,
       .pane .activity h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; letter-spacing: 0.12em; }
       .activity h3 svg { color: var(--amber); }

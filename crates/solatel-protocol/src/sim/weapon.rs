@@ -110,8 +110,10 @@ pub struct Band {
 pub struct Stats {
     /// What the menu and the killfeed call it.
     pub name: &'static str,
-    /// Fires for as long as the trigger is held. The pistol and the sniper
-    /// rifle fire once a pull: holding the trigger fires nothing more.
+    /// Fires for as long as the trigger is held. The sniper rifle fires once
+    /// a pull: holding the trigger fires nothing more. The pistol is
+    /// automatic at Conrad's asking, at the rate a finger could pull it, so
+    /// holding it buys nothing a fast finger did not have.
     pub automatic: bool,
     /// Ticks from one round to the next, at the fastest the gun will go. A
     /// sniper rifle's is the bolt being worked.
@@ -154,7 +156,7 @@ pub struct Stats {
 #[rustfmt::skip]
 const PISTOL: Stats = Stats {
     name: "Pistol",
-    automatic: false,
+    automatic: true,
     fire_ticks: 10,
     magazine: 15,
     reload_ticks: ticks(1.5),
@@ -214,10 +216,11 @@ const LMG: Stats = Stats {
     name: "Machine gun",
     automatic: true,
     fire_ticks: 7,
-    // An RPK's drum: seventy-five rounds, and a drum is quicker to change
-    // than a belt.
+    // An RPK's drum: seventy-five rounds, and five and a half seconds to
+    // change it - longer than any other gun, at Conrad's asking, which is
+    // what seventy-five rounds cost.
     magazine: 75,
-    reload_ticks: ticks(4.0),
+    reload_ticks: ticks(5.5),
     draw_ticks: ticks(0.8),
     muzzle_velocity: 745.0,
     drag: 0.0012,

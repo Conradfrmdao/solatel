@@ -1,5 +1,10 @@
 // Pictures of the guns for the menu, drawn from the models themselves.
 //
+// Drawn ahead of time, by `client/portraits.mjs`, into `assets/menu/guns`
+// and `assets/menu/skins`: drawing them in the page, as it once did, held the
+// main thread for seconds just as the menu appeared - a second renderer, its
+// shaders and its environment - and the menu now loads them as pictures.
+//
 // The menu says what each gun is, and nothing says it like the gun. So each
 // is drawn once, side on, from the same model a player carries (`guns.js`),
 // on a small renderer of its own that is thrown away afterwards, and handed
@@ -21,16 +26,16 @@ const HEIGHT = 170;
  * Resolves to an empty map if the browser cannot draw (the menu then shows
  * the cards without pictures, which is what it did before there were any).
  */
-export async function portraits(guns) {
+export async function portraits(guns, { scale = 1, type = 'image/png', quality } = {}) {
   const out = new Map();
   let renderer;
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = WIDTH;
-    canvas.height = HEIGHT;
+    canvas.width = WIDTH * scale;
+    canvas.height = HEIGHT * scale;
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(1);
-    renderer.setSize(WIDTH, HEIGHT, false);
+    renderer.setSize(WIDTH * scale, HEIGHT * scale, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
@@ -67,7 +72,7 @@ export async function portraits(guns) {
       scene.add(gun);
       renderer.clear();
       renderer.render(scene, camera);
-      out.set(`${weapon}:${optic}`, canvas.toDataURL('image/png'));
+      out.set(`${weapon}:${optic}`, canvas.toDataURL(type, quality));
       scene.remove(gun);
       // The geometry is the guns' own, shared with every copy: not disposed.
       // Let the page breathe between pictures: a software renderer takes a
@@ -95,16 +100,16 @@ const SOLDIER_HEIGHT = 240;
  * - three quarters on, under the same studio light as the guns. Resolves to
  * an empty map if the browser cannot draw.
  */
-export async function soldierPortraits(template, pose, skins) {
+export async function soldierPortraits(template, pose, skins, { scale = 1, type = 'image/png', quality } = {}) {
   const out = new Map();
   let renderer;
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = SOLDIER_WIDTH;
-    canvas.height = SOLDIER_HEIGHT;
+    canvas.width = SOLDIER_WIDTH * scale;
+    canvas.height = SOLDIER_HEIGHT * scale;
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(1);
-    renderer.setSize(SOLDIER_WIDTH, SOLDIER_HEIGHT, false);
+    renderer.setSize(SOLDIER_WIDTH * scale, SOLDIER_HEIGHT * scale, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
@@ -147,7 +152,7 @@ export async function soldierPortraits(template, pose, skins) {
       }
       renderer.clear();
       renderer.render(scene, camera);
-      out.set(skin, canvas.toDataURL('image/png'));
+      out.set(skin, canvas.toDataURL(type, quality));
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     mixer.stopAllAction();

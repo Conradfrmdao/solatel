@@ -245,13 +245,29 @@ async function boot() {
   // the menu's markup and the HUD is what wires them up. A HUD constructed
   // first would look for sliders that did not exist yet.
   const menu = new Menu(document.getElementById('menu'));
-  // Pictures of the guns, drawn from their models, for the menu's cards -
-  // in the background: the menu works without them.
-  portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot']))
-    .then((pictures) => menu.setGunPictures(pictures))
-    // And the soldier in every skin, after the guns.
-    .then(() => soldierPortraits(soldier, remotes.clips.ready, SKINS.map((s) => s.id)))
-    .then((pictures) => menu.setSkinPictures(pictures));
+  // Pictures of the guns and of the soldier in every skin, for the menu's
+  // cards. They are files, drawn ahead of time by `client/portraits.mjs`:
+  // drawing them here held the main thread for seconds just as the menu
+  // appeared. `?portraits=1` draws them again, for that script and no one
+  // else.
+  const picture = (path) => {
+    try {
+      return asset(path);
+    } catch {
+      return null;
+    }
+  };
+  menu.setGunPictures(
+    new Map(PRIMARIES.map((id) => [`${id}:${WEAPONS[id]?.optics[0] ?? 'red_dot'}`, picture(`assets/menu/guns/${id}.webp`)])),
+  );
+  menu.setSkinPictures(new Map(SKINS.map((skin) => [skin.id, picture(`assets/menu/skins/${skin.id}.webp`)])));
+  if (new URLSearchParams(window.location.search).has('portraits')) {
+    const format = { scale: 2, type: 'image/webp', quality: 0.9 };
+    window.solatelPortraits = (async () => ({
+      guns: Object.fromEntries(await portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot']), format)),
+      skins: Object.fromEntries(await soldierPortraits(soldier, remotes.clips.ready, SKINS.map((s) => s.id), format)),
+    }))();
+  }
   const hud = new Hud(hudRoot);
   const audio = new Audio();
   // Every recording, fetched now so it is decoded by the first shot; nothing

@@ -169,6 +169,10 @@ export class Input {
       // Space scrolls the page and the arrow keys move the caret; neither is
       // wanted while the mouse is captured.
       if (this.locked && SWALLOWED.has(event.code)) event.preventDefault();
+      // Escape reaches the page only when fullscreen has locked it to the
+      // page (`fullscreen.js`); then freeing the mouse is ours to do, as the
+      // browser would have, and holding it is still how fullscreen ends.
+      if (event.code === 'Escape' && this.locked) document.exitPointerLock();
     });
     window.addEventListener('keyup', (event) => this._keys.delete(event.code));
 

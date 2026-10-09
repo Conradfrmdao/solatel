@@ -280,13 +280,26 @@ are our own maps photographed from above (`assets/menu/map-*.webp`), not
 paintings of them.
 
 Six panes: **play**, **deposit** (the wallet), **leaderboard**, **profile**,
-**fair play**, and **settings** behind the gear. Play is "choose your
-battle": a map card, an entry fee, then **Play** - selecting a fee does not
-join a line; the button does, and says what it will join ("Play $1 ·
-arena"). The fee last chosen is remembered per browser. The settings moved here from the HUD - they belong on a screen you go to
-between matches, not over your crosshair - though the wiring stayed in
-`hud.js` and looks them up in the document. The menu is therefore built before
-the HUD, or the HUD looks for sliders that do not exist yet.
+**fair play** (the payout record, how it works, the rules and the credits),
+and **settings** behind the gear (with the controls). The settings moved
+here from the HUD - they belong on a screen you go to between matches, not
+over your crosshair - though the wiring stayed in `hud.js` and looks them up
+in the document. The menu is therefore built before the HUD, or the HUD
+looks for sliders that do not exist yet.
+
+**Play is one window and never scrolls**, at Conrad's asking, after the
+console shooters' lobbies (`#battle`): it opens on the three maps, large,
+under "choose your battle", and picking one (`chooseMap`) shrinks them to a
+strip and opens, in the same window, the weapon and its sight, the outfit,
+and the entry fees - each fee a play button ("Play $1 · arena"), because the
+stake is the last choice and making it is playing; queueing costs nothing
+and the searching card has *leave the line*. Picking a map also starts its
+download (`prefetchMap`), which its card counts in megabytes until it says
+it is ready, so a click on a map is seen to do something. It is laid out to
+the window down to a 1366 by 657 laptop window (short windows drop two of
+each gun's four bars); narrower than 1000 px it stacks and scrolls. The
+gear and the fee last chosen are remembered per browser; the map is chosen
+each visit, and stays chosen after a match so the next is one click.
 
 **Nothing on it is made up.** The mockup had levels, missions, rewards and a
 store; none exist, so none are drawn - a real-money game that showed
@@ -340,8 +353,10 @@ its own lives out again, because their winnings are far above any table's.
 
 `node client/menu.mjs` drives the whole thing in a real browser: that the menu
 is what a player lands on, that every tab opens and the leaderboard loads,
-that the wordmark and the art are there, that picking a fee joins nothing
-and the play button names what it will join, that queueing does not steal
+that the wordmark and the art are there, that the play screen opens on the
+maps and picking one opens the gear and the stakes in a window that does
+not scroll and starts its download, that each stake button names what it
+will join and pressing it joins, that queueing does not steal
 the mouse, and that playing drops them into a match on the map they chose
 with the world actually drawn. It needs `SOLATEL_MATCH_FLOOR=1` and a
 short `SOLATEL_QUEUE_WAIT`, because one client alone would otherwise sit in
@@ -716,6 +731,15 @@ Mouse look reads `movementX`/`movementY` directly under pointer lock, requested
 with `{ unadjustedMovement: true }`. Sensitivity is a slider in the HUD and
 persists in `localStorage`; it is the setting players are most particular about
 and no single value is right.
+
+**The game takes the whole screen** (`fullscreen.js`), at Conrad's asking:
+pressing a stake asks for fullscreen, because a browser grants it only in
+answer to a click, and the top bar has a button for it; the settings can
+turn the first off. In fullscreen Escape is locked to the page where the
+browser allows (`navigator.keyboard.lock`, Chrome and Edge), so a short
+press frees the mouse - `input.js` does what the browser would have - and
+holding it leaves fullscreen. Without that lock every Escape that freed the
+mouse would throw the player out of fullscreen too.
 
 `?debug=1` exposes `window.solatel`. `?nolock=1` lets the keyboard work without
 pointer lock, which is the only way an automated browser can drive the game -
@@ -1367,9 +1391,15 @@ its own brightness, never darkened. What a skin changes is hue and
 pattern. None copies a map's surfaces. Adding a skin means adding it to
 `SKINS` in `skins.js` and raising `net::SKINS` (a protocol change).
 
-The menu's pictures of each skin are drawn from the soldier himself at
-boot (`soldierPortraits`), and the player's own sleeves in first person
-wear their skin (`viewmodel.setSkin`).
+The menu's pictures of each skin, and of each gun, are drawn from the
+soldier and the guns themselves by `node client/portraits.mjs`, which runs
+the page's own `portraits.js` (`?portraits=1`) and writes WebP into
+`assets/menu/skins` and `assets/menu/guns` - re-run it after changing a
+skin, a gun or the soldier. They used to be drawn in the page as the menu
+opened, on a renderer of their own, and that held the main thread for
+seconds, measured as the stall Conrad saw between the boot screen and a
+menu that answered. The player's own sleeves in first person wear their
+skin (`viewmodel.setSkin`).
 
 ## Assets
 
@@ -1964,7 +1994,10 @@ magazine, the reload, how long the gun takes to bring up, the round's muzzle
 velocity and drag, the zero, the range, and the damage bands. The SMG wins
 up close, the rifle in the middle, the machine gun at range for as long as
 its drum lasts, the sniper rifle wherever its owner can put a round on a
-head. The machine gun's 75-round drum and 4 s reload are the RPK's.
+head. The machine gun's 75-round drum is the RPK's, and so is a slow
+change of it: 5.5 s, the longest reload in the game, at Conrad's asking.
+The pistol is automatic, also his call, at the rate a finger could pull
+it - holding the trigger buys nothing a fast finger did not have.
 
 **Rounds fly.** Real gravity (9.81, not the players' heavier one), drag in
 proportion to the square of the speed, and the real cartridges' speeds and

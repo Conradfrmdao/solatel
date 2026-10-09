@@ -19,6 +19,8 @@
 
 import qrcode from 'qrcode-generator';
 import { asset } from './assets.js';
+import { prefetchMap } from './prefetch.js';
+import { enterFullscreen, fullscreenWanted, isFullscreen, setFullscreenWanted, toggleFullscreen } from './fullscreen.js';
 import { OPTICS, PRIMARIES, SIM, WEAPONS } from './sim.js';
 import { SKINS, storeSkin, storedSkin } from './skins.js';
 import {
@@ -149,7 +151,20 @@ export class Menu {
     this.tabs = root.querySelector('#menu-tabs');
     this.maps = root.querySelector('#menu-maps');
     this.tables = root.querySelector('#menu-tables');
-    this.play = root.querySelector('#menu-play');
+    this.battle = root.querySelector('#battle');
+    // The whole screen: the button in the top bar, and whether play takes it.
+    const fullscreen = root.querySelector('#fullscreen');
+    fullscreen.addEventListener('click', () => toggleFullscreen());
+    document.addEventListener('fullscreenchange', () => {
+      fullscreen.classList.toggle('on', isFullscreen());
+      fullscreen.innerHTML = isFullscreen() ? ICON.shrink : ICON.expand;
+    });
+    const onPlay = root.querySelector('#fullscreen-on-play');
+    onPlay.checked = fullscreenWanted();
+    onPlay.addEventListener('change', () => setFullscreenWanted(onPlay.checked));
+    // The play screen is laid out to the window (see `showPane`).
+    root.dataset.pane = 'play';
+    this.skinName = root.querySelector('#menu-skin-name');
     this.carrying = root.querySelector('#menu-carrying');
     this.activity = root.querySelector('#menu-activity');
     this.meName = root.querySelector('#me-name');
@@ -228,9 +243,7 @@ export class Menu {
     this.maps.addEventListener('click', (event) => {
       const card = event.target.closest('[data-map]');
       if (!card) return;
-      this.chosenMap = card.dataset.map;
-      this._drawMaps();
-      this._drawTables();
+      this.chooseMap(card.dataset.map);
     });
     this.guns.addEventListener('click', (event) => {
       const card = event.target.closest('[data-gun]');
@@ -252,10 +265,11 @@ export class Menu {
       this.skin = Number(card.dataset.skin);
       storeSkin(this.skin);
       this._drawSkins();
+      this._drawPlay();
     });
     this.tables.addEventListener('click', (event) => {
       const button = event.target.closest('[data-stake]');
-      if (!button) return;
+      if (!button || button.disabled) return;
       this.chosenStake = Number(button.dataset.stake);
       try {
         window.localStorage.setItem(STAKE_KEY, String(this.chosenStake));
@@ -263,6 +277,12 @@ export class Menu {
         /* private browsing */
       }
       this._drawTables();
+      if (this.chosenMap && this._onQueue) {
+        // The whole screen for the match, asked for here because a browser
+        // gives it only in answer to a click (`fullscreen.js`).
+        if (fullscreenWanted()) enterFullscreen();
+        this._onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
+      }
     });
   }
 
@@ -270,7 +290,9 @@ export class Menu {
   setOffer(maps, tiers) {
     this.mapList = maps ?? [];
     this.tiers = tiers ?? [];
-    if (!this.chosenMap && this.mapList.length) this.chosenMap = this.mapList[0].name;
+    // No map is picked for the player: the screen opens on the maps, and
+    // picking one is what opens the rest (`chooseMap`).
+    if (this.chosenMap && !this.mapList.some((m) => m.name === this.chosenMap)) this.chosenMap = null;
     if (!this.tiers.some((t) => t.dollars === this.chosenStake)) this.chosenStake = this.tiers[0]?.dollars ?? null;
     this._drawMaps();
     this._drawTables();
@@ -290,13 +312,15 @@ export class Menu {
     this.skinList.innerHTML = SKINS.map((skin) => {
       const picture = this.skinPictures.get(skin.id);
       return (
-        `<button class="skin${skin.id === this.skin ? ' on' : ''}" type="button" data-skin="${skin.id}">` +
+        `<button class="skin${skin.id === this.skin ? ' on' : ''}" type="button" data-skin="${skin.id}" ` +
+        `title="${escapeHtml(`${skin.name}: ${skin.blurb}`)}">` +
         (picture ? `<img class="art" alt="" src="${picture}">` : '<span class="art"></span>') +
         `<span class="name">${escapeHtml(skin.name)}</span>` +
-        `<span class="blurb">${escapeHtml(skin.blurb)}</span>` +
         '</button>'
       );
     }).join('');
+    const worn = SKINS.find((skin) => skin.id === this.skin);
+    if (this.skinName) this.skinName.textContent = worn ? `${worn.name} · ${worn.blurb}` : '';
   }
 
   /** The gun and optic to play with, remembered for next time. */
@@ -373,9 +397,7 @@ export class Menu {
    * so this is safe to wire directly to a button somebody can press twice.
    */
   bindPlay(onQueue, onLeaveQueue) {
-    this.play.addEventListener('click', () => {
-      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
-    });
+    this._onQueue = onQueue;
     this.status.addEventListener('click', (event) => {
       if (event.target.closest('#leave-queue')) onLeaveQueue();
     });
@@ -758,6 +780,8 @@ export class Menu {
   showPane(name) {
     if (!PANES.includes(name)) return;
     this.pane = name;
+    // The play screen is laid out to the window; the others scroll.
+    this.root.dataset.pane = name;
     if (name === 'fair') this._loadProof();
     if (name === 'play' || name === 'board') this._loadBoard();
     for (const pane of PANES) {
@@ -936,8 +960,9 @@ export class Menu {
     this.maps.innerHTML = this.mapList
       .map((map) => {
         const blurb = MAP_BLURB[map.name];
+        const on = map.name === this.chosenMap;
         return (
-          `<button class="map${map.name === this.chosenMap ? ' on' : ''}" ` +
+          `<button class="map${on ? ' on' : ''}" ` +
           `type="button" data-map="${escapeHtml(map.name)}">` +
           `<span class="art" aria-hidden="true"></span>` +
           (map.name === busiest ? `<span class="badge">${ICON.star}Most popular</span>` : '') +
@@ -945,11 +970,49 @@ export class Menu {
           (blurb ? `<span class="blurb">${blurb.map(escapeHtml).join('<br>')}</span>` : '') +
           `<span class="seats">${ICON.people}${map.seats} players</span>` +
           `<span class="busy">${this._busyOn(map.name)}</span>` +
+          (on
+            ? '<span class="fetch"><span class="bar"><i></i></span><span class="what">Getting the map ready</span></span>'
+            : '') +
           `</button>`
         );
       })
       .join('');
+    // Until a map is picked the screen is the maps; then the gear and the
+    // stakes open under them, in the same window.
+    if (this.battle) this.battle.dataset.phase = this.chosenMap ? 'gear' : 'pick';
+    this._fetchShown = null;
+    this._drawFetch();
     this._drawPlay();
+  }
+
+  /**
+   * A map picked: the gear and the stakes open with it, and its files start
+   * coming down now - tens of megabytes, which the player would otherwise
+   * wait for after the line formed - with the card saying how far they are.
+   */
+  chooseMap(name) {
+    if (!this.mapList.some((m) => m.name === name)) return;
+    this.chosenMap = name;
+    prefetchMap(name);
+    this._drawMaps();
+    this._drawTables();
+  }
+
+  /** How far the chosen map's files have come, on its card. */
+  _drawFetch() {
+    const fetch = this.chosenMap ? this.maps.querySelector('.map.on .fetch') : null;
+    if (!fetch) return;
+    const progress = prefetchMap(this.chosenMap)?.progress();
+    if (!progress) return;
+    const { loaded, total, done } = progress;
+    const shown = done ? 'done' : `${Math.floor(loaded / 1e5)}:${Math.floor(total / 1e5)}`;
+    if (shown === this._fetchShown) return;
+    this._fetchShown = shown;
+    fetch.classList.toggle('done', done);
+    fetch.querySelector('i').style.width = `${done ? 100 : total ? Math.round((loaded / total) * 100) : 4}%`;
+    fetch.querySelector('.what').textContent = done
+      ? 'Map downloaded · ready to play'
+      : `Downloading the map · ${(loaded / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB`;
   }
 
   _crowdOn(name) {
@@ -984,10 +1047,10 @@ export class Menu {
           : '';
         return (
           `<button class="table${tier.dollars === this.chosenStake ? ' on' : ''}" type="button" data-stake="${tier.dollars}">` +
-          `<span class="coin">${ICON.coins}</span>` +
           `<span class="stake">$${tier.dollars}</span>` +
           `<span class="pays">${pays}</span>` +
           `<span class="busy">${waiting} waiting · ${running} playing</span>` +
+          `<span class="go">Play</span>` +
           `</button>`
         );
       })
@@ -995,24 +1058,26 @@ export class Menu {
     this._drawPlay();
   }
 
-  /** The play button says exactly what it will do. */
+  /**
+   * Each stake is a play button: it says exactly what it will join, and
+   * none can be pressed again while the player is in a line.
+   */
   _drawPlay(queued = this._queued) {
-    const ready = Boolean(this.chosenMap && this.chosenStake);
-    const label = queued
-      ? 'In line&hellip;'
-      : ready
-        ? `Play <span>$${this.chosenStake} &middot; ${escapeHtml(this.chosenMap)}</span>`
-        : 'Play';
-    if (label !== this._playLabel) {
-      this._playLabel = label;
-      this.play.innerHTML = label;
+    for (const button of this.tables.querySelectorAll('[data-stake]')) {
+      const dollars = Number(button.dataset.stake);
+      const mine = Boolean(queued) && this._queuedFor === dollars;
+      const label = `Play $${dollars} · ${this.chosenMap ?? ''}`;
+      if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label);
+      const go = button.querySelector('.go');
+      const text = mine ? 'In line…' : 'Play';
+      if (go.textContent !== text) go.textContent = text;
+      button.disabled = !this.chosenMap || Boolean(queued);
     }
     const gun = WEAPONS[this.loadout.primary];
     const carrying = gun
-      ? `${gun.name} with ${this.loadout.optic === 'red_dot' ? 'a red dot' : `a ${OPTIC_NAMES[this.loadout.optic]} scope`}, and a pistol.`
+      ? `You carry the ${gun.name.toLowerCase()} with ${this.loadout.optic === 'red_dot' ? 'a red dot' : `a ${OPTIC_NAMES[this.loadout.optic]} scope`}, and a pistol.`
       : '';
     if (this.carrying && this.carrying.textContent !== carrying) this.carrying.textContent = carrying;
-    this.play.disabled = !ready || Boolean(queued);
   }
 
   /**
@@ -1107,9 +1172,16 @@ export class Menu {
       this._line = line;
       this.meLine.textContent = line;
     }
-    if (queued !== this._queued) {
+    if (queued !== this._queued || local.queuedFor !== this._queuedFor) {
       this._queued = queued;
+      this._queuedFor = local.queuedFor ?? null;
       this._drawPlay(queued);
+    }
+    // The chosen map's download, a few times a second rather than every frame.
+    const now = performance.now();
+    if (this.chosenMap && !(now < this._fetchAt)) {
+      this._fetchAt = now + 250;
+      this._drawFetch();
     }
     if ((this.pane ?? 'play') === 'play' || this.pane === 'board') this._loadBoard();
   }
@@ -1126,6 +1198,8 @@ const ICON = {
   person: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></svg>',
   shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.5-3.2 8-7.5 9.5-4.3-1.5-7.5-5-7.5-9.5V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 2.8h3.4l.5 2.4 1.7.7 2-1.4 2.4 2.4-1.4 2 .7 1.7 2.4.5v3.4l-2.4.5-.7 1.7 1.4 2-2.4 2.4-2-1.4-1.7.7-.5 2.4h-3.4l-.5-2.4-1.7-.7-2 1.4-2.4-2.4 1.4-2-.7-1.7-2.4-.5v-3.4l2.4-.5.7-1.7-1.4-2 2.4-2.4 2 1.4 1.7-.7z"/><circle cx="12" cy="12" r="3.2"/></svg>',
+  expand: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+  shrink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
   gift: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h16v10H4zM3 7h18v3H3zM12 7v13"/><path d="M12 7c-1.5-3-5-3.5-5-1.2C7 7 9.5 7 12 7c2.5 0 5 0 5-1.2C17 3.5 13.5 4 12 7z"/></svg>',
   bars: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-5M10 20v-9M15 20V7M20 20V4"/></svg>',
   people: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="16.5" cy="9.5" r="2.6"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>',
@@ -1147,6 +1221,7 @@ const TEMPLATE = `
         <button type="button" data-pane="profile">${ICON.person}<span>Profile</span></button>
         <button type="button" data-pane="fair">${ICON.shield}<span>Fair play</span></button>
         <button type="button" data-pane="settings" class="gear" title="settings" aria-label="settings">${ICON.gear}</button>
+        <button type="button" id="fullscreen" class="gear" title="full screen" aria-label="full screen">${ICON.expand}</button>
       </nav>
       <div class="me">
         <span class="avatar" id="me-avatar" aria-hidden="true"></span>
@@ -1164,92 +1239,37 @@ const TEMPLATE = `
   <div class="menu-shell">
     <section class="pane" data-pane="play">
       <div id="menu-result" class="hidden"></div>
-      <div class="hero">
-        <h1>Choose your battle</h1>
-        <p>Select a map. Pick your entry. Get in the game.</p>
-      </div>
+      <div id="battle" class="battle" data-phase="pick">
+        <header class="hero">
+          <h1>Choose your battle</h1>
+          <p>Pick a map. Pick your gear. Pick your stake, and you are in.</p>
+        </header>
 
-      <div id="menu-maps"></div>
+        <div id="menu-maps"></div>
 
-      <section class="arms">
-        <h2>Choose your weapon</h2>
-        <p class="sub">What your stake buys a life with. Everybody carries a pistol as well: <kbd>Q</kbd> or the wheel to swap.</p>
-        <div id="menu-guns"></div>
-        <div id="menu-optics"></div>
-      </section>
-
-      <section class="arms dress">
-        <h2>Choose your look</h2>
-        <p class="sub">Ten of our own, and the one he came in. Everybody in your match sees it, and none is any harder to see than another.</p>
-        <div id="menu-skins"></div>
-      </section>
-
-      <div class="play-row">
-        <div class="fees">
-          <h2>Select entry fee</h2>
-          <p class="sub">Choose how much you want to play with. Every kill pays its table's reward into your wallet at once.</p>
-          <div id="menu-tables"></div>
-          <div class="go">
-            <button type="button" id="menu-play" disabled>Play</button>
-            <p class="fine"><span id="menu-carrying"></span> Nothing is charged until your match forms. One stake buys one life.</p>
-          </div>
+        <div class="gear">
+          <section class="gear-box weapon">
+            <h3>Weapon <span class="note">and a pistol: <kbd>Q</kbd> to swap</span></h3>
+            <div id="menu-guns"></div>
+            <h3>Sight</h3>
+            <div id="menu-optics"></div>
+          </section>
+          <section class="gear-box outfit">
+            <h3>Outfit <span class="note" id="menu-skin-name"></span></h3>
+            <div id="menu-skins"></div>
+          </section>
+          <section class="gear-box stakes">
+            <h3>Entry fee</h3>
+            <p class="note">Pick a stake to play. Nothing is charged until your match forms.</p>
+            <div id="menu-tables"></div>
+            <p class="fine" id="menu-carrying"></p>
+          </section>
         </div>
-        <aside class="side">
-          <button type="button" class="deposit" data-pane="wallet">${ICON.wallet}<span>Deposit</span><i>&rsaquo;</i></button>
-          <p class="sub">Add funds to your wallet and start playing.</p>
-          <div class="links">
-            <button type="button" data-pane="board">${ICON.trophy}<span>Leaderboard</span><i>&rsaquo;</i></button>
-            <button type="button" data-pane="fair">${ICON.shield}<span>Fair play &amp; payouts</span><i>&rsaquo;</i></button>
-            <button type="button" data-pane="profile">${ICON.gift}<span>Invite a friend</span><i>&rsaquo;</i></button>
-          </div>
-        </aside>
-      </div>
 
-      <div class="lower-row">
-        <div class="slogan"><span>Skill wins.</span><span>Strategy pays.</span><b>Play. Kill. Earn.</b></div>
         <section class="activity">
           <h3>${ICON.bars}Live activity</h3>
           <ul id="menu-activity" class="feed"><li class="dim">reading the latest wins&hellip;</li></ul>
         </section>
-      </div>
-
-      <h2 class="section">How it works</h2>
-      <div class="rules">
-        <div><b>one life</b><span>Your stake buys one life in one match. No respawn.</span></div>
-        <div><b>paid per kill</b><span>Every kill pays the table's reward into your wallet at once.</span></div>
-        <div><b>survive, get it back</b><span>Alive at the whistle, your whole stake comes back.</span></div>
-        <div><b>killed</b><span>Your stake pays whoever killed you, less a 10% house cut.</span></div>
-      </div>
-
-      <h2 class="section">Controls</h2>
-      <div class="keys">
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
-        <span><kbd>mouse</kbd> look</span>
-        <span><kbd>left click</kbd> shoot</span>
-        <span><kbd>right click</kbd> aim</span>
-        <span><kbd>space</kbd> jump</span>
-        <span><kbd>C</kbd> crouch</span>
-        <span><kbd>R</kbd> reload</span>
-        <span><kbd>Q</kbd> or <kbd>wheel</kbd> swap gun</span>
-        <span><kbd>1</kbd><kbd>2</kbd> primary, pistol</span>
-        <span><kbd>G</kbd> grenade</span>
-        <span><kbd>tab</kbd> scores</span>
-        <span><kbd>esc</kbd> free the mouse</span>
-      </div>
-      <div class="devices">
-        <div class="device best">
-          <b>mouse <em>recommended</em></b>
-          <span class="pro">Fastest, most precise aim</span>
-          <span class="pro">Turn and shoot while you run</span>
-        </div>
-        <div class="device">
-          <b>laptop touchpad</b>
-          <span class="pro">Works on any laptop</span>
-          <span class="con">Slower, less precise aim against mouse players</span>
-          <span class="con">Windows turns it off while you hold a key. Fix: Settings &rarr;
-            Bluetooth &amp; devices &rarr; Touchpad &rarr; Taps &rarr; Touchpad
-            sensitivity &rarr; <b>Most sensitive</b></span>
-        </div>
       </div>
       <p class="needs-keyboard">Solatel is played with a keyboard and mouse. Open it on a computer to play.</p>
     </section>
@@ -1401,6 +1421,15 @@ const TEMPLATE = `
         </p>
       </div>
 
+      <div class="label">how it works</div>
+      <div class="rules">
+        <div><b>one life</b><span>Your stake buys one life in one match. No respawn.</span></div>
+        <div><b>paid per kill</b><span>Every kill pays the table's reward into your wallet at once.</span></div>
+        <div><b>survive, get it back</b><span>Alive at the whistle, your whole stake comes back.</span></div>
+        <div><b>killed</b><span>Your stake pays whoever killed you, less a 10% house cut.</span></div>
+      </div>
+
+
       <div class="label">fair play</div>
       <div class="rules wide">
         <div><b>the server decides</b><span>Your game sends the keys you press
@@ -1484,6 +1513,11 @@ const TEMPLATE = `
           <span id="volume-value"></span>
         </label>
         <label class="check">
+          full screen
+          <input id="fullscreen-on-play" type="checkbox" />
+          <span>take the whole screen when you press play; hold Esc to leave it</span>
+        </label>
+        <label class="check">
           raw mouse
           <input id="rawmouse" type="checkbox" />
           <span>turn off if aim sticks after switching windows</span>
@@ -1510,6 +1544,36 @@ const TEMPLATE = `
           draw fewer pixels and cheaper effects. Ultra adds ambient occlusion,
           which roughly halves the frame rate on laptop graphics.
         </p>
+      </div>
+      <div class="label">controls</div>
+      <div class="keys">
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
+        <span><kbd>mouse</kbd> look</span>
+        <span><kbd>left click</kbd> shoot</span>
+        <span><kbd>right click</kbd> aim</span>
+        <span><kbd>space</kbd> jump</span>
+        <span><kbd>C</kbd> crouch</span>
+        <span><kbd>R</kbd> reload</span>
+        <span><kbd>Q</kbd> or <kbd>wheel</kbd> swap gun</span>
+        <span><kbd>1</kbd><kbd>2</kbd> primary, pistol</span>
+        <span><kbd>G</kbd> grenade</span>
+        <span><kbd>tab</kbd> scores</span>
+        <span><kbd>esc</kbd> free the mouse</span>
+      </div>
+      <div class="devices">
+        <div class="device best">
+          <b>mouse <em>recommended</em></b>
+          <span class="pro">Fastest, most precise aim</span>
+          <span class="pro">Turn and shoot while you run</span>
+        </div>
+        <div class="device">
+          <b>laptop touchpad</b>
+          <span class="pro">Works on any laptop</span>
+          <span class="con">Slower, less precise aim against mouse players</span>
+          <span class="con">Windows turns it off while you hold a key. Fix: Settings &rarr;
+            Bluetooth &amp; devices &rarr; Touchpad &rarr; Taps &rarr; Touchpad
+            sensitivity &rarr; <b>Most sensitive</b></span>
+        </div>
       </div>
     </section>
 

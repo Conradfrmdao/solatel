@@ -84,9 +84,8 @@ try {
   // play.
   await page.waitForSelector('#menu-maps .map', { timeout: 90_000 });
   await page.click('#menu-maps .map');
-  await page.waitForSelector('#menu-tables .table', { timeout: 30_000 });
+  await page.waitForSelector('#menu-tables .table:not([disabled])', { visible: true, timeout: 30_000 });
   await page.click('#menu-tables .table');
-  await page.click('#menu-play');
   const before = await inGame();
   console.log(
     `first connection : ${before.id.slice(0, 8)}  ` +
