@@ -18,11 +18,16 @@
 #   sudo cat /etc/solatel/secret.env
 #
 # Safe to run again, with or without the domain: every step checks first.
+#
+# Everything is inside `main`, called on the last line, so bash has read the
+# whole script before it runs any of it: piped in by curl, a download cut off
+# half way must not run half an install.
 set -euo pipefail
 
 REPO=https://github.com/Conradfrmdao/solatel.git
 ROOT=/opt/solatel
 
+main() {
 if [ "$(id -u)" != 0 ]; then
     echo "run it with sudo" >&2
     exit 1
@@ -48,12 +53,14 @@ fi
 echo ">> installing solatel for $domain"
 
 # ---- packages ----------------------------------------------------------------
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q --no-install-recommends \
-    ca-certificates curl git rsync jq xz-utils openssl \
+# A new server runs its own updates in its first minutes and holds apt's lock
+# while it does: wait for it rather than fail. Nothing may ask a question.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+apt-get -o DPkg::Lock::Timeout=900 update -q </dev/null
+apt-get -o DPkg::Lock::Timeout=900 install -y -q --no-install-recommends \
+    ca-certificates curl git rsync jq xz-utils openssl iproute2 \
     build-essential pkg-config \
-    postgresql caddy ufw fail2ban
+    postgresql caddy ufw fail2ban </dev/null
 
 # ---- users and places ----------------------------------------------------------
 # `solatel` runs the server and owns the database; `solatel-build` compiles,
@@ -148,3 +155,6 @@ cat <<DONE
    From now on every change merged into main goes live by itself, as soon
    as no match has money in it.
 DONE
+}
+
+main "$@"
