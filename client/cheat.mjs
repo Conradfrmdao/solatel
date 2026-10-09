@@ -35,7 +35,11 @@
 //     different words, a good proof sent twice, and one account's proof
 //     replayed by another to take its wallet;
 //   * a table nobody runs - a $3 stake, a map that does not exist - and a
-//     name five hundred characters long full of control characters.
+//     name five hundred characters long full of control characters;
+//   * guns nobody may carry - a sniper rifle with a red dot, a pistol as a
+//     primary - and the trigger held against the actions: a bolt action
+//     held on it, a pistol held on it and pulled every command, and the
+//     guns changed every command with the trigger down.
 //
 // And after all of that, an honest client must still be able to connect
 // and be answered promptly: a cheat that cannot win can still try to make
@@ -53,6 +57,10 @@ const WEAPON_FIRE_INTERVAL = 0.12;
 const FIRE = 1 << 1;
 const JUMP = 1 << 0;
 const THROW = 1 << 4;
+const SIDEARM = 1 << 6;
+/** The sniper rifle's bolt and the pistol's trigger, in seconds. */
+const BOLT_INTERVAL = 1.25;
+const PISTOL_INTERVAL = 10 / 64;
 const GRENADES_PER_LIFE = 2;
 
 const MAX_NAME_LEN = 16;
@@ -154,6 +162,7 @@ class Wire {
       case 'match_started':
         this.matchStarts += 1;
         this.matchId = msg.match_id;
+        this.loadout = msg.loadout;
         // No map to load: ready for the countdown at once.
         this.send({ t: 'loaded', match_id: msg.match_id });
         break;
@@ -418,6 +427,69 @@ check(
   "another account replaying that proof is not signed in as the wallet's account",
   answer.reason,
 );
+
+// ---- guns nobody may carry, and the trigger against the actions -----------------
+// A loadout is chosen with the stake and the server says what it hands over:
+// an optic the gun cannot carry is that gun's own, and a pistol is nobody's
+// primary. Then whatever the trigger says, a bolt action fires once for each
+// working of its bolt, a pistol once for each pull, and a gun being brought up
+// fires nothing.
+const armed = new Wire('Armed');
+await armed.connect();
+armed.send({ t: 'queue', map: 'arena', tier_dollars: 1, loadout: { primary: 'sniper', optic: 'red_dot' } });
+for (let i = 0; i < 200 && !armed.me; i += 1) await sleep(100);
+check(
+  armed.loadout?.primary === 'sniper' && armed.loadout?.optic === 'x4',
+  'a sniper rifle asked for with a red dot is handed over with its own scope',
+  JSON.stringify(armed.loadout),
+);
+for (let i = 0; i < 600 && (armed.startsInMs ?? 1) > 0; i += 1) await sleep(100);
+await sleep(1500);
+/** Commands at the server's own rate for `seconds`, with `buttons` from
+ *  each command's index; the shots the server says came of it. */
+async function hold(wire, seconds, buttons) {
+  const before = wire.shots;
+  const t = performance.now();
+  let n = 0;
+  const timer = setInterval(() => {
+    wire.seq += 1;
+    n += 1;
+    // Looking up, at nobody.
+    wire.send({ t: 'inputs', commands: [{ seq: wire.seq, forward: 0, right: 0, yaw: wire.me?.yaw ?? 0, pitch: 1.2, buttons: buttons(n) }] });
+  }, 1000 / 64);
+  await sleep(seconds * 1000);
+  clearInterval(timer);
+  await sleep(500);
+  return { fired: wire.shots - before, elapsed: (performance.now() - t) / 1000 };
+}
+const bolt = await hold(armed, 3, () => FIRE);
+check(
+  bolt.fired >= 1 && bolt.fired <= Math.ceil(bolt.elapsed / BOLT_INTERVAL) + 1,
+  'a bolt action with the trigger held fires once for each working of the bolt',
+  `${bolt.fired} shots in ${bolt.elapsed.toFixed(1)} s`,
+);
+await hold(armed, 1, () => SIDEARM);
+const held = await hold(armed, 2, () => SIDEARM | FIRE);
+check(held.fired === 1, 'a pistol with the trigger held fires once', `${held.fired} shots`);
+const pulled = await hold(armed, 2, (n) => SIDEARM | (n % 2 ? FIRE : 0));
+check(
+  pulled.fired >= 2 && pulled.fired <= Math.ceil(pulled.elapsed / PISTOL_INTERVAL) + 1,
+  'a pistol pulled every other command fires no faster than its trigger allows',
+  `${pulled.fired} shots in ${pulled.elapsed.toFixed(1)} s`,
+);
+const swapped = await hold(armed, 2, (n) => FIRE | (n % 2 ? SIDEARM : 0));
+check(swapped.fired === 0, 'changing guns every command with the trigger down fires nothing', `${swapped.fired} shots`);
+armed.close();
+const pistolero = new Wire('Pistolero');
+await pistolero.connect();
+pistolero.send({ t: 'queue', map: 'arena', tier_dollars: 1, loadout: { primary: 'pistol', optic: 'x4' } });
+for (let i = 0; i < 200 && !pistolero.loadout; i += 1) await sleep(100);
+check(
+  pistolero.loadout?.primary === 'rifle' && pistolero.loadout?.optic === 'red_dot',
+  'a pistol asked for as a primary is the rifle, with its own sight',
+  JSON.stringify(pistolero.loadout),
+);
+pistolero.close();
 
 // ---- tables nobody runs, and a name nobody should have ---------------------------
 const fussy = new Wire('\u0000\u0007'.repeat(10) + 'x'.repeat(480) + '\u202e');

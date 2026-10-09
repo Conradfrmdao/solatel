@@ -26,10 +26,11 @@
 //! Nothing arrives instantly. A round leaves at its weapon's muzzle velocity
 //! and on the way it falls, under real gravity, and slows, under air drag in
 //! proportion to the square of its speed. The velocities and the drag are the
-//! real cartridges', rounded: 9 mm from a pistol at 375 m/s, a 4.6 mm SMG round
-//! at 735, 5.56 mm from the rifle and the machine gun at 910 and 915, and
-//! .308 from the sniper rifle at 790, each slowing at the rate its bullet
-//! does. Every sight is zeroed - the round is launched a fraction of a degree
+//! real cartridges', rounded: .45 ACP from the M1911 at 255 m/s, 9 mm from the
+//! MP5's short barrel at 400, 7.62x39 mm from the AK-47 and the RPK's longer
+//! barrel at 715 and 745, and .308 from the M700 at 790, each slowing at the
+//! rate its bullet does - for each, half the air's density times the
+//! bullet's drag coefficient and cross-section over its mass. Every sight is zeroed - the round is launched a fraction of a degree
 //! up, so it crosses the line of sight at the zero distance - which is what a
 //! real rifle's sights are set to do, and why the middle of the crosshair is
 //! dead on at the range each gun is meant for.
@@ -38,10 +39,11 @@
 //!
 //! | | 50 m | 100 m | 200 m | 300 m |
 //! |---|---|---|---|---|
-//! | rifle | 57 ms, +2 cm | 116 ms, 0 | 246 ms, -15 cm | 392 ms, -49 cm |
+//! | rifle | 72 ms, +3 cm | 149 ms, 0 | 317 ms, -25 cm | 506 ms, -81 cm |
+//! | machine gun | 69 ms, +2 cm | 143 ms, 0 | 304 ms, -23 cm | 486 ms, -75 cm |
 //! | sniper | 64 ms, +2 cm | 131 ms, 0 | 272 ms, -18 cm | 423 ms, -57 cm |
-//! | SMG | 72 ms, 0 | 153 ms, -6 cm | 344 ms, -41 cm | |
-//! | pistol | 143 ms, -5 cm | 305 ms, -33 cm | | |
+//! | SMG | 129 ms, 0 | 267 ms, -18 cm | 572 ms, -115 cm | |
+//! | pistol | 201 ms, -10 cm | 410 ms, -61 cm | | |
 //!
 //! The drop is the smaller half of it. A player running across the line of
 //! fire at eight metres a second covers two metres while a .308 round crosses
@@ -73,11 +75,10 @@ const fn ticks(seconds: f32) -> u32 {
 
 /// Which gun.
 ///
-/// Named by what each is rather than after a real model: the rifle is an
-/// M4-pattern carbine, the SMG an MP7-pattern one, the machine gun an
-/// M249-pattern light machine gun, the sniper rifle a bolt-action .308 in the
-/// pattern of an M24, and the pistol a 9 mm service pistol - each built in
-/// code, like the rifle always was.
+/// Named on the wire by what each is, and drawn as a real one (the client's
+/// `guns.js`): the rifle an AK-47, the SMG an MP5, the machine gun an RPK,
+/// the sniper rifle a bolt-action M700 in .308 and the pistol an M1911. Their
+/// rounds fly as those guns' cartridges do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Weapon {
@@ -146,7 +147,7 @@ pub struct Stats {
 // 0.31 s, 0.38 s, 0.44 s and 1.25 s. Each falls off with range at its own
 // pace: the SMG fastest, the machine gun least, the sniper rifle never. So
 // the SMG wins up close, the rifle in the middle, the machine gun at range
-// and for as long as its hundred rounds last, and the sniper rifle wherever
+// and for as long as its seventy-five rounds last, and the sniper rifle wherever
 // its owner can put a round on a head.
 
 const PISTOL: Stats = Stats {
@@ -156,8 +157,8 @@ const PISTOL: Stats = Stats {
     magazine: 15,
     reload_ticks: ticks(1.5),
     draw_ticks: ticks(0.35),
-    muzzle_velocity: 375.0,
-    drag: 0.0026,
+    muzzle_velocity: 255.0,
+    drag: 0.0009,
     zero: 25.0,
     range: 150.0,
     bands: &[
@@ -173,8 +174,8 @@ const SMG: Stats = Stats {
     magazine: 30,
     reload_ticks: ticks(1.9),
     draw_ticks: ticks(0.45),
-    muzzle_velocity: 735.0,
-    drag: 0.0022,
+    muzzle_velocity: 400.0,
+    drag: 0.0013,
     zero: 50.0,
     range: 250.0,
     bands: &[
@@ -191,8 +192,8 @@ const RIFLE: Stats = Stats {
     magazine: 30,
     reload_ticks: ticks(2.2),
     draw_ticks: ticks(0.55),
-    muzzle_velocity: 910.0,
-    drag: 0.0011,
+    muzzle_velocity: 715.0,
+    drag: 0.0012,
     zero: 100.0,
     range: 450.0,
     bands: &[
@@ -208,11 +209,13 @@ const LMG: Stats = Stats {
     name: "Machine gun",
     automatic: true,
     fire_ticks: 7,
-    magazine: 100,
-    reload_ticks: ticks(5.0),
+    // An RPK's drum: seventy-five rounds, and a drum is quicker to change
+    // than a belt.
+    magazine: 75,
+    reload_ticks: ticks(4.0),
     draw_ticks: ticks(0.8),
-    muzzle_velocity: 915.0,
-    drag: 0.0011,
+    muzzle_velocity: 745.0,
+    drag: 0.0012,
     zero: 100.0,
     range: 450.0,
     bands: &[
@@ -515,14 +518,14 @@ mod tests {
         // The figures in the module's table, within a centimetre and a
         // couple of milliseconds: if these move, the table is wrong.
         let rifle = flight(Weapon::Rifle, &[200.0, 300.0]);
-        assert!((rifle[0].0 + 0.15).abs() < 0.01, "rifle at 200 m: {:?}", rifle[0]);
-        assert!((rifle[1].0 + 0.49).abs() < 0.01, "rifle at 300 m: {:?}", rifle[1]);
-        assert!((rifle[1].1 - 0.392).abs() < 0.003, "rifle at 300 m: {:?}", rifle[1]);
+        assert!((rifle[0].0 + 0.25).abs() < 0.01, "rifle at 200 m: {:?}", rifle[0]);
+        assert!((rifle[1].0 + 0.81).abs() < 0.01, "rifle at 300 m: {:?}", rifle[1]);
+        assert!((rifle[1].1 - 0.506).abs() < 0.003, "rifle at 300 m: {:?}", rifle[1]);
         let sniper = flight(Weapon::Sniper, &[300.0]);
         assert!((sniper[0].0 + 0.57).abs() < 0.01, "sniper at 300 m: {:?}", sniper[0]);
         assert!((sniper[0].1 - 0.423).abs() < 0.003, "sniper at 300 m: {:?}", sniper[0]);
         let pistol = flight(Weapon::Pistol, &[100.0]);
-        assert!((pistol[0].0 + 0.33).abs() < 0.01, "pistol at 100 m: {:?}", pistol[0]);
+        assert!((pistol[0].0 + 0.61).abs() < 0.01, "pistol at 100 m: {:?}", pistol[0]);
     }
 
     #[test]

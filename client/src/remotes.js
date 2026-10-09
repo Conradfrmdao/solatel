@@ -1029,20 +1029,24 @@ export class Remotes {
     }
 
     this._placeRifle(player, dir);
-    // A pistol is held in both hands, the left under the right: the poses
-    // were made for a rifle, whose handguard is out where a pistol has
-    // nothing, so the left hand is put on it.
-    if (player.weapon === 'pistol') {
-      this._reachLeft(player, _reach.fromArray(points.support).applyMatrix4(_m), 1);
-    }
+    // The left hand onto this gun's own support - under its handguard, or a
+    // pistol's under the right hand. The poses were made for the rifle the
+    // game started with, whose handguard was not where any of these guns'
+    // is, so the hand is put where the gun says.
+    this._reachLeft(player, _reach.fromArray(points.support).applyMatrix4(_m), 1, true);
   }
 
   /** The left hand towards `goal` by `weight`, the arm solved to reach it
-   *  with the elbow hanging. */
-  _reachLeft(player, goal, weight) {
+   *  with the elbow hanging. With `palm`, it is the palm that goes there
+   *  rather than the wrist. */
+  _reachLeft(player, goal, weight, palm = false) {
     const { bones } = player;
     if (!bones.armL || !bones.foreArmL || !bones.handL || weight <= 0.001) return;
     bones.handL.getWorldPosition(_hand);
+    if (palm) {
+      palms(bones, _a, _b);
+      goal = _goal.copy(goal).sub(_b).add(_hand);
+    }
     _hand.lerp(goal, weight);
     solveLeg(bones.armL, bones.foreArmL, bones.handL, _hand, _down);
   }

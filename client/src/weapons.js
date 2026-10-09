@@ -48,8 +48,8 @@ export const RIFLE = {
    *  that the support hand and its forearm are in the frame: any lower and
    *  the bottom of the screen cuts the arm off at the wrist. */
   hip: {
-    position: [0.27, -0.25, -0.45],
-    rotation: [-0.03, 0.085, 0],
+    position: [0.17, -0.18, -0.4],
+    rotation: [0, 0.04, 0],
   },
 
   /**
@@ -156,6 +156,26 @@ export const RIFLE = {
   flashSeconds: 0.04,
 
   /**
+   * The gun's own parts at work (`userData.parts` of the model), in metres
+   * along the gun's own axes - +Y up, +Z back - and radians: what runs back
+   * with a shot and how quickly it comes home, how far the trigger is
+   * pulled, which way the magazine leaves for a reload, and how far the
+   * action is worked at the end of one. The AK's carrier and handle run
+   * back the length of their stroke.
+   */
+  /** How a reload holds the gun: dropped and drawn in (metres), the muzzle
+   *  up, turned in, and canted clockwise so the magazine well faces the left
+   *  hand (radians) - as an envelope over the whole reload. */
+  reloadPose: { drop: 0.04, back: 0.03, pitch: 0.12, yaw: 0.05, roll: -0.45 },
+
+  action: {
+    bolt: { back: 0.075, seconds: 0.075 },
+    trigger: 0.3,
+    magazine: [0, -0.22, -0.07],
+    charge: 0.075,
+  },
+
+  /**
    * The arms, in the viewmodel camera's space (metres; +X right, +Y up, -Z
    * ahead). Each hangs from `shoulder` - below the bottom of the screen, so
    * no shoulder or upper arm is ever seen and the forearm comes up into the
@@ -240,8 +260,8 @@ export const PISTOL = variant(RIFLE, {
   name: 'pistol',
   boreHeight: 0.066,
   muzzleFace: -0.27,
-  hip: { position: [0.17, -0.19, -0.42], rotation: [-0.02, 0.07, 0] },
-  ads: { eyeRelief: 0.3, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
+  hip: { position: [0.11, -0.13, -0.4], rotation: [0.01, 0.025, 0] },
+  ads: { eyeRelief: 0.42, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
   sway: { position: 0.03, rotation: 0.4 },
   recoil: {
     back: 0.035,
@@ -256,6 +276,10 @@ export const PISTOL = variant(RIFLE, {
     cameraRecovery: 18,
   },
   flashSeconds: 0.035,
+  // The slide runs back and the hammer falls and is cocked again by it; a
+  // reload ends with the slide racked.
+  reloadPose: { drop: 0.04, back: 0.02, pitch: 0.28, yaw: 0.05, roll: -0.3 },
+  action: { bolt: { back: 0.03, seconds: 0.07 }, hammer: 0.7, trigger: 0.25, magazine: [0, -0.18, 0.03], charge: 0.03 },
   arms: {
     right: { shoulder: [0.24, -0.5, 0.05], elbow: [0.9, -0.7, 0.2] },
     left: { shoulder: [-0.12, -0.5, 0.0], elbow: [-0.9, -0.8, 0.1] },
@@ -270,7 +294,7 @@ export const PISTOL = variant(RIFLE, {
 export const SMG = variant(RIFLE, {
   name: 'smg',
   muzzleFace: -1.52,
-  hip: { position: [0.25, -0.24, -0.42], rotation: [-0.03, 0.08, 0] },
+  hip: { position: [0.16, -0.17, -0.38], rotation: [0, 0.04, 0] },
   ads: { duration: 0.15 },
   recoil: {
     back: 0.028,
@@ -285,6 +309,9 @@ export const SMG = variant(RIFLE, {
     cameraRecovery: 18,
   },
   flashSeconds: 0.03,
+  // An MP5's cocking handle does not move when it fires; it is pulled back
+  // and slapped home at the end of a reload.
+  action: { bolt: null, trigger: 0.3, magazine: [0, -0.2, -0.05], charge: 0.06 },
   casings: { port: [0.08, 0.08, 0.05], radius: 0.0027, length: 0.03 },
   smoke: { size: [0.05, 0.32], opacity: 0.22 },
 });
@@ -294,7 +321,7 @@ export const SMG = variant(RIFLE, {
 export const LMG = variant(RIFLE, {
   name: 'lmg',
   muzzleFace: -3.35,
-  hip: { position: [0.29, -0.27, -0.47], rotation: [-0.035, 0.09, 0] },
+  hip: { position: [0.17, -0.18, -0.4], rotation: [0, 0.04, 0] },
   ads: { duration: 0.3, swayScale: 0.35 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
   bob: { amount: 0.014 },
@@ -311,6 +338,7 @@ export const LMG = variant(RIFLE, {
     cameraRecovery: 14,
   },
   flashSeconds: 0.045,
+  action: { bolt: { back: 0.075, seconds: 0.075 }, trigger: 0.3, magazine: [0, -0.26, -0.04], charge: 0.075 },
   casings: { port: [0.1, 0.0, 0.05], lift: [0.9, 1.3], radius: 0.0029, length: 0.045 },
 });
 
@@ -319,7 +347,7 @@ export const LMG = variant(RIFLE, {
 export const SNIPER = variant(RIFLE, {
   name: 'sniper',
   muzzleFace: -3.6,
-  hip: { position: [0.28, -0.26, -0.46], rotation: [-0.03, 0.09, 0] },
+  hip: { position: [0.17, -0.18, -0.42], rotation: [0, 0.035, 0] },
   ads: { duration: 0.3, swayScale: 0.25 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
   recoil: {
@@ -335,7 +363,10 @@ export const SNIPER = variant(RIFLE, {
     cameraRecovery: 8,
   },
   flashSeconds: 0.06,
-  casings: { port: [0.1, 0.1, -0.05], radius: 0.006, length: 0.051, delay: 0.55, seconds: 1.4 },
+  // The bolt worked by hand after each shot: lifted, run back - which is when
+  // the case comes out, `casings.delay` - run home and turned down.
+  action: { bolt: null, boltAction: { after: 0.32, lift: 1.05, back: 0.085 }, trigger: 0.25, magazine: [0, -0.12, 0], charge: 0 },
+  casings: { port: [0.1, 0.1, -0.05], radius: 0.006, length: 0.051, delay: 0.52, seconds: 1.4 },
   smoke: { size: [0.09, 0.55], opacity: 0.32 },
 });
 
@@ -356,22 +387,36 @@ const OPTIC_FEEL = {
 };
 
 /**
- * The feel of `weapon` carrying `optic`, with the sights read off the model
- * that was built for it (`sight`, from `buildGun`): the line the eye aims
- * down, and how much the view narrows - by the optic's own magnification,
- * as the shared table states it.
+ * The feel of `weapon` carrying `optic`, with everything about the gun itself
+ * read off the model that was built for it (`buildGun`): the line the eye
+ * aims down (`sight`), and where the muzzle, the ejection port and the left
+ * hand's place are (`points`) - and how much the view narrows, by the
+ * optic's own magnification, as the shared table states it.
  */
-export function feelFor(weapon, optic, sight, magnification) {
+export function feelFor(weapon, optic, sight, magnification, points) {
   const base = GUNS[weapon] ?? RIFLE;
   const look = OPTIC_FEEL[optic] ?? OPTIC_FEEL.red_dot;
+  const landmarks = points
+    ? {
+        boreHeight: points.muzzle[1],
+        muzzleFace: points.muzzle[2],
+        casings: { ...base.casings, port: points.port },
+        arms: { ...base.arms, leftPalm: points.support },
+      }
+    : {};
   return {
     ...base,
+    ...landmarks,
     optic: undefined,
     ads: {
       ...base.ads,
       frontSight: sight.front,
       rearSight: sight.rear,
-      eyeRelief: look.eyeRelief ?? base.ads.eyeRelief,
+      // From the cheek on the stock to the back of the sights, where the gun
+      // has a stock; otherwise the optic's own, or the gun's.
+      eyeRelief: points?.cheek !== undefined
+        ? (points.cheek - sight.rear[1]) * base.scale
+        : look.eyeRelief ?? base.ads.eyeRelief,
       zoom: 1 / magnification,
       weaponZoom: look.weaponZoom,
       duration: base.ads.duration + look.slower,

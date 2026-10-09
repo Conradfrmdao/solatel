@@ -5,9 +5,10 @@ where, and under what terms. It is not optional paperwork: Solatel charges real
 money to play, which makes shipping an asset we do not have commercial rights to
 a legal problem rather than an etiquette one.
 
-**No asset is shipped without a recorded licence.** The rifle, which had none,
-has been replaced by one built in code. The yard map's terms are Conrad's word,
-recorded below, and are still worth finding in writing.
+**No asset is shipped without a recorded licence.** The first rifle, which had
+none, was replaced by one built in code, and that by the CC0 guns below. The
+yard map's terms are Conrad's word, recorded below, and are still worth
+finding in writing.
 
 Licence text embedded in a `.glb` lives in its `asset.extras` field. To re-check
 a file's own claim about itself, or all of them at once:
@@ -137,16 +138,36 @@ mesh simplified to 34k triangles. The terms are also written into the file's
 This replaces "Low Poly Soldier -Free" by manoeldarochadeoliveira (CC-BY-4.0),
 which is no longer used anywhere in the game.
 
-## Weapon — built in code, `client/src/rifle.js`
+## Weapons — `assets/guns/`
 
-**Solatel's own work; no third-party asset.** The rifle is an M4-pattern
-carbine made of extruded side profiles and turned sections in code, the way
-the vehicles in `props.js` are. It replaced "Assault Rifle" by Zsky from
-Sketchfab, which shipped with no licence text and for which no written grant
-was ever found; that file has been deleted from the repository and nothing
-loads it. It was built in the old model's frame and units so that everything
-measured against it - the sights, the grip, the magazine, the ejection port -
-still lines up, but none of its geometry was copied.
+**CC0 1.0 (public domain).** No attribution is required and redistribution is
+allowed, commercially included; the sources are recorded here so the
+originals can be found, and each file's `asset.extras` says the same.
+
+- **The AK-47, the MP5, the M700 and the M1911** - `ak47.glb`, `mp5.glb`,
+  `m700.glb`, `m1911.glb` - are from Stein Games' [Free Classic Weapons
+  Pack](https://stein-indie.itch.io/classic-weapons-pack) v1.1, whose own
+  `license.txt` reads "The license is CC0 1.0 ... You don't need to give
+  credit". The page also states the models carry no logos or trademarks.
+- **The scope** of the 3x and 4x optics - `optics.glb` - is cut out of the
+  sniper rifle in 3DModelsCC0's [Guns & Explosives
+  pack](https://3dmodelscc0.itch.io/free-cc0-guns-explosives-pack), CC0.
+
+`scripts/build-guns.sh` records everything done to them: converted from FBX,
+cut into rigid parts along the bones they were skinned to (nothing is
+skinned in the game), moved into the game's frame, their textures resized
+(colour 2048 px, the rest 1024) and re-encoded as KTX2 - Stein's normal maps
+turned from DirectX's convention to OpenGL's and their packed roughness,
+metalness and occlusion repacked in glTF's order - and the scope's sheet
+cropped to the part the scope uses. **The machine gun is a modification**:
+the AK-47 made an RPK, its barrel lengthened between the gas block and the
+front sight, its magazine cut down to a feed throat, and a drum and a folded
+bipod added - those last two Solatel's own, turned in code and textured from
+the AK's own sheet. The downloads themselves are not in this repository.
+
+These replaced guns built in code (`rifle.js` and the first `guns.js`),
+which were Solatel's own and are deleted; they in turn replaced "Assault
+Rifle" by Zsky from Sketchfab, which shipped with no licence and is long gone.
 
 ## Photographs, sky and foliage — `assets/photo/`, `assets/sky/`
 

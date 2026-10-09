@@ -68,7 +68,7 @@ const OPTIC_NAMES = { irons: 'Iron sights', red_dot: 'Red dot', x2: '2x', x3: '3
 const GUN_BLURB = {
   smg: 'Fastest kill up close. Falls off quickly.',
   rifle: 'The all-rounder. Good from ten metres to a hundred.',
-  lmg: 'A hundred rounds, holds its damage at range. Slow to reload.',
+  lmg: 'A 75-round drum, holds its damage at range. Slow to reload.',
   sniper: 'One round to the head kills. Lead your target.',
 };
 
@@ -1387,8 +1387,12 @@ const TEMPLATE = `
           buildings, stairs and walls of our own.</li>
         <li>The yard, and the vehicles and props dressing the facility, are from
           a low-poly map pack by ResoForge, repainted by Solatel.</li>
-        <li>Soldier and animations from <a href="https://www.mixamo.com" target="_blank" rel="noopener">Adobe Mixamo</a>.
-          The rifle is built in code by Solatel.</li>
+        <li>Soldier and animations from <a href="https://www.mixamo.com" target="_blank" rel="noopener">Adobe Mixamo</a>.</li>
+        <li>The AK-47, MP5, M700 and M1911 from Stein Games'
+          <a href="https://stein-indie.itch.io/classic-weapons-pack" target="_blank" rel="noopener">Free Classic Weapons Pack</a>,
+          and the rifle scope from 3DModelsCC0's
+          <a href="https://3dmodelscc0.itch.io/free-cc0-guns-explosives-pack" target="_blank" rel="noopener">Guns &amp; Explosives pack</a>
+          (both CC0). The RPK is Solatel's, made from the AK-47.</li>
         <li>Lettering in <a href="https://github.com/jpt/barlow" target="_blank" rel="noopener">Barlow</a> and
           <a href="https://github.com/Omnibus-Type/Saira" target="_blank" rel="noopener">Saira Condensed</a>; the
           wordmark is drawn from <a href="https://github.com/theleagueof/orbitron" target="_blank" rel="noopener">Orbitron</a>

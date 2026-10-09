@@ -41,7 +41,7 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { buildGun } from './guns.js';
+import { UNIT, buildGun } from './guns.js';
 import { HAND, holdMatrix, palms } from './grip.js';
 import { OPTICS, SIM, wrapAngle } from './sim.js';
 import { RIFLE, feelFor } from './weapons.js';
@@ -49,6 +49,10 @@ import { RIFLE, feelFor } from './weapons.js';
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
 const KEY_LIGHT = 2.4;
 const FILL_LIGHT = 1.7;
+/** How much of the sky the gun reflects, against the world's own share:
+ *  the guns are photographed metal and wood, and without it their steel
+ *  is black. */
+const ENVIRONMENT_LIGHT = 0.8;
 
 /** Frame-rate independent approach: the same curve at 30 fps as at 240. */
 function damp(current, target, rate, dt) {
@@ -269,6 +273,34 @@ const PUT_AWAY = 0.4;
 /** How far down and tipped a gun goes, out of sight, while guns change. */
 const LOWERED = { drop: 0.34, tip: 0.85 };
 
+/** A bolt action worked by hand, in seconds from when it starts: lifted,
+ *  back, home, and turned down. */
+const BOLT_WORK = { lifted: 0.08, back: 0.2, home: 0.32, done: 0.4 };
+
+/** Seconds a trigger stays pulled for a shot, and takes to come back. */
+const TRIGGER_PULL = 0.05;
+
+/** How far out on the gun's right the hand goes to work the action, in
+ *  metres from the part's own pivot. */
+const HANDLE_REACH = 0.03;
+
+const _turn = new THREE.Quaternion();
+const _xAxis = new THREE.Vector3(1, 0, 0);
+const _zAxis = new THREE.Vector3(0, 0, 1);
+const _shift = new THREE.Vector3();
+const _hand = new THREE.Vector3();
+const _support = new THREE.Vector3();
+const _shiftMatrix = new THREE.Matrix4();
+
+/** Every moving part of a gun back where it rests. */
+function restParts(model) {
+  for (const part of Object.values(model.userData.parts ?? {})) {
+    part.node.position.copy(part.position);
+    part.node.quaternion.copy(part.quaternion);
+    part.node.visible = true;
+  }
+}
+
 export class Viewmodel {
   constructor() {
     const rifle = RIFLE.ads;
@@ -317,6 +349,12 @@ export class Viewmodel {
     this.recoil = { back: 0, rise: 0, yaw: 0, roll: 0 };
     this.shotIndex = 0;
     this.lastShotAt = -Infinity;
+    /** When the action last cycled: the shot the moving parts answer to. */
+    this.cycleAt = -Infinity;
+    /** How far the left hand is moved off the gun's support this frame, in
+     *  model units: onto the magazine for a reload, onto the handle to work
+     *  the action. */
+    this.leftShift = new THREE.Vector3();
     /** Roll for the world camera, from recoil. Around the view axis only, so
      *  the middle of the screen - where shots go - does not move. */
     this.cameraRoll = 0;
@@ -396,6 +434,17 @@ export class Viewmodel {
     lights.sun += (sun - lights.sun) * ease;
     lights.key.intensity = KEY_LIGHT * (0.45 + 0.55 * lights.sun) * Math.min(1, 0.4 + 0.6 * lights.sky);
     lights.fill.intensity = FILL_LIGHT * lights.sky;
+    this.scene.environmentIntensity = (this.environmentBase ?? 1) * ENVIRONMENT_LIGHT * lights.sky;
+  }
+
+  /**
+   * The sky's light, for the gun's metal to catch: the map's own
+   * environment, dimmed with the shade the player is in (`setLight`).
+   */
+  setEnvironment(environment, intensity = 1) {
+    this.scene.environment = environment ?? null;
+    this.environmentBase = intensity;
+    this.scene.environmentIntensity = intensity * ENVIRONMENT_LIGHT * this.lights.sky;
   }
 
   _buildFlash() {
@@ -604,7 +653,7 @@ export class Viewmodel {
     let rig = this.rigs.get(key);
     if (rig) return rig;
     const model = buildGun(weapon, optic);
-    const config = feelFor(weapon, optic, model.userData.sight, OPTICS[optic] ?? 1.25);
+    const config = feelFor(weapon, optic, model.userData.sight, OPTICS[optic] ?? 1.25, model.userData.points);
     model.position.set(...config.modelOffset);
     model.scale.setScalar(config.scale);
     model.visible = false;
@@ -643,6 +692,7 @@ export class Viewmodel {
    *  that depends on the gun - the sights, the muzzle, the port, the cases,
    *  where the hands close - moved to it. */
   _useRig(rig) {
+    if (this.rig && this.rig !== rig) restParts(this.rig.model);
     this.rig = rig;
     this.config = rig.config;
     for (const other of this.rigs.values()) other.model.visible = other === rig;
@@ -808,7 +858,12 @@ export class Viewmodel {
     this.root.updateMatrixWorld(true);
     const rifle = this.rifle.matrixWorld;
     for (const limb of this.arms) {
-      _target.multiplyMatrices(rifle, limb.grip);
+      if (limb.side === 'left' && this.leftShift.lengthSq() > 0) {
+        const { x, y, z } = this.leftShift;
+        _target.multiplyMatrices(rifle, _shiftMatrix.makeTranslation(x, y, z).multiply(limb.grip));
+      } else {
+        _target.multiplyMatrices(rifle, limb.grip);
+      }
       _target.decompose(_wrist, _grip, _scaleOut);
 
       const reach = limb.upperLength + limb.lowerLength;
@@ -905,6 +960,7 @@ export class Viewmodel {
     this.cameraRoll += recoil.cameraRoll * side * scale;
 
     this.flash = this.config.flashSeconds;
+    this.cycleAt = this.time;
     // A different size and roll each time. Three identical frames in a burst
     // read as a decal being switched on and off; a little variation reads as
     // combustion, which is what it is.
@@ -1039,8 +1095,8 @@ export class Viewmodel {
       hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
-        - reload * 0.09 + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop,
-      hip.z + (ads.z - hip.z) * a + r.back + reload * 0.05,
+        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop,
+      hip.z + (ads.z - hip.z) * a + r.back + reload * c.reloadPose.back,
     );
     const hr = this.hipRotation;
     const ar = this.adsRotation;
@@ -1049,9 +1105,9 @@ export class Viewmodel {
     // must not, or they would leave the middle.
     this.root.rotation.set(
       hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch
-        + pitch * 0.05 * (1 - a) + reload * 0.32 - thrown * 0.7 - lowered * LOWERED.tip,
-      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + reload * 0.25,
-      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + reload * 0.75 + seat * 0.06,
+        + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.7 - lowered * LOWERED.tip,
+      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + reload * c.reloadPose.yaw,
+      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + reload * c.reloadPose.roll + seat * 0.06,
       'YXZ',
     );
 
@@ -1072,8 +1128,108 @@ export class Viewmodel {
     this.root.visible = !hidden;
     if (this.body) this.body.visible = !hidden;
 
+    this._workParts();
     this._poseArms();
     this._updateDebris(dt);
+  }
+
+  /**
+   * The gun's own parts (`userData.parts`, tuned by `action` in weapons.js):
+   * the bolt or slide back and home with each shot, a bolt action worked by
+   * hand after one, the trigger pulled; and for a reload the magazine out
+   * and a fresh one in, the left hand carrying it, and the action worked at
+   * the end. Drawn only - the server says when a shot happened and when a
+   * reload is done.
+   */
+  _workParts() {
+    this.leftShift.set(0, 0, 0);
+    const parts = this.rig?.model.userData.parts;
+    const action = this.config.action;
+    if (!parts || !action) return;
+    const since = this.time - this.cycleAt;
+
+    let back = 0;
+    let lift = 0;
+    if (action.bolt && since < action.bolt.seconds) {
+      const f = since / action.bolt.seconds;
+      back = action.bolt.back * (f < 0.3 ? smooth(f / 0.3) : 1 - smooth((f - 0.3) / 0.7));
+    }
+    if (action.boltAction) {
+      const { after, lift: up, back: stroke } = action.boltAction;
+      const t = since - after;
+      if (t >= 0 && t < BOLT_WORK.done) {
+        lift = up * (t < BOLT_WORK.lifted ? smooth(t / BOLT_WORK.lifted)
+          : t < BOLT_WORK.home ? 1 : 1 - smooth((t - BOLT_WORK.home) / (BOLT_WORK.done - BOLT_WORK.home)));
+        back = stroke * (t < BOLT_WORK.lifted ? 0
+          : t < BOLT_WORK.back ? smooth((t - BOLT_WORK.lifted) / (BOLT_WORK.back - BOLT_WORK.lifted))
+            : t < BOLT_WORK.home ? 1 - smooth((t - BOLT_WORK.back) / (BOLT_WORK.home - BOLT_WORK.back)) : 0);
+      }
+    }
+
+    // A reload, in the fractions of it the server's clock gives.
+    const p = this.reloadProgress;
+    let out = 0;
+    let shown = true;
+    let carry = 0;
+    let charge = 0;
+    let atHandle = 0;
+    if (p !== null && p !== undefined) {
+      const span = (a, b) => smooth(Math.min(1, Math.max(0, (p - a) / (b - a))));
+      carry = span(0.04, 0.12);
+      out = span(0.12, 0.26);
+      if (p >= 0.26 && p < 0.42) {
+        // Away to the pouch for the next one, out of sight.
+        shown = false;
+        out = 1 + 0.6 * span(0.26, 0.34) * (1 - span(0.34, 0.42));
+      } else if (p >= 0.42) {
+        out = 1 - 0.88 * span(0.42, 0.56) - 0.12 * span(0.56, 0.62);
+      }
+      if (action.charge > 0) {
+        atHandle = span(0.62, 0.7) * (1 - span(0.82, 0.95));
+        charge = action.charge * span(0.7, 0.76) * (1 - span(0.76, 0.8));
+        carry *= 1 - span(0.62, 0.7);
+      } else {
+        carry *= 1 - span(0.62, 0.78);
+      }
+      back = Math.max(back, charge);
+    }
+
+    const bolt = parts.bolt;
+    if (bolt) {
+      bolt.node.position.copy(bolt.position);
+      bolt.node.position.z += back;
+      bolt.node.quaternion.copy(bolt.quaternion);
+      if (lift) bolt.node.quaternion.multiply(_turn.setFromAxisAngle(_zAxis, lift));
+    }
+    const pulled = since < TRIGGER_PULL ? 1 : Math.max(0, 1 - (since - TRIGGER_PULL) / TRIGGER_PULL);
+    if (parts.trigger) {
+      parts.trigger.node.quaternion.copy(parts.trigger.quaternion).multiply(_turn.setFromAxisAngle(_xAxis, -(action.trigger ?? 0) * pulled));
+    }
+    if (parts.hammer && action.hammer) {
+      // Down with the shot, cocked again as the slide runs back over it.
+      const fallen = action.bolt && since < action.bolt.seconds ? (since < action.bolt.seconds * 0.3 ? 1 : 1 - smooth((since - action.bolt.seconds * 0.3) / (action.bolt.seconds * 0.4))) : 0;
+      parts.hammer.node.quaternion.copy(parts.hammer.quaternion).multiply(_turn.setFromAxisAngle(_xAxis, -action.hammer * fallen));
+    }
+    const magazine = parts.magazine;
+    const [mx, my, mz] = action.magazine;
+    if (magazine) {
+      magazine.node.position.copy(magazine.position).add(_shift.set(mx * out, my * out, mz * out));
+      magazine.node.visible = shown;
+    }
+
+    // The left hand: off the support onto the magazine, or the handle.
+    const points = this.rig.model.userData.points;
+    if (carry > 0 && points?.magazine) {
+      _hand.fromArray(points.magazine).add(_shift.set(mx * out, my * out, mz * out).divideScalar(UNIT));
+      this.leftShift.copy(_hand.sub(_support.fromArray(points.support)).multiplyScalar(carry));
+    }
+    if (atHandle > 0 && bolt) {
+      // The handle stands out on the gun's right; the hand goes over to it.
+      bolt.node.getWorldPosition(_hand);
+      this.rifle.worldToLocal(_hand);
+      _hand.x += HANDLE_REACH / UNIT;
+      this.leftShift.lerp(_hand.sub(_support.fromArray(points.support)), atHandle);
+    }
   }
 
   /** How far the view is into a magnified optic's own picture, 0 to 1: the

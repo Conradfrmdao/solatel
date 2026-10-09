@@ -32,6 +32,7 @@ import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
 import { BRUSHES, PRIMARIES, SIM, SPAWNS, WEAPONS, loadSim, roundPath, selectMap, spawnFacing } from './sim.js';
 import { portraits } from './portraits.js';
+import { loadGuns } from './guns.js';
 import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
@@ -51,6 +52,11 @@ import { asset, clientBuild } from './assets.js';
  * - widescreen shows more to the sides rather than cropping the top and bottom.
  */
 const DEFAULT_HORIZONTAL_FOV = 90;
+/** The gun in hand is drawn with a view of its own, this wide across,
+ *  whatever the player has set the world's to: at 90 degrees and more the
+ *  perspective stretches a gun a hand's breadth from the eye into a wedge.
+ *  The sights are on the view's axis, so this moves nothing aimed. */
+const WEAPON_HORIZONTAL_FOV = 70;
 const FOV_KEY = 'solatel.fov';
 /** Where the old "extra shading" box kept its answer, read once so a player
  *  who had turned ambient occlusion on starts on the level that has it. */
@@ -208,11 +214,17 @@ async function boot() {
   const link = new Link(clientBuild(), storedName());
   await link.firstWelcome;
 
-  say('loading the weapon…');
+  // The guns (`guns.js`), with the soldier's file fetched alongside: the
+  // soldier is put together after them, because everybody is drawn holding
+  // one, but its download need not wait.
+  say('loading the weapons…');
+  const soldierUrl = asset('assets/characters/soldier.glb');
+  const soldierFetched = fetch(soldierUrl).then((r) => r.arrayBuffer()).catch(() => null);
+  await loadGuns();
   await viewmodel.load();
   say('loading the soldier…');
-  // Every gun is built in code (`guns.js`), for them and for this player.
-  const soldier = await remotes.load(asset('assets/characters/soldier.glb'));
+  await soldierFetched;
+  const soldier = await remotes.load(soldierUrl);
   // And the same soldier's arms in first person, in the same pose.
   viewmodel.setArms(soldier, remotes.clips.aim);
 
@@ -372,6 +384,8 @@ async function boot() {
     viewmodel.setLoadout(local.loadout);
     armedWith = local.loadout;
     await world.load(mapName);
+    // The gun in hand reflects the same sky as everything else.
+    viewmodel.setEnvironment(scene.environment, scene.environmentIntensity);
 
     // The far plane is set from the map rather than left at a constant, and
     // kept as tight as the map allows. Depth precision is spent between near
@@ -513,9 +527,8 @@ async function boot() {
     camera.aspect = aspect;
     camera.fov = verticalFov(horizontalFov, aspect);
     camera.updateProjectionMatrix();
-    // The weapon shares the view's angle, so it sits in the same perspective
-    // as the world rather than in one of its own.
-    viewmodel.setView(aspect, camera.fov);
+    // The weapon has a view of its own (`WEAPON_HORIZONTAL_FOV`).
+    viewmodel.setView(aspect, verticalFov(WEAPON_HORIZONTAL_FOV, aspect, viewmodel.weaponZoom));
   };
   window.addEventListener('resize', resize);
   resize();
@@ -972,7 +985,7 @@ async function boot() {
       camera.updateProjectionMatrix();
     }
     input.lookScale = zoom;
-    const weaponFov = verticalFov(horizontalFov, camera.aspect, viewmodel.weaponZoom);
+    const weaponFov = verticalFov(WEAPON_HORIZONTAL_FOV, camera.aspect, viewmodel.weaponZoom);
     if (Math.abs(weaponFov - viewmodel.camera.fov) > 1e-4) {
       viewmodel.setView(camera.aspect, weaponFov);
     }
