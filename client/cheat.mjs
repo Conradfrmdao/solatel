@@ -38,7 +38,7 @@
 //     name five hundred characters long full of control characters;
 //   * guns nobody may carry - a sniper rifle with a red dot, a pistol as a
 //     primary - and the trigger held against the actions: a bolt action
-//     held on it, a pistol held on it and pulled every command, and the
+//     held on it, a pistol held and pulled every command, and the
 //     guns changed every command with the trigger down.
 //
 // And after all of that, an honest client must still be able to connect
@@ -470,7 +470,11 @@ check(
 );
 await hold(armed, 1, () => SIDEARM);
 const held = await hold(armed, 2, () => SIDEARM | FIRE);
-check(held.fired === 1, 'a pistol with the trigger held fires once', `${held.fired} shots`);
+check(
+  held.fired >= 2 && held.fired <= Math.ceil(held.elapsed / PISTOL_INTERVAL) + 1,
+  'a pistol with the trigger held fires at its own rate and no faster',
+  `${held.fired} shots in ${held.elapsed.toFixed(1)} s`,
+);
 const pulled = await hold(armed, 2, (n) => SIDEARM | (n % 2 ? FIRE : 0));
 check(
   pulled.fired >= 2 && pulled.fired <= Math.ceil(pulled.elapsed / PISTOL_INTERVAL) + 1,

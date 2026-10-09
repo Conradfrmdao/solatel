@@ -3817,10 +3817,27 @@ fn every_automatic_gun_fires_at_its_own_rate_and_no_faster() {
             "{weapon:?} fires every {every} ticks"
         );
     }
+
+    // The pistol too: held, it fires at the rate a finger could pull it.
+    let mut duel = Duel::new();
+    let sky = duel.body(duel.shooter).state.eye_position() + Vec3::new(0.0, 50.0, -1.0);
+    for _ in 0..seconds(0.5) {
+        duel.press(Buttons::SIDEARM, sky);
+    }
+    let pistol = Weapon::Pistol.stats().fire_ticks;
+    let before = duel.stats(duel.shooter).shots_fired;
+    for _ in 0..TICK_HZ {
+        duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
+    }
+    assert_eq!(
+        duel.stats(duel.shooter).shots_fired,
+        before + (TICK_HZ - 1) / pistol + 1,
+        "the pistol held fires every {pistol} ticks"
+    );
 }
 
 #[test]
-fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
+fn a_bolt_fires_once_a_pull_however_long_it_is_held() {
     let mut duel = Duel::armed(Loadout {
         primary: Weapon::Sniper,
         optic: Optic::X4,
@@ -3844,26 +3861,6 @@ fn a_bolt_or_a_pistol_fires_once_a_pull_however_long_it_is_held() {
     assert_eq!(
         duel.stats(duel.shooter).shots_fired,
         1 + 1 + (200 - 2) / bolt
-    );
-
-    // The pistol the same way, with its own rate.
-    duel.steps(seconds(1.5));
-    for _ in 0..seconds(0.5) {
-        duel.press(Buttons::SIDEARM, sky);
-    }
-    let before = duel.stats(duel.shooter).shots_fired;
-    for _ in 0..50 {
-        duel.press(Buttons::SIDEARM | Buttons::FIRE, sky);
-    }
-    assert_eq!(duel.stats(duel.shooter).shots_fired, before + 1);
-    for i in 0..60 {
-        let fire = if i % 2 == 0 { 0 } else { Buttons::FIRE };
-        duel.press(Buttons::SIDEARM | fire, sky);
-    }
-    let pistol = Weapon::Pistol.stats().fire_ticks;
-    assert_eq!(
-        duel.stats(duel.shooter).shots_fired,
-        before + 1 + 60 / pistol
     );
 }
 

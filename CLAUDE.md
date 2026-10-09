@@ -1985,7 +1985,10 @@ magazine, the reload, how long the gun takes to bring up, the round's muzzle
 velocity and drag, the zero, the range, and the damage bands. The SMG wins
 up close, the rifle in the middle, the machine gun at range for as long as
 its drum lasts, the sniper rifle wherever its owner can put a round on a
-head. The machine gun's 75-round drum and 4 s reload are the RPK's.
+head. The machine gun's 75-round drum is the RPK's, and so is a slow
+change of it: 5.5 s, the longest reload in the game, at Conrad's asking.
+The pistol is automatic, also his call, at the rate a finger could pull
+it - holding the trigger buys nothing a fast finger did not have.
 
 **Rounds fly.** Real gravity (9.81, not the players' heavier one), drag in
 proportion to the square of the speed, and the real cartridges' speeds and
