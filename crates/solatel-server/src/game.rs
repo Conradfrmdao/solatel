@@ -343,6 +343,8 @@ pub enum GameCommand {
         map: String,
         tier_dollars: i64,
         loadout: Loadout,
+        /// How they are dressed: anything, as long as it is one there is.
+        skin: u8,
     },
     /// Take them back out of it. No money has moved, so nothing is returned.
     LeaveQueue {
@@ -490,6 +492,8 @@ struct Connection {
     /// The guns they asked to carry, as the game allows them: the last
     /// they queued with, and what their next match gives them.
     loadout: Loadout,
+    /// How they asked to be dressed, likewise.
+    skin: u8,
 }
 
 impl Connection {
@@ -522,6 +526,10 @@ struct Body {
     last_input: InputCommand,
     /// The two guns, and what each is doing.
     arms: Arms,
+    /// How they are dressed, for everybody else's board (see
+    /// `solatel_protocol::net::SKINS`). Cosmetic: nothing reads it but the
+    /// board.
+    skin: u8,
     /// The body is being moved on a guess while its owner's commands are
     /// late. See [`GUESS_WINDOW_TICKS`].
     guess: Option<Guess>,
@@ -565,6 +573,7 @@ impl Body {
             last_applied_seq: 0,
             last_input: idle_input(state),
             arms: Arms::new(loadout),
+            skin: 0,
             guess: None,
             history: VecDeque::with_capacity(HISTORY_TICKS),
             staked: true,
@@ -1450,11 +1459,12 @@ impl Lobby {
 
     /// Put a paid player into a match.
     fn admit(&mut self, player_id: PlayerId, match_id: MatchId) {
-        // The guns they queued with: theirs for the whole of this life.
-        let loadout = self
+        // The guns they queued with: theirs for the whole of this life. And
+        // the way they are dressed, which is seen and changes nothing.
+        let (loadout, skin) = self
             .connections
             .get(&player_id)
-            .map(|c| c.loadout)
+            .map(|c| (c.loadout, c.skin))
             .unwrap_or_default();
         let Some(game) = self.matches.get_mut(&match_id) else {
             return;
@@ -1474,6 +1484,7 @@ impl Lobby {
         let mut body = Body::new(PlayerState::spawned_at(home), loadout);
         body.spawn = spawn;
         body.home = home;
+        body.skin = skin;
         game.bodies.insert(player_id, body);
         if let Some(connection) = self.connections.get_mut(&player_id) {
             connection.at = Whereabouts::Playing(match_id);
@@ -1739,6 +1750,12 @@ impl Lobby {
                         && let Some(connection) = self.connections.get(&player_id)
                     {
                         connection.send(started);
+                        // And who is in it, dressed how: the board is sent
+                        // when a match starts and when it changes, and this
+                        // page was not here for either.
+                        connection.send(ServerMsg::Scoreboard {
+                            entries: self.score_entries(match_id),
+                        });
                     }
                     // Asked again rather than repeated from memory. The new
                     // socket has been told nothing yet, the figure held here
@@ -1768,6 +1785,7 @@ impl Lobby {
                         outbound,
                         rtt_ms: 0.0,
                         loadout: Loadout::default(),
+                        skin: 0,
                     },
                 );
                 let _ = reply.send(JoinOutcome {
@@ -1891,6 +1909,7 @@ impl Lobby {
                 map,
                 tier_dollars,
                 loadout,
+                skin,
             } => {
                 let now = self.game_time();
                 // The name has to be one this build actually has, and the
@@ -1922,6 +1941,7 @@ impl Lobby {
                 }
                 // Asking again in line changes the guns and keeps the place.
                 connection.loadout = loadout.sanitized();
+                connection.skin = solatel_protocol::net::skin(skin);
                 // Queueing again for the same table does not move them to
                 // the back of their own line. A different map or a different
                 // stake is a different line, and they join the end of it.
@@ -3171,6 +3191,7 @@ impl Lobby {
                 damage_dealt: body.stats.damage_dealt,
                 alive: body.state.is_alive(),
                 winnings_micro_usd: body.winnings_micro_usd,
+                skin: body.skin,
             })
             .collect();
         entries.sort_by(|a, b| {

@@ -21,18 +21,20 @@ import * as THREE from 'three';
 import { buildPost } from './post.js';
 import { Quality } from './quality.js';
 import { Impacts } from './impacts.js';
+import { Blood } from './blood.js';
 import { DEATH_TIME_SCALE, Death } from './death.js';
 import { Clips, clipsSupported, clipsWanted, setClipsWanted } from './clips.js';
 import { setNatureDetail } from './nature.js';
-import { Hud } from './hud.js';
+import { Hud, LOW_HEALTH } from './hud.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
 import { Link, noteReferral, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
 import { BRUSHES, PRIMARIES, SIM, SPAWNS, WEAPONS, loadSim, roundPath, selectMap, spawnFacing } from './sim.js';
-import { portraits } from './portraits.js';
+import { portraits, soldierPortraits } from './portraits.js';
 import { loadGuns } from './guns.js';
+import { loadSkins, SKINS } from './skins.js';
 import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
@@ -57,6 +59,12 @@ const DEFAULT_HORIZONTAL_FOV = 90;
  *  perspective stretches a gun a hand's breadth from the eye into a wedge.
  *  The sights are on the view's axis, so this moves nothing aimed. */
 const WEAPON_HORIZONTAL_FOV = 70;
+
+/** A round landing this high above somebody's feet went into their head -
+ *  for how they are seen to take it, which is all this is used for. */
+const HEAD_HEIGHT = 1.45;
+
+const _into = new THREE.Vector3();
 const FOV_KEY = 'solatel.fov';
 /** Where the old "extra shading" box kept its answer, read once so a player
  *  who had turned ambient occlusion on starts on the level that has it. */
@@ -196,6 +204,7 @@ async function boot() {
 
   const world = new World(scene, renderer);
   const impacts = new Impacts(scene);
+  const blood = new Blood(scene);
   const remotes = new Remotes(scene);
   const viewmodel = new Viewmodel();
 
@@ -222,6 +231,9 @@ async function boot() {
   const soldierFetched = fetch(soldierUrl).then((r) => r.arrayBuffer()).catch(() => null);
   await loadGuns();
   await viewmodel.load();
+  // Where the soldier's cloth is, for the skins: small, and needed before
+  // anybody is drawn in one.
+  await loadSkins().catch((error) => console.warn('no skins', error));
   say('loading the soldier…');
   await soldierFetched;
   const soldier = await remotes.load(soldierUrl);
@@ -235,11 +247,16 @@ async function boot() {
   const menu = new Menu(document.getElementById('menu'));
   // Pictures of the guns, drawn from their models, for the menu's cards -
   // in the background: the menu works without them.
-  portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot'])).then((pictures) =>
-    menu.setGunPictures(pictures),
-  );
+  portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot']))
+    .then((pictures) => menu.setGunPictures(pictures))
+    // And the soldier in every skin, after the guns.
+    .then(() => soldierPortraits(soldier, remotes.clips.ready, SKINS.map((s) => s.id)))
+    .then((pictures) => menu.setSkinPictures(pictures));
   const hud = new Hud(hudRoot);
   const audio = new Audio();
+  // Every recording, fetched now so it is decoded by the first shot; nothing
+  // waits on it.
+  audio.preload();
   const death = new Death();
   // The last seconds of play, kept for F8. Off unless the player turned it on.
   const clips = new Clips();
@@ -301,12 +318,12 @@ async function boot() {
   // decides which world there will be.
   menu.setOffer(link.maps, link.tiers);
   menu.bindPlay(
-    (mapName, dollars, loadout) => {
+    (mapName, dollars, loadout, skin) => {
       // The click on play is a real gesture, so it is also where the
       // sound can be started: the match-found chime has to be heard by
       // somebody who has not clicked the world yet.
       audio.resume();
-      local.queue(mapName, dollars, loadout);
+      local.queue(mapName, dollars, loadout, skin);
       // The map's files, into the cache while the line forms.
       prefetchMap(mapName);
     },
@@ -380,8 +397,10 @@ async function boot() {
     menu.show(false);
     say(`loading ${mapName}…`);
     document.body.classList.remove('running');
-    // The guns this life is played with, in hand before the first frame.
+    // The guns this life is played with, in hand before the first frame,
+    // and the sleeves of the skin it is played in.
     viewmodel.setLoadout(local.loadout);
+    viewmodel.setSkin(local.skin ?? 0);
     armedWith = local.loadout;
     await world.load(mapName);
     // The gun in hand reflects the same sky as everything else.
@@ -453,7 +472,7 @@ async function boot() {
   if (options.has('debug')) {
     window.solatel = {
       THREE, link, local, input, world, remotes, viewmodel, scene, camera, SIM,
-      renderer, audio, hud, impacts, death, clips,
+      renderer, audio, hud, impacts, blood, death, clips,
       get composer() {
         return composer;
       },
@@ -585,6 +604,19 @@ async function boot() {
   // Read while handling messages, so they are a frame old - which is sixteen
   // milliseconds of listener movement, and inaudible.
   const forward = new THREE.Vector3(0, 0, -1);
+  /** Metres this player has walked since their last footfall. */
+  let ownStride = 0;
+  /** When the heart last beat for a player badly hurt. */
+  let heartAt = 0;
+  /** Where each shot in flight was fired from, by its key, for which way a
+   *  round that lands later went into somebody. */
+  const shotOrigins = new Map();
+  // Somebody else's round going by: its crack from where it passed, and an
+  // arc saying from where it was fired.
+  world.listenRounds(eye, (point, distance, speed, shooter) => {
+    audio.crack(point.toArray(), eye, forward, speed > 343, 1 - distance / 5);
+    hud.shotAt(performance.now(), remotes.positionOf(shooter));
+  });
   const tickDt = SIM.tickDt;
   let accumulator = 0;
   let previous = performance.now();
@@ -627,12 +659,13 @@ async function boot() {
             drawnFrom: from,
             from: message.from,
             velocity: message.velocity,
+            shooter: message.shooter,
           });
           // This player's own shot was already kicked, flashed and heard
           // when they fired it - see the predicted shots below. Everyone
           // else's is wherever the server says it was, which is what gives
           // a shot a direction and a distance.
-          audio.shot(message.from, eye, forward, message.weapon);
+          audio.shot(message.from, eye, forward, message.weapon, message.shooter);
           remotes.onShot(message.shooter);
         }
         // Where it came down, as the server says: dust off a wall, a mist
@@ -642,19 +675,48 @@ async function boot() {
         // from a second place - often the more useful one, because it is
         // where the shooter was aiming.
         const landing = message.t === 'shot_fired' ? message.landed : message.landing;
+        const key = `${message.shooter}:${message.shot}`;
+        if (message.t === 'shot_fired' && !landing) {
+          shotOrigins.set(key, message.from);
+          // A long-range firefight never lands some of its rounds anywhere
+          // this client hears of; the oldest are let go.
+          if (shotOrigins.size > 256) shotOrigins.delete(shotOrigins.keys().next().value);
+        }
         if (landing) {
-          const key = `${message.shooter}:${message.shot}`;
+          const origin = message.from ?? shotOrigins.get(key) ?? null;
+          shotOrigins.delete(key);
           const delay = message.t === 'shot_fired'
             ? flightSeconds(message.weapon, message.from, message.velocity, landing.at) - (mine ? link.rttMs / 1000 : 0)
             : 0;
           world.landRound(key, landing, Math.max(0, delay), mine, () => {
-            if (landing.struck) impacts.strike(message.from ?? landing.at, landing.at, landing.hit_player, camera.position);
+            if (landing.struck) impacts.strike(origin ?? landing.at, landing.at, landing.hit_player, camera.position);
             if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward);
+            if (landing.hit_player) {
+              // Into somebody else: blood out of them, the round's blow, a
+              // cry in their own voice, and the body jolted by it. Whose body
+              // is whoever is drawn there; this player's own hits arrive as
+              // `damaged`.
+              // Not into this player: their own body is not drawn, and
+              // somebody standing beside them is not who was hit.
+              const mineToTake =
+                Math.hypot(landing.at[0] - eye.x, landing.at[1] - (eye.y - 0.7), landing.at[2] - eye.z) < 1.2;
+              const victim = mineToTake ? null : remotes.struck(landing.at);
+              if (victim && origin) {
+                const into = _into.set(landing.at[0] - origin[0], 0, landing.at[2] - origin[2]);
+                const head = landing.at[1] - victim.feet > HEAD_HEIGHT;
+                blood.hit(landing.at, origin, victim.feet, camera.position, head);
+                remotes.hit(victim.id, into, head);
+                audio.fleshHit(landing.at, eye, forward);
+                audio.pain(landing.at, eye, forward, victim.id);
+              }
+            }
           });
           if (mine && landing.hit_player) audio.hitConfirmed(false);
         }
       } else if (message.t === 'damaged') {
         audio.hurt();
+        audio.ownPain(local.id);
+        hud.bleed(now, message.amount);
         // Which way it came from, held on screen as the player turns, and a
         // flinch: the view rolls a little and comes back. A roll only - the
         // middle of the screen, where a shot goes, stays where it was aimed.
@@ -686,6 +748,8 @@ async function boot() {
         menu.walletRefused(message.reason);
       } else if (message.t === 'scoreboard') {
         hud.setScores(message.entries);
+        // Who is dressed how: the board is what says.
+        remotes.dress(message.entries);
       } else if (message.t === 'match_found') {
         audio.matchFound();
       } else if (message.t === 'exploded') {
@@ -702,6 +766,17 @@ async function boot() {
         }
       } else if (message.t === 'killed') {
         hud.addKill(message);
+        // Somebody else down: they fall away from whoever killed them, cry
+        // out, hit the ground, and bleed where they lie.
+        if (message.victim !== local.id) {
+          const killer = message.killer === local.id ? eye : remotes.positionOf(message.killer);
+          const down = remotes.kill(message.victim, killer, message.headshot);
+          if (down) {
+            blood.death(down.at, down.fall);
+            audio.death([down.at.x, down.at.y + 1.2, down.at.z], eye, forward, message.victim);
+          }
+        }
+        if (message.killer === local.id) hud.killed(message.headshot);
         // This player's own death: kept, with where the killer was as last
         // drawn, for the few seconds of it that are played out.
         if (message.victim === local.id) death.noteKilled(message, remotes.positionOf(message.killer));
@@ -786,8 +861,9 @@ async function boot() {
 
     const landing = local.takeLanding();
     if (landing > 0) {
-      audio.land(landing);
+      audio.land(landing, world.surfaceAt(eye.x, eye.y - SIM.halfExtentY - (local.eyeOffset ?? SIM.eyeOffset), eye.z));
       viewmodel.onLanded(landing);
+      ownStride = 0;
     }
 
     // A match has started for this client. The map arrives with it, and
@@ -795,6 +871,8 @@ async function boot() {
     // empty scene until it is in.
     if (local.matchId && local.matchId !== enteredMatch && !entering && !link.parked) {
       enteredMatch = local.matchId;
+      blood.clear();
+      shotOrigins.clear();
       // Loading a map compiles shaders for seconds; none of that is a
       // judgement on the machine.
       quality.reset(now);
@@ -932,6 +1010,7 @@ async function boot() {
       const slow = dt * DEATH_TIME_SCALE;
       world.update(slow);
       impacts.update(slow);
+      blood.update(slow);
       world.followWithShadows(dying.position);
       world.positionSky(dying.position, camera.far);
       remotes.update(now, slow, local.id, dying.position, camera);
@@ -958,6 +1037,7 @@ async function boot() {
     local.tickTimers(dt);
     world.update(dt);
     impacts.update(dt);
+    blood.update(dt);
     // A debug camera (`cameraOverride`) takes the shadows and the sky with
     // it, so a picture taken from it shows what a player standing there sees.
     const viewer = window.solatel?.cameraOverride ? camera.position : eye;
@@ -967,6 +1047,30 @@ async function boot() {
     world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position, camera);
     for (const { at, seconds } of remotes.takeReloads()) audio.reloadAt(at, eye, forward, seconds);
+    // Everybody else's footsteps, by what they walk on, and this player's own.
+    for (const step of remotes.takeSteps()) {
+      const surface = world.surfaceAt(step.at[0], step.at[1], step.at[2]);
+      if (step.landed) audio.landAt(step.at, eye, forward, 6, surface);
+      else audio.step(step.at, eye, forward, surface, step.gait);
+    }
+    if (local.inMatch && local.onGround && local.speed >= 0.6) {
+      ownStride += local.speed * dt;
+      const stride = 0.5 + 0.22 * local.speed;
+      if (ownStride >= stride) {
+        ownStride -= stride;
+        const feet = eye.y - SIM.halfExtentY - (local.eyeOffset ?? SIM.eyeOffset);
+        const gait = local.crouched ? 'crouch' : local.speed > 4.2 ? 'run' : 'walk';
+        audio.step(Audio.OWN, eye, forward, world.surfaceAt(eye.x, feet, eye.z), gait);
+      }
+    }
+    // Badly hurt: the heart, faster and harder the lower it is.
+    if (local.inMatch && local.health > 0 && local.health <= LOW_HEALTH) {
+      const low = 1 - local.health / LOW_HEALTH;
+      if (now - heartAt > 1050 - 350 * low) {
+        heartAt = now;
+        audio.pulse(0.45 + 0.55 * low);
+      }
+    }
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     lightHere(eye, here);
     viewmodel.setLight(dt, here.sky, here.sun);

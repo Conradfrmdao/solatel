@@ -44,6 +44,13 @@ export class Hud {
     this.go = root.querySelector('#go');
     this._wasWarming = false;
     this.hurtFlash = root.querySelector('#hurt-flash');
+    this.lowHealth = root.querySelector('#low-health');
+    this.bloodScreen = root.querySelector('#blood-screen');
+    this.bloodScreen.style.backgroundImage = `url(${splatterImage()})`;
+    /** How bloody the view is, and since when it has been clearing. */
+    this._bleed = 0;
+    this._bleedAt = 0;
+    this.killMarker = root.querySelector('#killmarker');
     this.damageRing = root.querySelector('#damage-dirs');
     /** Where recent hits came from, each kept until it fades. */
     this._damage = [];
@@ -504,7 +511,7 @@ export class Hud {
   damageFrom(now, from, amount) {
     if (!from || !this.damageRing) return;
     // One arc per attacker: a second hit from the same place refreshes it.
-    let entry = this._damage.find((d) => d.from.distanceToSquared(from) < 4);
+    let entry = this._damage.find((d) => !d.miss && d.from.distanceToSquared(from) < 4);
     if (!entry) {
       const el = document.createElement('div');
       el.className = 'dmg';
@@ -518,8 +525,55 @@ export class Hud {
     entry.weight = Math.min(1, 0.45 + amount / 50);
   }
 
+  /**
+   * A round gone past this player from somebody at `from`: a thin pale arc
+   * on that side, briefer than a hit's. Being shot at says where from before
+   * anything lands - which is what a player hears in a real firefight, and
+   * the reason the crack of a round going by is played at all.
+   */
+  shotAt(now, from) {
+    if (!from || !this.damageRing) return;
+    let entry = this._damage.find((d) => d.miss && d.from.distanceToSquared(from) < 4);
+    if (!entry) {
+      const el = document.createElement('div');
+      el.className = 'dmg miss';
+      el.appendChild(document.createElement('i'));
+      this.damageRing.appendChild(el);
+      entry = { el, from: from.clone(), miss: true };
+      this._damage.push(entry);
+    }
+    entry.from.copy(from);
+    entry.until = now + MISS_SHOW_MS;
+    entry.weight = 0.85;
+  }
+
+  /** Hurt: blood at the edges of the view, heavier the harder the hit,
+   *  clearing over a couple of seconds. Turned a different way each time, so
+   *  it is not the same stain twice. */
+  bleed(now, amount) {
+    const left = this._bleedLeft(now);
+    this._bleed = Math.min(1, left + 0.25 + amount / 45);
+    this._bleedAt = now;
+    const turn = Math.floor(Math.random() * 4);
+    this.bloodScreen.style.transform = `scale(${turn & 1 ? -1 : 1}, ${turn & 2 ? -1 : 1})`;
+  }
+
+  _bleedLeft(now) {
+    return this._bleed * Math.exp(-(now - this._bleedAt) / BLEED_CLEARS_MS);
+  }
+
+  /** This player's shot killed somebody: a bigger, redder X that pops. */
+  killed(headshot) {
+    const el = this.killMarker;
+    el.classList.remove('show', 'head');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('show');
+    if (headshot) el.classList.add('head');
+  }
+
   /** Turns each arc to where its hit came from, as the view turns. */
   updateDamage(now, eye, yaw) {
+    this.bloodScreen.style.opacity = String(Math.min(0.9, this._bleedLeft(now)));
     this._damage = this._damage.filter((d) => {
       const left = d.until - now;
       if (left <= 0) {
@@ -529,7 +583,7 @@ export class Hud {
       const toYaw = Math.atan2(-(d.from.x - eye.x), -(d.from.z - eye.z));
       const relative = toYaw - yaw;
       d.el.style.transform = `translate(-50%, -50%) rotate(${-relative}rad)`;
-      d.el.style.opacity = String(Math.min(1, left / 600) * d.weight);
+      d.el.style.opacity = String(Math.min(1, left / (d.miss ? 300 : 600)) * d.weight);
       return true;
     });
   }
@@ -629,6 +683,11 @@ export class Hud {
     this.healthText.textContent = String(hp);
     this.healthFill.style.transform = `scaleX(${hp / max})`;
     this.health.classList.toggle('hurt', hp <= max / 3);
+    // Badly hurt: the edges of the view go red and beat with the heart
+    // (`audio.pulse`), deeper the lower it is, until it comes back.
+    const low = local.inMatch && hp > 0 && hp <= LOW_HEALTH ? 1 - hp / LOW_HEALTH : 0;
+    this.lowHealth.style.setProperty('--low', String(0.35 + 0.65 * low));
+    this.lowHealth.classList.toggle('on', low > 0);
     if (this._lastHealth !== null && hp < this._lastHealth && local.inMatch) {
       this.hurtFlash.classList.remove('flash');
       void this.hurtFlash.offsetWidth; // restart the animation
@@ -749,6 +808,70 @@ const KILLFEED_MS = 6000;
 /** How long an arc saying where a hit came from stays up. */
 const DAMAGE_SHOW_MS = 2200;
 
+/** How long an arc saying where a round that went past came from stays up. */
+const MISS_SHOW_MS = 1300;
+
+/** Over how long blood on the view clears: a time constant, in ms. */
+const BLEED_CLEARS_MS = 1600;
+
+/** Under this much health the view goes red at the edges. */
+export const LOW_HEALTH = 35;
+
+/**
+ * Blood thrown across the edges of a view, as an image: drawn once, in
+ * code, into a canvas. Splashes and runs from the edges and corners, a
+ * clear middle - nothing over the crosshair, where the next shot goes.
+ */
+function splatterImage() {
+  const w = 1280;
+  const h = 720;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext('2d');
+  let seed = 11;
+  const random = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const blob = (x, y, r, alpha) => {
+    const gradient = g.createRadialGradient(x, y, r * 0.2, x, y, r);
+    gradient.addColorStop(0, `rgba(105, 6, 6, ${alpha})`);
+    gradient.addColorStop(0.7, `rgba(80, 4, 4, ${alpha * 0.85})`);
+    gradient.addColorStop(1, 'rgba(60, 2, 2, 0)');
+    g.fillStyle = gradient;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  };
+  // Heavy at the edges, thinning inward; never within the middle third.
+  for (let i = 0; i < 70; i += 1) {
+    const side = Math.floor(random() * 4);
+    const along = random();
+    const depth = random() ** 2.2 * 0.3;
+    const x = side === 0 ? depth * w : side === 1 ? w - depth * w : along * w;
+    const y = side === 2 ? depth * h : side === 3 ? h - depth * h : along * h;
+    const r = 18 + random() * 70 * (1 - depth * 2);
+    blob(x, y, r, 0.55 + random() * 0.35);
+    // Droplets thrown off it.
+    for (let k = 0; k < 6; k += 1) {
+      const a = random() * Math.PI * 2;
+      const d = r * (1 + random() * 1.4);
+      blob(x + Math.cos(a) * d, y + Math.sin(a) * d, 2 + random() * 7, 0.7);
+    }
+    // And a run down from the higher ones.
+    if (random() < 0.3) {
+      g.strokeStyle = 'rgba(90, 5, 5, 0.6)';
+      g.lineWidth = 2 + random() * 5;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (random() - 0.5) * 12, y + 40 + random() * 120);
+      g.stroke();
+    }
+  }
+  return canvas.toDataURL('image/png');
+}
+
 /** How long a payout sits under the crosshair before it flies to the
  *  counter, and how long the flight takes. */
 const PAYOUT_HOLD_MS = 900;
@@ -820,6 +943,8 @@ const TEMPLATE = `
     <div class="hint"></div>
   </div>
   <div id="go">GO</div>
+  <div id="blood-screen"></div>
+  <div id="low-health"></div>
   <div id="hurt-flash"></div>
   <div id="damage-dirs"></div>
   <div id="pool"><span class="amount">$0.00</span><span class="caption">in play</span></div>
@@ -828,6 +953,7 @@ const TEMPLATE = `
   <div id="matchclock"></div>
   <div id="crosshair"><i class="n"></i><i class="s"></i><i class="w"></i><i class="e"></i><b></b></div>
   <div id="hitmarker"></div>
+  <div id="killmarker"></div>
   <div id="payouts"></div>
   <div id="killfeed"></div>
   <div id="scoreboard" class="hidden"></div>

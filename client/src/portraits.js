@@ -9,7 +9,9 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { buildGun } from './guns.js';
+import { CLOTH_MATERIAL, dressed } from './skins.js';
 
 const WIDTH = 480;
 const HEIGHT = 170;
@@ -74,6 +76,83 @@ export async function portraits(guns) {
     }
   } catch (error) {
     console.warn('could not draw the guns for the menu', error);
+  } finally {
+    if (renderer) {
+      renderer.dispose();
+      renderer.forceContextLoss();
+    }
+  }
+  return out;
+}
+
+/** The soldier's pictures: a little taller than wide, as he is. */
+const SOLDIER_WIDTH = 180;
+const SOLDIER_HEIGHT = 240;
+
+/**
+ * Pictures of the soldier in each of `skins`, by skin, as data URLs: the
+ * soldier everybody is drawn as (`template`), stood in `pose` - the low ready
+ * - three quarters on, under the same studio light as the guns. Resolves to
+ * an empty map if the browser cannot draw.
+ */
+export async function soldierPortraits(template, pose, skins) {
+  const out = new Map();
+  let renderer;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = SOLDIER_WIDTH;
+    canvas.height = SOLDIER_HEIGHT;
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(SOLDIER_WIDTH, SOLDIER_HEIGHT, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.5;
+    pmrem.dispose();
+    scene.add(new THREE.HemisphereLight(0xc8d6ea, 0x2a2420, 1.4));
+    const key = new THREE.DirectionalLight(0xffd9a0, 2.8);
+    key.position.set(2, 3, 4);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x9fc4ff, 2.0);
+    rim.position.set(-3, 2, -4);
+    scene.add(rim);
+
+    const body = cloneSkinned(template);
+    const mixer = new THREE.AnimationMixer(body);
+    if (pose) mixer.clipAction(pose).play();
+    mixer.update(0);
+    // Three quarters on, facing the light.
+    body.rotation.y = 0.5;
+    scene.add(body);
+    body.updateMatrixWorld(true);
+    const camera = new THREE.PerspectiveCamera(24, SOLDIER_WIDTH / SOLDIER_HEIGHT, 0.1, 50);
+    camera.position.set(0, 1.0, 5.2);
+    camera.lookAt(0, 0.93, 0);
+    const meshes = [];
+    body.traverse((node) => {
+      if (node.isSkinnedMesh) {
+        node.frustumCulled = false;
+        meshes.push([node, node.material]);
+      }
+    });
+    for (const skin of skins) {
+      for (const [mesh, plain] of meshes) {
+        mesh.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
+      }
+      renderer.clear();
+      renderer.render(scene, camera);
+      out.set(skin, canvas.toDataURL('image/png'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    mixer.stopAllAction();
+  } catch (error) {
+    console.warn('could not draw the soldier for the menu', error);
   } finally {
     if (renderer) {
       renderer.dispose();

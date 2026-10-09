@@ -169,6 +169,31 @@ These replaced guns built in code (`rifle.js` and the first `guns.js`),
 which were Solatel's own and are deleted; they in turn replaced "Assault
 Rifle" by Zsky from Sketchfab, which shipped with no licence and is long gone.
 
+## Sounds — `assets/sounds/`
+
+**CC0 1.0 (public domain).** No attribution is required and redistribution
+is allowed, commercially included; the sources are recorded here so the
+originals can be found. `scripts/build-sounds.py` makes every file from the
+downloads, which are not in this repository, and records what it does: each
+recording resampled to 48 kHz, cut into single shots, steps or cries at
+their onsets, faded out, levelled, and encoded as MP3.
+
+- **Gunshots** - `<gun>-near-*.mp3` and `<gun>-far-*.mp3` - are from
+  [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library),
+  created and recorded by Ben Jaszczak, Brian Nelson, Kevin Heras and
+  Matthew Nanney, CC0: the AK-47 (the assault rifle), the SKS (the machine
+  gun, which fires the same cartridge), the Carl Gustav M45 (the SMG, a 9 mm
+  submachine gun like the MP5), the 1911 (the pistol) and the Tikka T3 (the
+  sniper rifle, a bolt action like the M700), each from beside the shooter
+  and from mid distance.
+- **Footsteps, hits and falls** - `step-*`, `hit-*` and `fall-*` - are from
+  Kenney's [Impact Sounds](https://kenney.nl/assets/impact-sounds) 1.0,
+  whose `License.txt` reads "Creative Commons Zero, CC0".
+- **Voices** - `voice-*` - are from HaelDB's [Male Grunt/Yelling
+  sounds](https://opengameart.org/content/male-gruntyelling-sounds), offered
+  under both OGA-BY 3.0 and CC0; we take them under CC0. Four men, each a
+  player's voice for a match.
+
 ## Photographs, sky and foliage — `assets/photo/`, `assets/sky/`
 
 **CC0 1.0 (public domain), from Poly Haven** (https://polyhaven.com/license).

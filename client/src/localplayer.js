@@ -389,7 +389,7 @@ export class LocalPlayer {
    * forms around this player, so a line that never fills costs nothing - and
    * this is safe to call from a button somebody can mash.
    */
-  queue(mapName, dollars, loadout = DEFAULT_LOADOUT) {
+  queue(mapName, dollars, loadout = DEFAULT_LOADOUT, skin = 0) {
     // Whatever happened in the last match is behind them the moment they ask
     // for the next one. Leaving the banner up means a player who has queued
     // is still being told how they died.
@@ -401,7 +401,9 @@ export class LocalPlayer {
     if (this.queuedAt === null) this.queuedAt = performance.now();
     // The guns go with the stake: what a life is played with is chosen
     // with it, and the server makes it into something the game allows.
-    this.link.send({ t: 'queue', map: mapName, tier_dollars: dollars, loadout });
+    // And how they are dressed, which everybody in the match will see.
+    this.skin = skin;
+    this.link.send({ t: 'queue', map: mapName, tier_dollars: dollars, loadout, skin });
   }
 
   /** Give up the place in line. No money has moved, so nothing comes back. */

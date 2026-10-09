@@ -53,7 +53,13 @@
 //   rifle    not parented to a bone. Every frame it is put in the right palm
 //            and laid along that line, so raised it points exactly where the
 //            player is looking, and either way the left hand is on it.
-//   death    the death clip, once, and the body left where it fell.
+//   death    the death clip, once, turned so the body goes down away from
+//            whoever killed it, and left where it fell (`kill`). The
+//            server stops naming the dead, so this is the client's alone.
+//   hits     a round landing jolts the body away from it, and snaps the head
+//            back if that is where it struck (`hit`).
+//   steps    heard, not seen: a footfall every stride of whoever is on the
+//            ground and moving (`takeSteps`), quiet for a crouch.
 //
 // Players far away are animated less often: at sixty metres nobody can see a
 // hand, and a browser has other players to draw.
@@ -69,6 +75,7 @@ import { POINTS, WEAPON_IDS, buildGun } from './guns.js';
 import { RIFLE as WEAPON } from './weapons.js';
 import { lightMaterial } from './light.js';
 import { SnapshotClock } from './snapclock.js';
+import { CLOTH_MATERIAL, dressed } from './skins.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -223,8 +230,26 @@ const SHOULDER_MUZZLE = { forward: 0.8, perPitch: 0.48, down: 0.3, downKneeling:
 const FLASH_SECONDS = 0.05;
 const LAND_DIP = 0.03;
 const LAND_RECOVERY = 9;
-/** The death clip is 3.8 s; the body stays down a little after it. */
-const DEATH_LINGER_SECONDS = 5;
+/** How long a body lies where it fell; after that it goes the first moment
+ *  nobody is looking at it, and by twice this in any case. */
+const DEATH_LINGER_SECONDS = 15;
+/** The most a body is turned to go down away from its killer, in radians,
+ *  and how quickly: somebody shot from behind goes down sideways rather
+ *  than spinning round to fall the clip's way. */
+const DEATH_TURN = 1.75;
+const DEATH_TURN_SECONDS = 0.3;
+
+/** A round landing: the body jolts away from it - leaning from the feet by
+ *  this much at the most, in radians - and is back in this long, and the
+ *  head snaps back by `FLINCH_HEAD` if that is where it struck. */
+const FLINCH_LEAN = 0.09;
+const FLINCH_TIME = 0.06;
+const FLINCH_HEAD = 0.6;
+
+/** A footfall every this many metres, plus this much more per metre a
+ *  second: a stride lengthens with speed. */
+const STRIDE = 0.5;
+const STRIDE_PER_SPEED = 0.22;
 
 /** How far the hips come down walking crouched, in metres. Kneeling they
  *  come down as far as it takes to put a knee on the floor. */
@@ -391,6 +416,10 @@ export class Remotes {
     this.throws = new Map();
     /** Where reloads started this frame, for the sound. */
     this.reloads = [];
+    /** Footfalls this frame, for the sound. */
+    this.steps = [];
+    /** How everybody on the board is dressed, by id (`dress`). */
+    this.skins = new Map();
     this.selfId = null;
     this.flashMaterial = new THREE.SpriteMaterial({
       map: flashTexture(),
@@ -463,6 +492,7 @@ export class Remotes {
       fire: split(fire, 'fire-arms', upper),
       death: find(CLIP.death),
     };
+    this.fall = fallOf(this.template, this.clips.death);
     return this.template;
   }
 
@@ -589,15 +619,148 @@ export class Remotes {
       if (!player) {
         player = this._spawn(entry.id);
         this.players.set(entry.id, player);
+        this._dress(player, this.skins.get(entry.id) ?? 0);
       }
+      // The dead are drawn by `kill`, not by the snapshot, which still names
+      // them for the interpolation delay after the server stopped.
+      if (player.diedAt !== null) continue;
       this._pose(player, entry, dt, eye);
     }
 
     for (const [id, player] of this.players) {
-      if (seen.has(id)) continue;
+      if (player.diedAt !== null ? this._lie(player, dt) : seen.has(id)) continue;
       this.scene.remove(player.root);
       this.players.delete(id);
     }
+  }
+
+  /**
+   * Somebody killed: the death clip from where they were last drawn, turned
+   * so they go down away from `from` - where their killer was, or the blast -
+   * and the body left lying for `DEATH_LINGER_SECONDS`. The server stops
+   * naming the dead in its snapshots, so without this they vanished where
+   * they stood the instant they were killed. Returns where they lie and which
+   * way they fell, for the blood, or null if they are not drawn.
+   */
+  kill(id, from, headshot = false) {
+    const player = this.players.get(id);
+    if (!player || player.diedAt !== null || !player.root.visible) return null;
+    player.diedAt = player.age;
+    const { actions, root } = player;
+    for (const [name, a] of Object.entries(actions)) {
+      if (name !== 'death') a.fadeOut(0.1);
+    }
+    actions.death.reset().setEffectiveTimeScale(headshot ? 1.2 : 1).fadeIn(0.08).play();
+    player.rifle.visible = false;
+    player.flashSprite.visible = false;
+    player.body.rotation.set(0, 0, 0);
+    root.rotation.set(0, root.rotation.y, 0);
+    for (const c of player.clean) {
+      c.bone.quaternion.copy(c.q);
+      c.bone.position.copy(c.p);
+    }
+    let to = root.rotation.y;
+    const fall = new THREE.Vector3();
+    if (this.fall) {
+      const own = Math.atan2(this.fall.x, this.fall.z);
+      if (from) {
+        const dx = root.position.x - from.x;
+        const dz = root.position.z - from.z;
+        if (dx * dx + dz * dz > 0.01) {
+          const turn = wrapAngle(Math.atan2(dx, dz) - (root.rotation.y + own));
+          to = root.rotation.y + Math.max(-DEATH_TURN, Math.min(DEATH_TURN, turn));
+        }
+      }
+      fall.set(Math.sin(to + own), 0, Math.cos(to + own));
+    }
+    player.deathTurn = { from: root.rotation.y, to };
+    return { at: root.position.clone(), fall };
+  }
+
+  /** A body lying where it fell. False when it is time it went. */
+  _lie(player, dt) {
+    player.age += dt;
+    const t = player.age - player.diedAt;
+    const turn = player.deathTurn;
+    if (turn && t <= DEATH_TURN_SECONDS + dt) {
+      player.root.rotation.y = turn.from + (turn.to - turn.from) * ease(t / DEATH_TURN_SECONDS);
+    }
+    // Still while it is down: the clip holds its last frame.
+    if (t < this.clips.death.duration + 0.5) player.mixer.update(dt);
+    if (t < DEATH_LINGER_SECONDS) return true;
+    const seen = this.view?.intersectsSphere(_seen.set(player.root.position, SEEN_RADIUS)) ?? false;
+    return seen && t < DEATH_LINGER_SECONDS * 2;
+  }
+
+  /**
+   * A round into `id`, travelling along `dir`: the body jolts away from it,
+   * and the head snaps back if that is where it struck. Drawn, and nothing
+   * more: the server has already decided what it did.
+   */
+  hit(id, dir, head = false) {
+    const player = this.players.get(id);
+    if (!player || player.diedAt !== null) return;
+    player.flinchAt = player.age;
+    player.flinchDir.set(dir.x, 0, dir.z);
+    if (player.flinchDir.lengthSq() < 1e-6) player.flinchDir.set(0, 0, 1);
+    player.flinchDir.normalize();
+    player.flinchHead = head;
+  }
+
+  /**
+   * The living player nearest `at` (`[x, y, z]`), within `reach` metres of
+   * their middle, and where their feet are - for whose body a round the
+   * server says hit somebody went into. The server does not say whose; the
+   * round is in them, and that is visible.
+   */
+  struck(at, reach = 1.6) {
+    let best = null;
+    let bestDistance = reach;
+    for (const player of this.players.values()) {
+      if (player.diedAt !== null || !player.root.visible) continue;
+      const p = player.root.position;
+      const distance = Math.hypot(at[0] - p.x, at[1] - (p.y + 0.9), at[2] - p.z);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = player;
+      }
+    }
+    return best ? { id: best.id, feet: best.root.position.y } : null;
+  }
+
+  /**
+   * How everybody on the board is dressed - its `skin`, which the server
+   * sends with the board when a match starts - put on whoever is drawn now
+   * and kept for whoever is drawn later.
+   */
+  dress(entries) {
+    for (const entry of entries ?? []) {
+      const skin = entry.skin ?? 0;
+      this.skins.set(entry.id, skin);
+      const player = this.players.get(entry.id);
+      if (player) this._dress(player, skin);
+    }
+  }
+
+  /** One player in skin `skin` (`skins.js`). */
+  _dress(player, skin) {
+    if (player.skin === skin) return;
+    player.skin = skin;
+    player.body.traverse((node) => {
+      if (!node.isSkinnedMesh) return;
+      node.userData.plain ??= node.material;
+      const plain = node.userData.plain;
+      node.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
+    });
+  }
+
+  /** Footfalls since this was last asked: `{ at: [x, y, z], gait }`, where
+   *  `at` is the foot on the ground. */
+  takeSteps() {
+    if (this.steps.length === 0) return EMPTY;
+    const taken = this.steps;
+    this.steps = [];
+    return taken;
   }
 
   /** Where a player's feet were as last drawn, or null if they are not. */
@@ -721,6 +884,16 @@ export class Remotes {
       /** How much of the fire clip shows, easing out when it ends. */
       firing: 0,
       wasOnGround: true,
+      /** Metres walked since the last footfall. */
+      stride: 0,
+      /** On the ground last frame, for hearing a landing. */
+      footed: true,
+      flinchAt: -Infinity,
+      flinchDir: new THREE.Vector3(0, 0, 1),
+      flinchHead: false,
+      deathTurn: null,
+      /** Which skin they are drawn in (`_dress`). */
+      skin: null,
       diedAt: null,
       age: 0,
       pending: 0,
@@ -732,41 +905,40 @@ export class Remotes {
     player.age += dt;
     const { root, body, actions } = player;
     root.position.set(entry.x, entry.y - SIM.halfExtentY, entry.z);
-    root.rotation.y = entry.yaw + MODEL_FACING_OFFSET;
+    // All three: a flinch leaves the root leaning (see `hit`).
+    root.rotation.set(0, entry.yaw + MODEL_FACING_OFFSET, 0);
     // Where they look from, as drawn, for a tracer (see `muzzleOf`).
     player.yaw = entry.yaw;
     player.pitch = entry.pitch;
     player.eye = SIM.halfExtentY + (entry.crouched ? SIM.eyeOffset - SIM.crouchDrop : SIM.eyeOffset);
     player.kneeling = entry.crouched;
-
-    // Dead: the death clip once, the body left where it fell for a while,
-    // then gone. A body that vanished the instant it was hit read as the
-    // player disconnecting.
-    if (entry.health <= 0) {
-      if (player.diedAt === null) {
-        player.diedAt = player.age;
-        for (const [name, a] of Object.entries(actions)) {
-          if (name !== 'death') a.fadeOut(0.12);
-        }
-        actions.death.reset().fadeIn(0.12).play();
-        player.rifle.visible = false;
-        player.flashSprite.visible = false;
-        body.rotation.y = 0;
-      }
-      root.visible = player.age - player.diedAt < DEATH_LINGER_SECONDS;
-      player.mixer.update(dt);
-      return;
-    }
-    if (player.diedAt !== null) {
-      player.diedAt = null;
-      actions.death.stop();
-      for (const name of ['ready', 'aim', 'swing']) actions[name].reset().play();
-      player.raise = 0;
-      player.shotAt = -Infinity;
-      actions[player.gait]?.reset().play();
-      player.rifle.visible = true;
-    }
     root.visible = true;
+
+    // A footfall every stride on the ground, and both feet on landing.
+    if (entry.onGround) {
+      const gait = entry.crouched ? 'crouch' : entry.speed > RUN_SPEED ? 'run' : 'walk';
+      if (!player.footed) {
+        player.stride = 0;
+        this.steps.push({ at: [entry.x, entry.y - SIM.halfExtentY, entry.z], gait: 'run', landed: true });
+      } else if (entry.speed >= IDLE_SPEED) {
+        player.stride += entry.speed * dt;
+        const stride = STRIDE + STRIDE_PER_SPEED * entry.speed;
+        if (player.stride >= stride) {
+          player.stride -= stride;
+          this.steps.push({ at: [entry.x, entry.y - SIM.halfExtentY, entry.z], gait });
+        }
+      }
+    }
+    player.footed = entry.onGround;
+
+    // Jolted by a round: leaning from the feet away from it, and back.
+    const since = player.age - player.flinchAt;
+    if (since < FLINCH_TIME * 8) {
+      const k = (since / FLINCH_TIME) * Math.exp(1 - since / FLINCH_TIME);
+      _axis.crossVectors(_up, player.flinchDir).normalize();
+      _twist.setFromAxisAngle(_axis, FLINCH_LEAN * k);
+      root.quaternion.premultiply(_twist);
+    }
 
     // The gun in their hands, as the snapshot says: a change is seen.
     this._arm(player, entry.weapon ?? 'rifle', entry.optic ?? 'red_dot');
@@ -841,6 +1013,11 @@ export class Remotes {
     }
 
     this._act(player, entry, _aim, _rifleDir);
+    if (player.flinchHead && bones.head && since < FLINCH_TIME * 8) {
+      const k = (since / FLINCH_TIME) * Math.exp(1 - since / FLINCH_TIME);
+      _axis.crossVectors(_up, player.flinchDir).normalize();
+      turnWorld(bones.head, _twist.setFromAxisAngle(_axis, FLINCH_HEAD * k));
+    }
     // The flash waits for the rifle to reach the shoulder (`FLASH_RAISED`).
     const up = player.raise >= FLASH_RAISED;
     if (up) player.flash = Math.max(0, player.flash - step);
@@ -1186,6 +1363,32 @@ const EMPTY = [];
 /** Metres between two snapshots past which a player was put somewhere, not
  *  moved there: a twentieth of a second at a run is 0.4 m. */
 const TELEPORT = 4;
+
+/**
+ * Which way the death clip goes down, in the soldier's own frame - level,
+ * from where the hips start to where the head ends up - so a death can be
+ * turned to fall away from whoever caused it. Measured on a copy, once.
+ */
+function fallOf(template, clip) {
+  const body = cloneSkinned(template);
+  const hips = body.getObjectByName(BONE.hips);
+  const head = body.getObjectByName(BONE.head);
+  if (!hips || !head) return null;
+  body.updateMatrixWorld(true);
+  const start = hips.getWorldPosition(new THREE.Vector3());
+  const mixer = new THREE.AnimationMixer(body);
+  const action = mixer.clipAction(clip);
+  action.setLoop(THREE.LoopOnce, 1);
+  action.clampWhenFinished = true;
+  action.play();
+  mixer.update(clip.duration);
+  body.updateMatrixWorld(true);
+  const end = head.getWorldPosition(new THREE.Vector3());
+  mixer.stopAllAction();
+  mixer.uncacheRoot(body);
+  const fall = new THREE.Vector3(end.x - start.x, 0, end.z - start.z);
+  return fall.lengthSq() > 1e-4 ? fall.normalize() : null;
+}
 
 /**
  * Whose hand a grenade that has just appeared left: the living player, not

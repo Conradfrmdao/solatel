@@ -1,34 +1,47 @@
-// The sound of the game, synthesised rather than downloaded.
+// The sound of the game.
 //
-// # Why there are no audio files
+// # Recorded, and synthesised
 //
-// Every byte in `assets/` is downloaded by every player before they can move,
-// and a set of gunshot samples worth having is megabytes. What is here instead
-// is a few hundred lines of WebAudio that costs nothing to fetch and nothing to
-// decode, and it is not a compromise for the sounds this game actually needs:
-// a gunshot is a noise burst with a pitched thump under it, and that is exactly
-// what a synthesiser is good at. Samples would win for voices or music. There
-// are none.
+// Gunshots, footsteps, rounds striking, bodies falling and men crying out are
+// recordings (`assets/sounds`, cut by `scripts/build-sounds.py` from CC0
+// libraries - see ATTRIBUTION.md). They used to be synthesised, to save the
+// download, and a synthesised gunshot is what it is: a noise burst with a
+// thump under it, which next to photographed maps and real rifles sounded
+// like a toy. The recordings are 1.2 MB, fetched at boot with the guns and
+// kept for good.
+//
+// Everything that is a message rather than a sound in the world - the till,
+// the hit tick, the countdown - is still synthesised, and so is what has no
+// recording worth having: the crack of a round going past, a reload's
+// clicks, a landing. So is any gunshot heard before its recording has
+// decoded, which is the first second of a page at most.
 //
 // # Why it matters more than it sounds
 //
 // Sound is half of knowing where someone is. On a map two hundred and fifty
 // metres long, a shot behind you and a shot across the yard have to be
 // distinguishable before you can turn the right way, so every shot carries
-// three cues a player reads without thinking about them:
+// four cues a player reads without thinking about them:
 //
-// * where it came from, panned by the angle to the listener,
-// * how far away it was, as loudness and as dullness - distant sound loses its
-//   top end to the air long before it loses its volume,
-// * and when it happened, delayed by the time sound actually takes to arrive.
+// * where it came from: placed in three dimensions round the listener's head
+//   (an HRTF), so behind is heard as behind and not only as left or right,
+// * how far away it was: a gun was recorded beside the shooter and again from
+//   out in front, and the two are crossed by distance - near, the crack and
+//   the action; far, the boom and the land answering it - and then dulled
+//   by the air, which takes the top end long before it takes the volume,
+// * when it happened, delayed by the time sound actually takes to arrive.
 //   At the far end of the yard that is most of a second, which is long enough
-//   to notice and exactly what makes a large space feel large.
+//   to notice and exactly what makes a large space feel large,
+// * and, when a round comes close, the crack of it going past, from where it
+//   passed - so being shot at is heard as being shot at.
 //
 // The server decides who shot and from where, as it decides everything else.
 // This module only says how it sounded.
 
-/** How loud, before the player's own setting. Kept low: these are synthesised
- *  and synthesised transients are harsher than recorded ones. */
+import { asset } from './assets.js';
+import { SOUND_SETS } from './sound-sets.js';
+
+/** How loud, before the player's own setting. */
 const MASTER_GAIN = 0.35;
 
 /** Metres per second. Used for the arrival delay on distant shots. */
@@ -42,6 +55,32 @@ const MAX_AUDIBLE = 220;
 /** How far away somebody else's reload can be heard, in metres. */
 const RELOAD_AUDIBLE = 22;
 
+/** Under this many metres a shot is all its near recording; past `FAR_FROM`,
+ *  all its far one; between, the two crossed. */
+const NEAR_UNTIL = 14;
+const FAR_FROM = 70;
+
+/** Each gun's loudness against the others, recordings being normalised to
+ *  the same peak: the sniper rifle is the loudest thing in the game and the
+ *  submachine gun the quietest gun in it. */
+const LOUDNESS = { rifle: 0.82, lmg: 0.92, smg: 0.6, pistol: 0.68, sniper: 1.0 };
+
+/** The player's own gun, under everybody else's at the same distance - it
+ *  would otherwise drown every cue in the match - before `LOUDNESS`. */
+const OWN_LOUDNESS = 0.7;
+
+/** How a gun's last shot is put away when it fires again, in seconds: long
+ *  enough to keep a burst from sounding dry, short enough that ten shots a
+ *  second do not stack ten tails. The last one rings out. */
+const STEAL_SECONDS = 0.12;
+
+/** How far footsteps carry, by gait, in metres. A crouched player is nearly
+ *  silent: moving slowly to be unheard is a choice, and it should work. */
+const STEPS_AUDIBLE = { run: 30, walk: 16, crouch: 6 };
+
+/** Least time between one player's cries of pain, in seconds. */
+const PAIN_EVERY = 0.55;
+
 /** Where the player's own weapon sits: close, centred, and not distance-faded.
  *  Passing zero distance through the same path would work, but a rifle at the
  *  shoulder is a different sound from the same rifle heard at one metre. */
@@ -53,15 +92,17 @@ const VOLUME_KEY = 'solatel.volume';
  *  never opened the settings. */
 const DEFAULT_VOLUME = 0.7;
 
+/** The four men whose voices are in the game; a player keeps one for a match. */
+const VOICES = ['a', 'b', 'c', 'd'];
+
 /**
- * How each gun sounds, as numbers on the one synthesised shot: the crack's
- * loudness and pitch, the thump of the charge, the body's pitch, how long
- * it all lasts (`length`, on the rifle's), the echo, and the mechanism.
- * Pairs are [up close, far off]. A pistol snaps; an SMG is lighter and
- * higher; a machine gun is the rifle with more chest; the sniper rifle is
- * the loudest thing in the game and rings round the map.
+ * How each gun sounds when synthesised - before its recording has decoded -
+ * as numbers on the one synthesised shot: the crack's loudness and pitch,
+ * the thump of the charge, the body's pitch, how long it all lasts
+ * (`length`, on the rifle's), the echo, and the mechanism. Pairs are [up
+ * close, far off].
  */
-const VOICES = {
+const VOICINGS = {
   rifle: {
     crack: 1.6, crackFrequency: [2200, 1100],
     thump: 1.1, thumpFrequency: [420, 300], thumpDecay: [0.09, 0.13],
@@ -99,6 +140,14 @@ const VOICES = {
   },
 };
 
+/** Which of the four voices a player has: from their id, so it is the same
+ *  for everybody listening and for the whole match. */
+export function voiceOf(id) {
+  let h = 2166136261;
+  for (const c of String(id ?? '')) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return VOICES[(h >>> 0) % VOICES.length];
+}
+
 export class Audio {
   constructor() {
     this.volume = storedVolume();
@@ -106,6 +155,51 @@ export class Audio {
     this.master = null;
     this.noise = null;
     this.failed = false;
+    /** Fetched and not yet decoded, by name. */
+    this.raw = new Map();
+    /** Decoded: `{ buffer, onset }` by name. */
+    this.buffers = new Map();
+    /** The last variation played from each set, so none plays twice running. */
+    this.last = new Map();
+    /** Each shooter's sounding shot, to be put away when they fire again. */
+    this.voices = new Map();
+    /** When each player last cried out. */
+    this.cried = new Map();
+  }
+
+  /**
+   * Fetches every recording, so they are in hand by the time anything is
+   * fired. Called at boot; nothing waits on it. Decoding needs the audio
+   * device, which a browser only starts from a gesture, so what arrives
+   * first is kept and decoded in `resume`.
+   */
+  preload() {
+    if (this._fetching) return this._fetching;
+    const names = [...new Set(Object.values(SOUND_SETS).flat())];
+    this._fetching = Promise.all(
+      names.map(async (name) => {
+        try {
+          const response = await fetch(asset(`assets/sounds/${name}.mp3`));
+          if (!response.ok) return;
+          this.raw.set(name, await response.arrayBuffer());
+          this._decode(name);
+        } catch {
+          // A sound that did not arrive is a sound synthesised or not
+          // played; nothing in the game waits on one.
+        }
+      }),
+    );
+    return this._fetching;
+  }
+
+  _decode(name) {
+    if (!this.context || !this.raw.has(name)) return;
+    const bytes = this.raw.get(name);
+    this.raw.delete(name);
+    this.context.decodeAudioData(bytes).then(
+      (buffer) => this.buffers.set(name, { buffer, onset: onsetOf(buffer) }),
+      () => {},
+    );
   }
 
   /**
@@ -128,14 +222,24 @@ export class Audio {
         this.context = new Ctor();
         this.master = this.context.createGain();
         this.master.gain.value = MASTER_GAIN * this.volume;
+        // Recorded gunshots peak at full scale, and a firefight is several at
+        // once: a limiter holds the sum under clipping rather than letting it
+        // crackle, and leaves a single shot alone.
+        const limiter = this.context.createDynamicsCompressor();
+        limiter.threshold.value = -9;
+        limiter.knee.value = 6;
+        limiter.ratio.value = 8;
+        limiter.attack.value = 0.002;
+        limiter.release.value = 0.25;
         // Everything passes a low-pass that is wide open, so a death can
         // close it: the world going dull is most of how it sounds.
         this.muffle = this.context.createBiquadFilter();
         this.muffle.type = 'lowpass';
         this.muffle.frequency.value = 20000;
         this.muffle.Q.value = 0.5;
-        this.master.connect(this.muffle).connect(this.context.destination);
+        this.master.connect(limiter).connect(this.muffle).connect(this.context.destination);
         this.noise = whiteNoise(this.context);
+        for (const name of [...this.raw.keys()]) this._decode(name);
       }
       if (this.context.state === 'suspended') this.context.resume();
     } catch {
@@ -169,20 +273,7 @@ export class Audio {
     ring.connect(ringGain).connect(context.destination);
     ring.start(now);
     ring.stop(now + 3.3);
-    // Two thumps, the second softer, low enough to be felt more than heard.
-    for (const [at, level] of [[0.5, 0.5], [0.78, 0.32]]) {
-      const thump = context.createOscillator();
-      thump.type = 'sine';
-      thump.frequency.setValueAtTime(62, now + at);
-      thump.frequency.exponentialRampToValueAtTime(38, now + at + 0.16);
-      const gain = context.createGain();
-      gain.gain.setValueAtTime(0.0001, now + at);
-      gain.gain.exponentialRampToValueAtTime(level * MASTER_GAIN * this.volume, now + at + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.22);
-      thump.connect(gain).connect(context.destination);
-      thump.start(now + at);
-      thump.stop(now + at + 0.25);
-    }
+    this._heartbeat(context.destination, now + 0.5, MASTER_GAIN * this.volume * 0.5);
   }
 
   recover() {
@@ -191,6 +282,33 @@ export class Audio {
     this.muffle.frequency.cancelScheduledValues(now);
     this.muffle.frequency.setValueAtTime(Math.max(this.muffle.frequency.value, 1), now);
     this.muffle.frequency.exponentialRampToValueAtTime(20000, now + 0.6);
+  }
+
+  /**
+   * One beat of the heart, for a player badly hurt: called by the frame loop
+   * about once a second while their health is low, louder the lower it is.
+   */
+  pulse(strength) {
+    if (!this.ready || !(strength > 0)) return;
+    this._heartbeat(this.master, this.context.currentTime, 0.9 * Math.min(1, strength));
+  }
+
+  /** Two thumps, the second softer, low enough to be felt more than heard. */
+  _heartbeat(output, start, level) {
+    const { context } = this;
+    for (const [at, share] of [[0, 1], [0.28, 0.64]]) {
+      const thump = context.createOscillator();
+      thump.type = 'sine';
+      thump.frequency.setValueAtTime(62, start + at);
+      thump.frequency.exponentialRampToValueAtTime(38, start + at + 0.16);
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, start + at);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, level * share), start + at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + at + 0.22);
+      thump.connect(gain).connect(output);
+      thump.start(start + at);
+      thump.stop(start + at + 0.25);
+    }
   }
 
   get ready() {
@@ -208,58 +326,100 @@ export class Audio {
   }
 
   /**
-   * A rifle shot.
+   * A gunshot.
    *
    * `at` is where it was fired from - an `[x, y, z]` off the wire, the way
    * every position in the protocol arrives - and `listener` is where the
    * player is. Pass `Audio.OWN` as `at` for the player's own weapon.
    * `forward` is the direction they are looking, which is what turns a
-   * position into a left or a right.
-   *
-   * Four layers, because a gunshot is four things happening at once and any
-   * three of them sound like a toy.
+   * position into a side. `shooter` names whose gun it was, so their last
+   * shot can be put away when the next rings out.
    */
-  shot(at, listener, forward, weapon = 'rifle') {
+  shot(at, listener, forward, weapon = 'rifle', shooter = null) {
     if (!this.ready) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
-    const v = VOICES[weapon] ?? VOICES.rifle;
-    // Each voice is [up close, far off]: near, the top end and the
-    // mechanism; far, the low end and the echo.
-    const pick = ([near, far]) => (place.close ? near : far);
+    const near = this._has(`${weapon}-near`);
+    if (!near) {
+      this._synthesisedShot(place, weapon);
+      return;
+    }
+    const { context } = this;
+    const start = context.currentTime + place.delay;
+    const loud = LOUDNESS[weapon] ?? LOUDNESS.rifle;
+    // Every shot through one gain of its own, which is what is turned down
+    // when the same gun fires again.
+    const voice = context.createGain();
+    const rate = 0.97 + Math.random() * 0.06;
+    if (at === OWN_WEAPON) {
+      voice.connect(place.input);
+      this._play(`${weapon}-near`, voice, start, loud * OWN_LOUDNESS, rate);
+      this._mechanism(place.input, start, weapon);
+    } else {
+      // The air between: the further, the less top end - a shot across the
+      // yard is a boom, not a crack.
+      const air = context.createBiquadFilter();
+      air.type = 'lowpass';
+      air.frequency.value = Math.max(1600, 19000 * Math.exp(-place.distance / 95));
+      air.Q.value = 0.5;
+      voice.connect(air).connect(place.input);
+      const far = Math.min(1, Math.max(0, (place.distance - NEAR_UNTIL) / (FAR_FROM - NEAR_UNTIL)));
+      if (far < 0.99) this._play(`${weapon}-near`, voice, start, loud * place.gain * Math.sqrt(1 - far), rate);
+      if (far > 0.01 && this._has(`${weapon}-far`)) {
+        // The far recordings were made out in front of the gun at a distance
+        // and are quieter for it; brought up to stand in for the near one.
+        this._play(`${weapon}-far`, voice, start, loud * place.gain * Math.sqrt(far) * 1.6, rate);
+      }
+    }
+    this._steal(at === OWN_WEAPON ? OWN_WEAPON : shooter, voice, start);
+  }
 
+  /** The player's own gun's mechanism: heard only up close, and for a bolt
+   *  action, the bolt worked a moment after the shot. The recordings carry
+   *  their own action; this is the hand on it. */
+  _mechanism(output, start, weapon) {
+    const v = VOICINGS[weapon] ?? VOICINGS.rifle;
+    if (!v.bolt) return;
+    for (const [after, frequency] of [[0.42, 1900], [0.58, 2600]]) {
+      this.burst(output, start + after, {
+        gain: 0.28, attack: 0.0006, decay: 0.03, type: 'bandpass', frequency, q: 2.4,
+      });
+    }
+  }
+
+  /** Puts away `key`'s last shot as `voice` starts, and remembers `voice`. */
+  _steal(key, voice, start) {
+    if (key === null || key === undefined) return;
+    const old = this.voices.get(key);
+    if (old && old !== voice) {
+      const at = Math.max(start, this.context.currentTime);
+      old.gain.cancelScheduledValues(at);
+      old.gain.setValueAtTime(1, at);
+      old.gain.linearRampToValueAtTime(0, at + STEAL_SECONDS);
+    }
+    this.voices.set(key, voice);
+  }
+
+  /**
+   * The synthesised shot, for before the recordings are in. Four layers,
+   * because a gunshot is four things happening at once and any three of them
+   * sound like a toy.
+   */
+  _synthesisedShot(place, weapon) {
+    const v = VOICINGS[weapon] ?? VOICINGS.rifle;
+    const pick = ([near, far]) => (place.close ? near : far);
     const { context } = this;
     const start = context.currentTime + place.delay;
     const out = place.input;
     const close = place.close;
-
-    // 1. The crack. Almost all of the loudness, almost none of the duration,
-    // and no attack worth the name - a pressure wave does not fade in. This
-    // is also the layer that carries the direction, because the ear locates
-    // high frequencies far better than low ones.
     this.burst(out, start, {
-      gain: v.crack * place.gain,
-      attack: 0.0002,
-      decay: close ? 0.028 : 0.05,
-      type: 'highpass',
-      frequency: pick(v.crackFrequency),
-      q: 0.6,
+      gain: v.crack * place.gain, attack: 0.0002, decay: close ? 0.028 : 0.05,
+      type: 'highpass', frequency: pick(v.crackFrequency), q: 0.6,
     });
-
-    // 2. The blast: the mid-range thump of the charge, band-limited so it
-    // reads as coming out of a barrel rather than a speaker.
     this.burst(out, start, {
-      gain: v.thump * place.gain,
-      attack: 0.0004,
-      decay: pick(v.thumpDecay),
-      type: 'bandpass',
-      frequency: pick(v.thumpFrequency),
-      q: 0.8,
+      gain: v.thump * place.gain, attack: 0.0004, decay: pick(v.thumpDecay),
+      type: 'bandpass', frequency: pick(v.thumpFrequency), q: 0.8,
     });
-
-    // 3. The body, an octave below anything a sine alone gives: a sawtooth
-    // dropping fast, which is what makes a shot land in the chest rather
-    // than the ears. Deeper and longer the bigger the cartridge.
     const body = context.createOscillator();
     const bodyGain = context.createGain();
     const bodyFilter = context.createBiquadFilter();
@@ -275,45 +435,58 @@ export class Audio {
     body.connect(bodyFilter).connect(bodyGain).connect(out);
     body.start(start);
     body.stop(start + 0.2 * v.length);
-
-    // 4. The yard answering. Delayed by the time sound takes to reach the
-    // nearest thing worth bouncing off and come back, duller than the shot
-    // because a wall absorbs the top end, and longer the further away the
-    // shot was - and the bigger the round, the longer the yard rings.
     this.burst(out, start + (close ? 0.035 : 0.06), {
-      gain: pick(v.tailGain) * place.gain,
-      attack: 0.012,
-      decay: pick(v.tail),
-      type: 'lowpass',
-      frequency: close ? 1100 : 620,
-      q: 0.4,
+      gain: pick(v.tailGain) * place.gain, attack: 0.012, decay: pick(v.tail),
+      type: 'lowpass', frequency: close ? 1100 : 620, q: 0.4,
     });
-
-    // The player's own weapon also has a mechanism, and hearing it is most of
-    // what makes a gun feel like an object rather than an effect. A bolt is
-    // worked a moment after the shot, and heard as a separate clack.
     if (close) {
       this.burst(out, start + 0.045, {
-        gain: 0.3,
-        attack: 0.0004,
-        decay: 0.022,
-        type: 'bandpass',
-        frequency: v.mechanism,
-        q: 3.0,
+        gain: 0.3, attack: 0.0004, decay: 0.022, type: 'bandpass', frequency: v.mechanism, q: 3.0,
       });
-      if (v.bolt) {
-        for (const [after, frequency] of [[0.42, 1900], [0.58, 2600]]) {
-          this.burst(out, start + after, {
-            gain: 0.28,
-            attack: 0.0006,
-            decay: 0.03,
-            type: 'bandpass',
-            frequency,
-            q: 2.4,
-          });
-        }
-      }
+      this._mechanism(out, start, weapon);
     }
+  }
+
+  /**
+   * A round going past within a few metres: the crack of a supersonic round
+   * (every gun's but the pistol's, whose .45 is slower than sound and buzzes
+   * by instead), from where it passed, louder the closer. It arrives before
+   * the shot that sent it, because the round outruns its own report - which
+   * is how a player under fire hears it, and the report then says from where.
+   */
+  crack(at, listener, forward, supersonic, closeness) {
+    if (!this.ready) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    const { context } = this;
+    const start = context.currentTime;
+    const level = 0.35 + 0.9 * Math.min(1, Math.max(0, closeness));
+    if (supersonic) {
+      // The shock wave: almost no duration, all top end.
+      this.burst(place.input, start, {
+        gain: 1.5 * level, attack: 0.0001, decay: 0.009, type: 'highpass', frequency: 2400, q: 0.7,
+      });
+      this.burst(place.input, start + 0.002, {
+        gain: 0.6 * level, attack: 0.0004, decay: 0.03, type: 'bandpass', frequency: 1300, q: 1.1,
+      });
+    }
+    // The zip of it going by, falling in pitch as it passes.
+    const source = context.createBufferSource();
+    source.buffer = this.noise;
+    source.loop = true;
+    const band = context.createBiquadFilter();
+    band.type = 'bandpass';
+    band.Q.value = supersonic ? 3 : 6;
+    band.frequency.setValueAtTime(supersonic ? 3200 : 1500, start);
+    band.frequency.exponentialRampToValueAtTime(supersonic ? 900 : 520, start + (supersonic ? 0.07 : 0.16));
+    const envelope = context.createGain();
+    const length = supersonic ? 0.08 : 0.18;
+    envelope.gain.setValueAtTime(0.0001, start);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, (supersonic ? 0.5 : 0.9) * level), start + length * 0.35);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, start + length);
+    source.connect(band).connect(envelope).connect(place.input);
+    source.start(start, Math.random() * (this.noise.duration - 0.5));
+    source.stop(start + length + 0.02);
   }
 
   /** A round striking the world, at the far end of a shot that missed. */
@@ -321,14 +494,83 @@ export class Audio {
     if (!this.ready) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
-    this.burst(place.input, this.context.currentTime + place.delay, {
-      gain: 0.5 * place.gain,
-      attack: 0.0008,
-      decay: 0.07,
-      type: 'bandpass',
-      frequency: 2600,
-      q: 1.2,
-    });
+    const start = this.context.currentTime + place.delay;
+    if (!this._play(Math.random() < 0.18 ? 'hit-metal' : 'hit-ground', place.input, start, 0.7 * place.gain)) {
+      this.burst(place.input, start, {
+        gain: 0.5 * place.gain, attack: 0.0008, decay: 0.07, type: 'bandpass', frequency: 2600, q: 1.2,
+      });
+    }
+  }
+
+  /** A round into somebody: a heavy, wet blow, from where they stood. */
+  fleshHit(at, listener, forward) {
+    if (!this.ready) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    const start = this.context.currentTime + place.delay;
+    this._play('hit-flesh', place.input, start, 0.9 * place.gain, 0.92 + Math.random() * 0.12);
+  }
+
+  /** Somebody hurt crying out, in their own voice - at most every
+   *  `PAIN_EVERY`, or a burst into them would be a stammer. */
+  pain(at, listener, forward, id) {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    if (now - (this.cried.get(id) ?? -1) < PAIN_EVERY) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    this.cried.set(id, now);
+    this._play(`voice-${voiceOf(id)}-pain`, place.input, now + place.delay, 0.85 * place.gain);
+  }
+
+  /** Somebody killed: their last cry, and their body hitting the ground. */
+  death(at, listener, forward, id) {
+    if (!this.ready) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    const start = this.context.currentTime + place.delay;
+    this.cried.set(id, start);
+    this._play(`voice-${voiceOf(id)}-death`, place.input, start, 0.95 * place.gain);
+    this._play('fall', place.input, start + 0.55 + Math.random() * 0.2, 0.8 * place.gain);
+  }
+
+  /** This player hurt: their own cry, close and quiet, under the thud. */
+  ownPain(id) {
+    if (!this.ready) return;
+    const now = this.context.currentTime;
+    if (now - (this.cried.get(id) ?? -1) < PAIN_EVERY) return;
+    this.cried.set(id, now);
+    this._play(`voice-${voiceOf(id)}-pain`, this.master, now + 0.04, 0.32);
+  }
+
+  /**
+   * A footstep. `surface` is what was walked on (`concrete`, `grass`,
+   * `wood`, `metal`), `gait` how (`run`, `walk`, `crouch`). Somebody else's
+   * is placed and fades out by `STEPS_AUDIBLE`; pass `Audio.OWN` for the
+   * player's own, which are quiet and centred.
+   */
+  step(at, listener, forward, surface, gait) {
+    if (!this.ready) return;
+    const set = this._has(`step-${surface}`) ? `step-${surface}` : 'step-concrete';
+    const rate = 0.92 + Math.random() * 0.16;
+    if (at === OWN_WEAPON) {
+      const level = { run: 0.22, walk: 0.15, crouch: 0.06 }[gait] ?? 0.15;
+      this._play(set, this.master, this.context.currentTime, level, rate);
+      return;
+    }
+    const reach = STEPS_AUDIBLE[gait] ?? STEPS_AUDIBLE.walk;
+    const dx = at[0] - listener.x;
+    const dy = at[1] - listener.y;
+    const dz = at[2] - listener.z;
+    const distance = Math.hypot(dx, dy, dz);
+    if (!(distance < reach)) return;
+    const place = this.place(at, listener, forward);
+    if (!place) return;
+    // Steeper than a gunshot's fall-off: a step is heard round the corner,
+    // not across the yard.
+    const fade = (1 - distance / reach) ** 1.6;
+    const level = ({ run: 1, walk: 0.7, crouch: 0.4 }[gait] ?? 0.7) * fade;
+    this._play(set, place.input, this.context.currentTime + place.delay, 0.9 * level, rate);
   }
 
   /**
@@ -465,6 +707,7 @@ export class Audio {
     thud.connect(gain).connect(this.master);
     thud.start(now);
     thud.stop(now + 0.32);
+    this._play('hit-flesh', this.master, now, 0.5, 0.85);
   }
 
   /**
@@ -498,6 +741,10 @@ export class Audio {
     this.burst(out, start + 0.25, {
       gain: 0.25 * place.gain, attack: 0.05, decay: 0.4, type: 'highpass', frequency: 2600, q: 0.4,
     });
+    // Debris coming down after it.
+    for (let i = 0; i < 3; i += 1) {
+      this._play('hit-ground', out, start + 0.35 + Math.random() * 0.6, 0.35 * place.gain, 0.8 + Math.random() * 0.3);
+    }
   }
 
   /** The magazine out, and a moment later the new one in and the bolt. */
@@ -542,7 +789,7 @@ export class Audio {
   }
 
   /** Landing. Scaled by how hard, so a hop and a drop are different events. */
-  land(speed) {
+  land(speed, surface = 'concrete') {
     if (!this.ready || speed < 1.5) return;
     const force = Math.min(speed / 9, 1);
     this.burst(this.master, this.context.currentTime, {
@@ -553,10 +800,35 @@ export class Audio {
       frequency: 260 + 340 * force,
       q: 0.5,
     });
+    // Both feet coming down, the second a beat after the first.
+    const set = this._has(`step-${surface}`) ? `step-${surface}` : 'step-concrete';
+    const now = this.context.currentTime;
+    this._play(set, this.master, now, 0.18 + 0.2 * force, 0.85);
+    this._play(set, this.master, now + 0.06, 0.12 + 0.15 * force, 0.9);
+  }
+
+  /** Somebody else landing from a height, from where they came down. */
+  landAt(at, listener, forward, speed, surface = 'concrete') {
+    if (!this.ready || speed < 4) return;
+    this.step(at, listener, forward, surface, 'run');
+    const place = this.place(at, listener, forward);
+    if (!place || place.distance > STEPS_AUDIBLE.run) return;
+    const fade = 1 - place.distance / STEPS_AUDIBLE.run;
+    this.burst(place.input, this.context.currentTime + place.delay, {
+      gain: 0.35 * fade * Math.min(1, speed / 9), attack: 0.002, decay: 0.12, type: 'lowpass', frequency: 420, q: 0.5,
+    });
   }
 
   /**
-   * Turns a world position into gain, panning, filtering and a delay.
+   * Turns a world position into gain, a place round the listener's head and a
+   * delay.
+   *
+   * The place is an HRTF panner set where the sound is relative to the
+   * listener - the listener itself never moves, so nothing has to follow the
+   * camera every frame and every browser agrees on where it is. Distance is
+   * applied here rather than by the panner, by a curve chosen for the game:
+   * not inverse-square, which over two hundred metres takes a shot from
+   * deafening to inaudible across the first ten and is useless as a cue.
    *
    * Returns null for anything too far away to bother with, which is also what
    * keeps a distant firefight from costing anything.
@@ -564,7 +836,7 @@ export class Audio {
   place(at, listener, forward) {
     const { context } = this;
     if (at === OWN_WEAPON) {
-      return { gain: 1, delay: 0, close: true, input: this.master };
+      return { gain: 1, delay: 0, close: true, distance: 0, input: this.master };
     }
 
     // Positions cross the wire as three-element arrays, because that is how
@@ -578,23 +850,29 @@ export class Audio {
     // comparison, and a NaN reaching an AudioParam throws.
     if (!(distance <= MAX_AUDIBLE)) return null;
 
-    // Not inverse-square. Real falloff over two hundred metres takes a shot
-    // from deafening to inaudible across the first ten, which is useless as a
-    // cue; this keeps distant shots present while still ranking them.
     const gain = 1 / (1 + distance / 18);
 
-    // Which side it is on: the component of the direction to the source along
-    // the listener's right. Flat, because height tells a player very little
-    // and pretending otherwise mostly produces confident wrong answers.
-    const right = { x: -forward.z, z: forward.x };
-    const length = Math.hypot(dx, dz) || 1;
-    const pan = Math.max(-1, Math.min(1, ((dx * right.x + dz * right.z) / length) * 0.85));
-
-    const panner = context.createStereoPanner
-      ? context.createStereoPanner()
-      : context.createGain();
-    if (panner.pan) panner.pan.value = Number.isFinite(pan) ? pan : 0;
-    panner.connect(this.master);
+    // Into the listener's own frame, flat: right, up, and behind (the
+    // panner's listener faces -z). The look's pitch is left out, because
+    // height tells a player very little and pretending otherwise mostly
+    // produces confident wrong answers.
+    const flat = Math.hypot(forward.x, forward.z) || 1;
+    const fx = forward.x / flat;
+    const fz = forward.z / flat;
+    const right = dx * -fz + dz * fx;
+    const ahead = dx * fx + dz * fz;
+    let input;
+    if (context.createPanner) {
+      const panner = context.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'linear';
+      panner.rolloffFactor = 0;
+      setPosition(panner, right, dy * 0.5, -ahead);
+      panner.connect(this.master);
+      input = panner;
+    } else {
+      input = this.master;
+    }
 
     return {
       gain,
@@ -603,12 +881,45 @@ export class Audio {
       // actually feels like.
       delay: distance / SPEED_OF_SOUND,
       close: distance < 12,
-      input: panner,
+      distance,
+      input,
     };
   }
 
+  /** Whether any of set `name` has decoded. */
+  _has(name) {
+    const set = SOUND_SETS[name];
+    return Boolean(set && set.some((n) => this.buffers.has(n)));
+  }
+
   /**
-   * A shaped burst of noise: the building block of nearly everything here.
+   * One recording out of set `name`, never the one played last, into
+   * `output` at `start`. Returns whether there was one to play.
+   */
+  _play(name, output, start, gain, rate = 1) {
+    const set = SOUND_SETS[name];
+    if (!set) return false;
+    const ready = set.filter((n) => this.buffers.has(n));
+    if (!ready.length) return false;
+    const last = this.last.get(name);
+    const choices = ready.length > 1 ? ready.filter((n) => n !== last) : ready;
+    const pick = choices[Math.floor(Math.random() * choices.length)];
+    this.last.set(name, pick);
+    const { buffer, onset } = this.buffers.get(pick);
+    const { context } = this;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    const level = context.createGain();
+    level.gain.value = Math.max(0, gain);
+    source.connect(level).connect(output);
+    source.start(Math.max(start, context.currentTime), onset);
+    return true;
+  }
+
+  /**
+   * A shaped burst of noise: the building block of nearly everything
+   * synthesised here.
    *
    * One reused noise buffer played from a random offset, through one filter,
    * through one envelope. Cheap enough to do several times a second without
@@ -655,6 +966,35 @@ export class Audio {
 }
 
 Audio.OWN = OWN_WEAPON;
+
+/** A panner's place: the AudioParams where a browser has them, the old
+ *  setter where it does not. */
+function setPosition(panner, x, y, z) {
+  if (panner.positionX) {
+    panner.positionX.value = x;
+    panner.positionY.value = y;
+    panner.positionZ.value = z;
+  } else {
+    panner.setPosition(x, y, z);
+  }
+}
+
+/**
+ * Seconds into a decoded recording at which it starts sounding, less a
+ * millisecond. An MP3 encoder pads the front of what it encodes, and not
+ * every browser's decoder takes the pad off again; a gunshot that starts
+ * thirty milliseconds late is a gunshot that feels late.
+ */
+function onsetOf(buffer) {
+  const samples = buffer.getChannelData(0);
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) peak = Math.max(peak, Math.abs(samples[i]));
+  const threshold = peak * 0.03;
+  for (let i = 0; i < samples.length; i += 1) {
+    if (Math.abs(samples[i]) > threshold) return Math.max(0, i / buffer.sampleRate - 0.001);
+  }
+  return 0;
+}
 
 /**
  * One second of white noise, generated once and played from random offsets.

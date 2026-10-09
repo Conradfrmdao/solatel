@@ -1433,8 +1433,20 @@ export class World {
 
   /** Draws the tracer for a shot the server says happened. */
   /** A round out of a gun, flown as a streak: see `Rounds.add`. */
+  /** What a foot at world `x, y, z` comes down on, for the sound of the
+   *  step: grass where the map grows it, and otherwise the hard ground most
+   *  of every map is. */
+  surfaceAt(x, y, z) {
+    return this.arena?.userData.nature?.grassAt?.(x, y, z) ? 'grass' : 'concrete';
+  }
+
   addRound(round) {
     this.rounds.add(round);
+  }
+
+  /** Somebody else's rounds going past `eye`: see `Rounds.listen`. */
+  listenRounds(eye, onPass) {
+    this.rounds.listen(eye, onPass);
   }
 
   /** Where a round came down, and what to do when it gets there: see

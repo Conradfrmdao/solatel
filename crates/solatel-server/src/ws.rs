@@ -295,6 +295,7 @@ async fn read_loop(
                 map,
                 tier_dollars,
                 loadout,
+                skin,
             } => {
                 state
                     .game
@@ -304,6 +305,7 @@ async fn read_loop(
                         map,
                         tier_dollars,
                         loadout,
+                        skin,
                     })
                     .await;
             }

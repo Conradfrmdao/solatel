@@ -34,6 +34,10 @@ const CONVERGE = 18;
 /** Longest a flight is followed, in seconds. */
 const LONGEST = 3;
 
+/** Somebody else's round going by within this many metres of the listener
+ *  is heard going by (`listen`). */
+const PASS_RADIUS = 5;
+
 /** Seconds into a flight at which it is `goal` metres from where it left. */
 export function arrivalOn(path, goal) {
   const x0 = path[0];
@@ -82,6 +86,23 @@ export class Rounds {
     this._next = 0;
     this._a = new THREE.Vector3();
     this._b = new THREE.Vector3();
+    this._c = new THREE.Vector3();
+    this._d = new THREE.Vector3();
+    this.listener = null;
+    this.onPass = null;
+  }
+
+  /**
+   * Where the player's ears are, and what to call when somebody else's round
+   * goes past them within `PASS_RADIUS`: `onPass(point, distance, speed,
+   * shooter)` - the nearest point of its flight to them, how near, how fast
+   * it was going there, and whose it was. Being shot at is heard as being
+   * shot at, from the side it went by on, before the report that says from
+   * where.
+   */
+  listen(eye, onPass) {
+    this.listener = eye;
+    this.onPass = onPass;
   }
 
   /**
@@ -90,7 +111,7 @@ export class Rounds {
    * pairs it with its landing; the player's own are `own` and paired in the
    * order they were fired.
    */
-  add({ key, weapon, from, drawnFrom, velocity, own = false }) {
+  add({ key, weapon, from, drawnFrom, velocity, own = false, shooter = null }) {
     const path = flightFor(weapon, from, velocity);
     if (path.length < 6) return;
     const line = this.pool[this._next];
@@ -114,6 +135,9 @@ export class Rounds {
       landing: null,
       onArrive: null,
       line,
+      shooter,
+      passed: own,
+      prev: new THREE.Vector3(path[0], path[1], path[2]),
     });
     line.material.color.setHex(0xffe2a0);
   }
@@ -138,6 +162,29 @@ export class Rounds {
       return;
     }
     this.waiting.push({ at: delay, onArrive });
+  }
+
+  /** Whether `round` has just gone past the listener: the nearest point of
+   *  the stretch it flew this frame, if that is nearer than `PASS_RADIUS`
+   *  and behind the round's head rather than still ahead of it. */
+  _listen(round, dt) {
+    if (!this.listener || !this.onPass) return;
+    const head = this._at(round.path, Math.min(round.t, round.end), this._c);
+    const from = round.prev;
+    const step = this._d.subVectors(head, from);
+    const length2 = step.lengthSq();
+    const toEar = this._a.subVectors(this.listener, from);
+    const s = length2 > 1e-9 ? Math.min(1, Math.max(0, toEar.dot(step) / length2)) : 1;
+    const nearest = this._b.copy(from).addScaledVector(step, s);
+    const distance = nearest.distanceTo(this.listener);
+    const ended = round.t >= round.end;
+    if (distance < PASS_RADIUS && (s < 1 || ended)) {
+      round.passed = true;
+      this.onPass(nearest, distance, Math.sqrt(length2) / Math.max(dt, 1e-4), round.shooter);
+    } else if (ended) {
+      round.passed = true;
+    }
+    from.copy(head);
   }
 
   _arrive(round) {
@@ -171,6 +218,7 @@ export class Rounds {
     const still = [];
     for (const round of this.live) {
       round.t += dt;
+      if (!round.passed) this._listen(round, dt);
       if (round.t >= round.end) {
         // Out of flight: landed where the server said, or into a wall, or
         // spent. A landing still to come keeps it waiting a moment, so its

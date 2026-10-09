@@ -32,11 +32,23 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 19;
+pub const PROTOCOL_VERSION: u16 = 20;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
 pub const TICK_HZ: u32 = 64;
+
+/// How many ways a soldier can be dressed: 0 is the soldier as he came, and
+/// 1 to 10 are Solatel's own (`skins.js` draws them). Cosmetic and nothing
+/// else - a skin decides nothing the server decides - so the server only
+/// keeps the number honest and passes it on.
+pub const SKINS: u8 = 11;
+
+/// A skin a client asked for, as the game allows it: one there is, or the
+/// soldier as he came.
+pub fn skin(asked: u8) -> u8 {
+    if asked < SKINS { asked } else { 0 }
+}
 
 /// Length of one server tick, in seconds.
 pub const TICK_DT: f32 = 1.0 / TICK_HZ as f32;
@@ -157,6 +169,10 @@ pub enum ClientMsg {
         /// says what was settled on when it starts.
         #[serde(default)]
         loadout: Loadout,
+        /// How they are dressed, seen by everybody in the match (see
+        /// [`SKINS`]). One the game does not have is the soldier as he came.
+        #[serde(default)]
+        skin: u8,
     },
     /// Give up the place in line. No money has moved, so nothing is returned.
     LeaveQueue,
@@ -309,6 +325,17 @@ pub struct ScoreEntry {
     /// so this is a statement of where the balance came from rather than a
     /// promise of something still to be paid.
     pub winnings_micro_usd: i64,
+    /// How they are dressed: everybody in the match sees it. On the board
+    /// rather than in the snapshot, because it is fixed for the match and
+    /// the board is sent when the match starts; twenty times a second would
+    /// be saying it again for nothing. Left off the wire for the soldier as
+    /// he came.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skin: u8,
+}
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 /// One map this server runs.
@@ -889,6 +916,7 @@ mod tests {
                 damage_dealt: 340,
                 alive: false,
                 winnings_micro_usd: 2_700_000,
+                skin: 4,
             }],
         })
         .unwrap();
@@ -904,6 +932,7 @@ mod tests {
             "\"damage_dealt\":340",
             "\"alive\":false",
             "\"winnings_micro_usd\":2700000",
+            "\"skin\":4",
         ] {
             assert!(wire.contains(field), "{field} missing from {wire}");
         }
@@ -1044,6 +1073,40 @@ mod tests {
             panic!("a queue without a loadout did not decode");
         };
         assert_eq!(loadout, Loadout::default());
+    }
+
+    #[test]
+    fn a_skin_is_one_there_is_and_the_plain_soldier_costs_nothing_on_the_wire() {
+        let dressed = r#"{"t":"queue","map":"yard","tier_dollars":1,"skin":7}"#;
+        let Ok(ClientMsg::Queue { skin, .. }) = decode::<ClientMsg>(dressed) else {
+            panic!("a queue with a skin did not decode");
+        };
+        assert_eq!(skin, 7);
+        let bare = r#"{"t":"queue","map":"yard","tier_dollars":1}"#;
+        let Ok(ClientMsg::Queue { skin, .. }) = decode::<ClientMsg>(bare) else {
+            panic!("a queue without a skin did not decode");
+        };
+        assert_eq!(skin, 0);
+        assert_eq!(super::skin(SKINS - 1), SKINS - 1);
+        assert_eq!(super::skin(SKINS), 0);
+        assert_eq!(super::skin(255), 0);
+
+        let plain = ScoreEntry {
+            id: PlayerId::new(),
+            name: "Plain".into(),
+            kills: 0,
+            deaths: 0,
+            shots_fired: 0,
+            shots_hit: 0,
+            headshots: 0,
+            damage_dealt: 0,
+            alive: true,
+            winnings_micro_usd: 0,
+            skin: 0,
+        };
+        let wire = encode(&plain).unwrap();
+        assert!(!wire.contains("skin"), "{wire}");
+        assert_eq!(decode::<ScoreEntry>(&wire).unwrap(), plain);
     }
 
     #[test]

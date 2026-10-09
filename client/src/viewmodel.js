@@ -45,6 +45,7 @@ import { UNIT, buildGun } from './guns.js';
 import { HAND, holdMatrix, palms } from './grip.js';
 import { OPTICS, SIM, wrapAngle } from './sim.js';
 import { RIFLE, feelFor } from './weapons.js';
+import { CLOTH_MATERIAL, dressed } from './skins.js';
 
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
 const KEY_LIGHT = 2.4;
@@ -739,6 +740,18 @@ export class Viewmodel {
    * arms are drawn: forearms coming up into view onto the weapon, and
    * nothing of the shoulders ever seen.
    */
+  /** The sleeves in skin `skin` (`skins.js`): the player's own arms are
+   *  dressed as everybody else sees the rest of them. */
+  setSkin(skin) {
+    this.skin = skin;
+    this.body?.traverse((node) => {
+      if (!node.isSkinnedMesh) return;
+      node.userData.plain ??= node.material;
+      const plain = node.userData.plain;
+      node.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
+    });
+  }
+
   setArms(template, pose) {
     const body = cloneSkinned(template);
     const bones = {};

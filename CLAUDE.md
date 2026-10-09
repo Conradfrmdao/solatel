@@ -1235,8 +1235,21 @@ lose their colon on load (`mixamorig:Hips` is `mixamorigHips`).
 - **The rifle is not parented to a bone.** Each frame it is put in the right
   palm and laid along that line, so raised it points exactly where the
   player looks, and either way the left hand is on it.
-- Death plays the death clip once and leaves the body where it fell for five
-  seconds; landing dips the hips; shots flash the muzzle.
+- **A death is drawn by `kill`, not by the snapshot.** The server stops
+  naming the dead (`a_dead_body_is_kept_for_the_board_and_off_the_map`),
+  and for months that meant somebody killed simply vanished where they
+  stood - no fall, nothing - which was most of why kills felt flat. Now the
+  `killed` message plays the death clip from where they were last drawn,
+  the body turned (at most a right angle, over 0.3 s) so they go down away
+  from whoever killed them, and leaves them lying for 15 s, gone after that
+  the first moment nobody is looking. Snapshots still naming them for the
+  interpolation delay are ignored. Which way the clip falls is measured
+  off the clip at load (`fallOf`).
+- **A round landing jolts the body** away from it (`hit`): leaning from the
+  feet for a tenth of a second, and the head snapped back on a shot that
+  struck it. Whose body is whoever is drawn there - the server's landing
+  says only that a player was hit, and the round in them is visible.
+- Landing dips the hips; shots flash the muzzle.
 - **Reloads and throws are placed, not played** - there are no clips for
   them. A reload cants and dips the rifle in the right hand while the left
   arm is solved (two-bone IK) to the magazine, down to the pouch at the hip,
@@ -1271,6 +1284,88 @@ every other player hold a toy. The left hand is put on the gun's own support
 by two-bone IK (`_reachLeft`) on every gun, because the soldier's poses were
 made for the rifle the game started with and no real gun's handguard is
 where that one's was.
+
+## Sound, blood and dying
+
+Conrad asked for the game to be intense: gun sounds, death sounds, blood,
+footsteps heard close by, and knowing where shots come from. None of it
+decides anything; all of it is drawn or heard from what the server already
+says.
+
+**The sounds are recordings** (`assets/sounds`, `scripts/build-sounds.py`,
+ATTRIBUTION.md): every gun from beside the shooter and from mid distance,
+footsteps by surface, rounds into bodies and ground and metal, bodies
+falling, and four men's voices. 1.2 MB, fetched at boot (`audio.preload`)
+and decoded when the audio device starts. What a recording would not help -
+the till, the hit tick, the countdown, a reload's clicks, the crack of a
+round going by - is still synthesised, and so is a gunshot heard before its
+recording decodes. MP3 because every browser decodes it; each sound's onset
+is found when it is decoded (`onsetOf`), because not every decoder removes
+the encoder's padding and a late gunshot feels late.
+
+- **Placed in three dimensions** - an HRTF panner set where the sound is
+  relative to the listener, so behind is heard as behind - with distance
+  applied by the game's own curve, and the speed of sound as before.
+- **Near and far are different recordings**, crossed between 14 and 70 m,
+  then dulled by the air. A shooter's last shot is turned down over a tenth
+  of a second when the next one starts, so automatic fire does not stack
+  ten tails and the last one rings out. A limiter on the master holds a
+  firefight under clipping.
+- **Footsteps** (`takeSteps` in `remotes.js`, `step` in `audio.js`): a
+  footfall every stride on the ground, longer at speed; heard to 30 m
+  running, 16 walking, 6 crouched - moving slowly to be unheard works. On
+  grass where the map grows it (`world.surfaceAt`), otherwise hard ground.
+  A player's own steps are heard too, quietly.
+- **A round going past** within 5 m (`Rounds.listen`) cracks from where it
+  passed - buzzes, for the pistol's slower-than-sound .45 - before the
+  report arrives, and a thin pale arc on the HUD says where it was fired
+  from (`hud.shotAt`), under the red one for a hit.
+- **Voices**: a cry of pain on a hit (at most every 0.55 s), a death cry and
+  the body hitting the ground; each player keeps one of the four voices for
+  the match, by their id (`voiceOf`), the same on every client.
+
+**Blood** (`blood.js`): a hit throws a spray out of the far side and a little
+back out of the near, and drops that fall and leave spots where they land;
+a death leaves a pool spreading from under the chest once the body is down.
+The marks lie flat on the floor at the victim's feet - the server's height
+for where they stood - and never on a wall, where the client does not know
+the surface (see `impacts.js`). Pooled, the same at every graphics level,
+gone over 45 s (spots) and 90 s (pools), cleared for a new match.
+
+**On the player's own screen**: blood at the edges when hit (`hud.bleed`),
+the edges red and beating under 35 health with the heart heard
+(`audio.pulse`), their own voice crying out, and a kill marked by a red X
+that pops (`hud.killed`).
+
+## Skins
+
+Protocol 20. Eleven ways to dress the soldier: 0 is Mixamo's grey digital
+camouflage, 1 to 10 are Solatel's own (`skins.js`). Chosen in the menu
+under the guns, kept per browser, sent with `Queue` (`skin`), and on
+everybody's board (`ScoreEntry.skin`, left off the wire for 0) - the board
+is sent when a match starts, and to a page that comes back mid-match. The
+server only keeps the number honest (`net::skin`).
+
+**A pattern is drawn in the shader, from where the cloth sits on the body
+at rest** - the mesh's own bind pose, in metres - not from its texture
+coordinates, which are cut into islands: drawn on the body it runs across
+the seams and stays put on a body that runs. Which texels are cloth is a
+mask made from the soldier's texture (`scripts/build-skins.py`,
+`soldier-cloth.webp`, 18 KB); the cloth keeps its own folds and grime by
+scaling the pattern with the original texture blurred until its
+camouflage is gone. Patterns: blots, squares, stripes, mottle, splinters,
+a honeycomb. Every skin is one shader program; skins differ in uniforms.
+
+**A skin may not hide its wearer**, on real stakes. Every skin's cloth is
+brought to the same average brightness as the soldier's own (`CLOTH_MEAN`,
+measured by the script) whatever its colours, and the gear is tinted at
+its own brightness, never darkened. What a skin changes is hue and
+pattern. None copies a map's surfaces. Adding a skin means adding it to
+`SKINS` in `skins.js` and raising `net::SKINS` (a protocol change).
+
+The menu's pictures of each skin are drawn from the soldier himself at
+boot (`soldierPortraits`), and the player's own sleeves in first person
+wear their skin (`viewmodel.setSkin`).
 
 ## Assets
 

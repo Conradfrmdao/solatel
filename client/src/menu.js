@@ -20,6 +20,7 @@
 import qrcode from 'qrcode-generator';
 import { asset } from './assets.js';
 import { OPTICS, PRIMARIES, SIM, WEAPONS } from './sim.js';
+import { SKINS, storeSkin, storedSkin } from './skins.js';
 import {
   canSend,
   connect,
@@ -197,6 +198,11 @@ export class Menu {
     }
     this.guns = root.querySelector('#menu-guns');
     this.optics = root.querySelector('#menu-optics');
+    /** How this player is dressed, remembered (`skins.js`). */
+    this.skin = storedSkin();
+    this.skinList = root.querySelector('#menu-skins');
+    /** Pictures of the soldier in each skin, once drawn. */
+    this.skinPictures = new Map();
     /** Pictures of the guns, once drawn (`setGunPictures`). */
     this.gunPictures = new Map();
 
@@ -236,6 +242,13 @@ export class Menu {
       if (!button) return;
       this._setLoadout({ ...this.loadout, optic: button.dataset.optic });
     });
+    this.skinList.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-skin]');
+      if (!card) return;
+      this.skin = Number(card.dataset.skin);
+      storeSkin(this.skin);
+      this._drawSkins();
+    });
     this.tables.addEventListener('click', (event) => {
       const button = event.target.closest('[data-stake]');
       if (!button) return;
@@ -258,6 +271,28 @@ export class Menu {
     this._drawMaps();
     this._drawTables();
     this._drawGuns();
+    this._drawSkins();
+  }
+
+  /** Pictures of the soldier in each skin (`portraits.js`). */
+  setSkinPictures(pictures) {
+    this.skinPictures = pictures;
+    this._drawSkins();
+  }
+
+  /** The skins, as cards: the soldier in each, its name, what it is. */
+  _drawSkins() {
+    if (!this.skinList) return;
+    this.skinList.innerHTML = SKINS.map((skin) => {
+      const picture = this.skinPictures.get(skin.id);
+      return (
+        `<button class="skin${skin.id === this.skin ? ' on' : ''}" type="button" data-skin="${skin.id}">` +
+        (picture ? `<img class="art" alt="" src="${picture}">` : '<span class="art"></span>') +
+        `<span class="name">${escapeHtml(skin.name)}</span>` +
+        `<span class="blurb">${escapeHtml(skin.blurb)}</span>` +
+        '</button>'
+      );
+    }).join('');
   }
 
   /** The gun and optic to play with, remembered for next time. */
@@ -335,7 +370,7 @@ export class Menu {
    */
   bindPlay(onQueue, onLeaveQueue) {
     this.play.addEventListener('click', () => {
-      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake, { ...this.loadout });
+      if (this.chosenMap && this.chosenStake) onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
     });
     this.status.addEventListener('click', (event) => {
       if (event.target.closest('#leave-queue')) onLeaveQueue();
@@ -1135,6 +1170,12 @@ const TEMPLATE = `
         <div id="menu-optics"></div>
       </section>
 
+      <section class="arms dress">
+        <h2>Choose your look</h2>
+        <p class="sub">Ten of our own, and the one he came in. Everybody in your match sees it, and none is any harder to see than another.</p>
+        <div id="menu-skins"></div>
+      </section>
+
       <div class="play-row">
         <div class="fees">
           <h2>Select entry fee</h2>
@@ -1393,6 +1434,13 @@ const TEMPLATE = `
           and the rifle scope from 3DModelsCC0's
           <a href="https://3dmodelscc0.itch.io/free-cc0-guns-explosives-pack" target="_blank" rel="noopener">Guns &amp; Explosives pack</a>
           (both CC0). The RPK is Solatel's, made from the AK-47.</li>
+        <li>Gunshots from <a href="https://opengameart.org/content/the-free-firearm-sound-library" target="_blank" rel="noopener">The Free Firearm Sound Library</a>,
+          recorded by Ben Jaszczak, Brian Nelson, Kevin Heras and Matthew Nanney;
+          footsteps and impacts from Kenney's
+          <a href="https://kenney.nl/assets/impact-sounds" target="_blank" rel="noopener">Impact Sounds</a>;
+          voices from HaelDB's
+          <a href="https://opengameart.org/content/male-gruntyelling-sounds" target="_blank" rel="noopener">Male Grunt/Yelling sounds</a>
+          (all CC0).</li>
         <li>Lettering in <a href="https://github.com/jpt/barlow" target="_blank" rel="noopener">Barlow</a> and
           <a href="https://github.com/Omnibus-Type/Saira" target="_blank" rel="noopener">Saira Condensed</a>; the
           wordmark is drawn from <a href="https://github.com/theleagueof/orbitron" target="_blank" rel="noopener">Orbitron</a>

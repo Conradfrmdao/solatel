@@ -128,6 +128,7 @@ fn queue_map(
         map: map_name.to_string(),
         tier_dollars: dollars,
         loadout: Loadout::default(),
+        skin: 0,
     });
 }
 
@@ -153,6 +154,7 @@ fn queue_armed(
         map: map::TEST_MAP.name.to_string(),
         tier_dollars: dollars,
         loadout,
+        skin: 0,
     });
 }
 
@@ -1220,6 +1222,44 @@ fn a_dead_body_is_kept_for_the_board_and_off_the_map() {
         3,
         "the board should still say who was killed"
     );
+}
+
+#[test]
+fn everybody_sees_how_everybody_is_dressed_and_nobody_gets_a_skin_there_is_not() {
+    let mut lobby = free_play();
+    lobby.floor = 2;
+    let (tx_a, mut rx_a) = mpsc::channel(512);
+    let (tx_b, _rx_b) = mpsc::channel(512);
+    let (a, session_a) = join(&mut lobby, "Dressed", None, tx_a);
+    let (b, session_b) = join(&mut lobby, "Chancer", None, tx_b);
+    for (player, session, skin) in [(a.player_id, session_a, 7), (b.player_id, session_b, 200)] {
+        lobby.handle(GameCommand::Queue {
+            player_id: player,
+            session_id: session,
+            map: map::TEST_MAP.name.to_string(),
+            tier_dollars: 1,
+            loadout: Loadout::default(),
+            skin,
+        });
+    }
+    run_matchmaker(&mut lobby);
+    let board = drain(&mut rx_a)
+        .into_iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMsg::Scoreboard { entries } => Some(entries),
+            _ => None,
+        })
+        .expect("the board, sent as the match starts");
+    let skin_of = |id: PlayerId| {
+        board
+            .iter()
+            .find(|e| e.id == id)
+            .expect("on the board")
+            .skin
+    };
+    assert_eq!(skin_of(a.player_id), 7);
+    assert_eq!(skin_of(b.player_id), 0, "a skin the game does not have");
 }
 
 #[test]
