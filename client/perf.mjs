@@ -135,16 +135,13 @@ console.log(`GPU: ${renderer}`);
 
 // Nothing is drawn in the menu, so get into a match first - behind the
 // crowd, if there is one, so they are all in the same line.
-await page.waitForSelector('#menu-tables .table', { timeout: 60000 });
-if (mapName) await page.click(`#menu-maps [data-map="${mapName}"]`);
+await page.waitForSelector('#menu-maps .map', { timeout: 60000 });
+await page.click(mapName ? `#menu-maps [data-map="${mapName}"]` : '#menu-maps .map');
 const crowd = crowdSize > 0 ? await gather(crowdSize) : [];
 // Clicked from inside the page: the list is redrawn whenever the line
 // changes, which with a crowd joining is constantly, and a handle taken
 // from outside can be gone by the time it is clicked.
-await page.evaluate(() => {
-  document.querySelector('#menu-tables .table').click();
-  document.querySelector('#menu-play').click();
-});
+await page.evaluate(() => document.querySelector('#menu-tables .table').click());
 await page.waitForFunction(
   () => window.solatel.world.ready && window.solatel.local.inMatch && !window.solatel.local.warmingUp,
   { timeout: 240000, polling: 250 },

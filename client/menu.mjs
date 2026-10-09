@@ -197,8 +197,10 @@ const art = await page.evaluate(() => ({
 if (!art.logo) fail('the wordmark did not load');
 if (!/assets\/menu\/hero\.[0-9a-f]+\.webp/.test(art.hero)) fail(`the header has no picture: ${art.hero}`);
 
-// 4. Pick the cheapest table on the first map and get in line - watching
-//    every file the page fetches from here on.
+// 4. The play screen opens on the maps. Picking one opens the gear and the
+//    stakes in the same window - nothing to scroll to - and starts its
+//    download, which its card counts. Picking the cheapest stake then is
+//    pressing play. Every file the page fetches from here on is watched.
 const fetched = [];
 page.on('response', (response) => {
   const url = new URL(response.url());
@@ -207,16 +209,31 @@ page.on('response', (response) => {
   }
 });
 const stake = Math.min(...stakes);
+const opening = await page.$eval('#battle', (e) => e.dataset.phase);
+if (opening !== 'pick') fail(`the play screen opened on "${opening}", not on the maps`);
 await page.click(`#menu-maps [data-map="${maps[0]}"]`);
-await page.click(`#menu-tables [data-stake="${stake}"]`);
-// Picking is not joining: the play button says what it will do, and does it.
-const label = await page.$eval('#menu-play', (e) => e.textContent);
-if (!label.includes(`$${stake}`) || !label.toLowerCase().includes(maps[0])) {
-  fail(`the play button says "${label}" for ${maps[0]} $${stake}`);
-}
+await page
+  .waitForFunction(() => document.getElementById('battle').dataset.phase === 'gear', { timeout: 5000 })
+  .catch(() => fail('picking a map did not open the gear'));
+const fits = await page.evaluate(() => {
+  const menu = document.getElementById('menu');
+  const play = document.querySelector('#menu-tables .table').getBoundingClientRect();
+  return { scrolls: menu.scrollHeight - menu.clientHeight, below: play.bottom - window.innerHeight };
+});
+if (fits.scrolls > 0 || fits.below > 0) fail(`the play screen does not fit the window: scrolls ${fits.scrolls}px`);
+await page
+  .waitForFunction(() => /downloading|ready/i.test(document.querySelector('.map.on .fetch .what')?.textContent ?? ''), {
+    timeout: 10000,
+  })
+  .catch(() => fail('the picked map does not say how its download is going'));
 const early = await page.evaluate(() => window.solatel.local.queuedFor);
-if (early !== null && early !== undefined) fail('picking a table joined the line before play was pressed');
-await page.click('#menu-play');
+if (early !== null && early !== undefined) fail('picking a map joined a line');
+const label = await page.$eval(`#menu-tables [data-stake="${stake}"]`, (e) => e.getAttribute('aria-label'));
+if (!label.includes(`$${stake}`) || !label.toLowerCase().includes(maps[0])) {
+  fail(`the stake button says "${label}" for ${maps[0]} $${stake}`);
+}
+console.log(`>> picking ${maps[0]} opened the gear and the stakes in one window, and its download began`);
+await page.click(`#menu-tables [data-stake="${stake}"]`);
 await page.waitForFunction(
   () => document.querySelector('#menu-status').textContent.includes('in line'),
   { timeout: 20000 },

@@ -223,11 +223,13 @@ one and re-encodes it; nothing else is done to them.
 
 ## Menu art and lettering — `assets/menu/`, `assets/fonts/`
 
-- **Key art** - `splash.webp`, `hero.webp` and `banner.webp` are crops of the
+- **Key art** - `splash.webp` and `hero.webp` are crops of the
   Solatel key art Conrad supplied for the game (the soldier over the island,
   with the wordmark). Solatel's own.
 - **Map cards** - `map-*.webp` are screenshots of Solatel's own maps, taken
   in the game.
+- **Guns and outfits** - `guns/*.webp` and `skins/*.webp` are drawn from the
+  game's own models (the guns and the soldier below) by `client/portraits.mjs`.
 - **Wordmark** - `logo.svg` is drawn by `scripts/build-logo.py`: the letters
   S, O, L, T and E are outlines of [Orbitron](https://github.com/theleagueof/orbitron)
   Black, Copyright 2018 The Orbitron Project Authors, used under the
