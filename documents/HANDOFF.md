@@ -4,6 +4,31 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 9 October 2026 (evening): going live, and intensity
+
+**The game goes live this month on one VPS** that Conrad is buying -
+recommended: OVHcloud VPS-3 in Europe (6 vCores, 12 GB, unlimited
+traffic, anti-DDoS, about €12 a month), France or Germany; Johannesburg was
+the low-ping choice for Uganda, Europe the better machine and the middle of
+a global audience. He has bought a domain. The whole month is a test,
+played on that server while it is improved. `deploy/` holds the install
+command and the updater (*One VPS* in the runbook, *Deploying* in
+CLAUDE.md): once installed, **merging into main is deploying**, and
+`https://<domain>/deploy.json` is how to watch it land. Waiting on Conrad:
+the server's IP address, the domain, and his yes to the test month's
+settings in `deploy/solatel.env` (development money, the $1 table only, a
+match with whoever is in line after 45 seconds) - that file is not
+committed until he says so, because he asked to be asked before any
+environment variable's value goes into a commit. Then: tell him the two DNS
+records and the command, watch `deploy.json`, and ask him to play.
+
+**Intensity, from his brief below**: recorded gunshots near and far,
+footsteps by surface heard by distance, rounds cracking past, cries of
+pain and death, bodies falling; blood sprayed and pooled; somebody killed
+now falls (they used to vanish); hits taken mark the screen with blood and
+say where they came from; and ten original skins (protocol 20). See
+*Sound, blood and dying* and *Skins* in CLAUDE.md.
+
 ## Status, 9 October 2026: weapons, and Conrad's next brief
 
 **Weapons are built** (protocol 19; *The guns* and *Shooting, and what it

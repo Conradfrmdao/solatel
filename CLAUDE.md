@@ -303,6 +303,10 @@ tests for the canvas rather than listing the things to stay off.
 **A player's balance is asked for when they arrive** (`LedgerRequest::
 ReadBalance`), so the wallet reads `$0.00` rather than a dash. A menu that
 shows a dash cannot tell "you have nothing" from "we have not looked".
+On a server handing out development money the purse wears a **test** tag
+and the wallet says the first match brings test money, both from `/proof`,
+read when the menu is built: a balance on a public test server must never be
+taken for real money.
 
 **Fair play is the proof, and the credits.** Early players of a real-money
 game expect to be farmed, and the PRD's answer is visible proof of payouts.

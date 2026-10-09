@@ -161,6 +161,10 @@ export class Menu {
     this.walletNote = root.querySelector('#wallet-note');
     this.profile = root.querySelector('#menu-profile');
     this.history = root.querySelector('#wallet-history');
+    // The record says whether this server hands out development money, and
+    // the purse says so too: a balance on a test server is not real money,
+    // and nothing on the screen may let it be read as if it were.
+    this._loadProof();
 
     /** Deposits and withdrawals seen this session, by id, newest last. */
     this.events = new Map();
@@ -854,6 +858,8 @@ export class Menu {
     }
     q('#proof-note').innerHTML = notes.join(' ');
     q('#proof-note').classList.toggle('hidden', notes.length === 0);
+    q('#purse .tag').classList.toggle('hidden', !proof.dev_money);
+    q('#wallet-test').classList.toggle('hidden', !proof.dev_money);
 
     const card = (value, caption, detail) =>
       `<div class="figure"><b>${value}</b><span class="caption">${caption}</span>` +
@@ -1147,7 +1153,9 @@ const TEMPLATE = `
         <span class="who"><b id="me-name"></b><span id="me-line">in the lobby</span></span>
       </div>
       <button type="button" id="purse" data-pane="wallet" title="your wallet">
-        ${ICON.wallet}<span class="amount">—</span><span class="plus" aria-hidden="true">+</span>
+        ${ICON.wallet}<span class="amount">—</span>
+        <span class="tag hidden" title="Development money: every new player is given some, and none of it can be withdrawn">test</span>
+        <span class="plus" aria-hidden="true">+</span>
       </button>
     </div>
   </header>
@@ -1262,6 +1270,10 @@ const TEMPLATE = `
 
       <p id="wallet-off" class="fine">
         This server has no wallet, so money cannot go in or out.
+      </p>
+      <p id="wallet-test" class="fine hidden">
+        A test server: your first match comes with test money, given to you
+        as it starts. None of it is real, and none of it can be withdrawn.
       </p>
 
       <div id="wallet-on" class="hidden">
