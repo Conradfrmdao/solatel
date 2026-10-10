@@ -4,6 +4,40 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026 (late): every opening can be shot through
+
+Conrad, with two photographs from the arena: "I can't shoot through that
+window and also that opening ... every opening in the game should actually
+be able to shoot through". Both were the collision filling air the art
+leaves open, and so was most of what else stopped a round in mid-air. Done
+(`MAP_VERSION` 30, every map's tables regenerated):
+
+- **The window** is in the tower room's upper floor (`room_0`, its wall at
+  z 3.7). The generator made any column whose wall reached head height
+  solid to the highest surface anywhere in it, so the window was walled up
+  from the ground to the eaves. A wall is now followed up only as far as it
+  goes (`obstacle_heights`, `SEAM`).
+- **The opening** is under the high walkway beside it: 4.6 m of air between
+  a low wall and the walkway over it, which the same rule turned into a row
+  of invisible nine metre pillars.
+- **Two smaller rules went with them.** A run was joined to what was under
+  it across a metre - a cell further than the step it was meant to be -
+  which filled any window a metre tall from its sill; and every lintel hung
+  a cell under what is drawn, across the top of every doorway. A joined run
+  also stopped a cell short of what it stood on, leaving a quarter-metre
+  slit through every wall joined over a gap.
+- **Measured** with `scripts/check-openings.py` (new): rays from everywhere
+  a player can stand, at the heights a gun is held, judged against the
+  drawn map. The arena went from 4,414 rays stopped in open air to 1,425,
+  the yard from 10,305 to 6,546; most of what is left is the crawlspace
+  under the low end of a sloped ramp and slab undersides, which its
+  docstring names. Walking is unchanged on every map (`check-passable.py`,
+  every spawn and climb test), no reachable wall lost its collision
+  (`check-collision.py`), and two of the facility's watchtower cabins can
+  now be walked into from their stairs, as they were built to be.
+  `the_openings_over_a_players_head_can_be_shot_through` fires his two
+  shots from where he stood.
+
 ## Status, 10 October 2026 (night): the card a match ends on
 
 Conrad: when a match ends "nothing is being shown" - a survivor should be

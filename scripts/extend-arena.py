@@ -928,12 +928,12 @@ def east_district(parts):
 
     Everything here is laid out to satisfy the two rules this file has
     learnt the hard way. Nothing is built over anything that reaches head
-    height, because the generator welds those together: the blocks are
-    solid from the floor and the only things above the ground are their own
-    roofs. And every roof gets a flight, sited in the open lanes between
-    blocks where there is room for its run, because a roof without one is
-    exactly the 56 m2 of unreachable corner this whole exercise started
-    from.
+    height, because the generator used to weld those together (it now joins
+    them only within a step - see `build`): the blocks are solid from the
+    floor and the only things above the ground are their own roofs. And
+    every roof gets a flight, sited in the open lanes between blocks where
+    there is room for its run, because a roof without one is exactly the
+    56 m2 of unreachable corner this whole exercise started from.
     """
     # The old east wall goes back up, with gates in it, on the line it stood
     # on. Taking it away and leaving the side open was wrong twice over: the
@@ -1074,16 +1074,19 @@ def build(parts):
     """Every piece added to the arena, and the reason it is there.
 
     One rule governs where any of this may go, and it is not obvious from
-    the geometry: **nothing may be built over a column whose own obstacle
-    reaches 1.75 m.** `derive-brushes.obstacle_heights` gives such a column
-    the height of the highest surface anywhere in it, so a walkway thrown
-    over a ramp that reaches head height is not read as spanning it - the
-    two become one obstacle and everything between them fills in solid. The
-    first attempt here was a bridge over exactly such a ramp, and it sealed
-    the corner it was meant to open. `scripts/check-buildable.py` prints the
-    map of which columns those are; run it before adding any piece with air
-    under it. Anything ground-resting - a staircase, a block - is safe
-    anywhere, which is why both districts are built out of those.
+    the geometry: **anything with air under it needs more than a step of
+    it.** `derive-brushes.standing_runs` joins a run to whatever is within a
+    step under it, so a deck lower than that over an obstacle is read as one
+    more tread and the air between fills in solid. It was far worse when
+    this was written: `obstacle_heights` gave any column whose obstacle
+    reached 1.75 m the height of the highest surface anywhere in it, so a
+    walkway at any height over a ramp that reached head height welded down
+    to it. The first attempt here was a bridge over exactly such a ramp, and
+    it sealed the corner it was meant to open. `scripts/check-buildable.py`
+    takes a deck's height and marks the columns it would be joined to; run
+    it before adding any piece with air under it. Anything ground-resting - a
+    staircase, a block - is safe anywhere, which is why both districts are
+    built out of those.
     """
 
     # The north-west corner. A two storey building - ground floor at 0.00,

@@ -872,12 +872,13 @@ class Layout:
 
         For anything that stands on the floor *under a roof* and reaches
         above chest height: racks, machinery. As part of the structure mesh
-        such a thing is solid from the floor to the highest surface over it
-        - `obstacle_heights` extends anything that fills a player's height
-        up to the top of its column, and under a roof the top is the roof -
-        so a shelf becomes an invisible wall to the ceiling that bullets
-        cannot pass over. A node of its own is judged as a prop instead and
-        collides as exactly the box it is.
+        such a thing used to be solid from the floor to the highest surface
+        over it - `obstacle_heights` extended anything that filled a
+        player's height up to the top of its column, and under a roof the
+        top is the roof - so a shelf became an invisible wall to the ceiling
+        that bullets could not pass over. It now stops where the shelf does,
+        but a node of its own is still better: it is judged as a prop and
+        collides as exactly the box it is, not as a voxelised shell.
 
         One unit cube per surface, placed with a scale, so a hundred racks
         are a hundred nodes and one set of triangles.
