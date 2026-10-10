@@ -121,6 +121,12 @@ HARMONISE_REACH = 0.75
 # treated as blocking rather than as a doorway.
 PLAYER_BAND = 2.0
 
+# How many empty cells a wall may have in it and still be one wall. A wall
+# built in pieces - a storey on a storey, a slab's edge between them - leaves
+# a cell unmarked at the seam; more than that is an opening. See
+# `obstacle_heights`.
+SEAM = 1
+
 # The tallest thing a walking player steps up without jumping, from
 # `collide::MAX_STEP_UP`. What separates a staircase from a wall. Kept in
 # step with that constant by hand; they are two halves of one number.
@@ -456,16 +462,25 @@ def obstacle_heights(grid):
       map enterable. Inside it there is floor underfoot and roof far overhead
       but nothing at chest height, so the column reads as open. Were the roof
       allowed to vote, the building would be a solid block.
-    * Reading the height from the whole column is what stops every wall coming
+    * Following the wall up out of the band is what stops every wall coming
       out the same height as a player. A wall that reaches the top of the band
       is not 2 m tall, it is however tall it is, and a shot has to be stopped by
       the whole of it.
 
+    It is followed up, and only as far as it goes. This used to take the
+    highest surface anywhere in the column, and every opening above a
+    player's head went with it: a window in an upper storey, filled from the
+    ground to the eaves, and the air between a wall and a walkway over it
+    filled to the walkway - a nine metre wall nobody can see, with the
+    walkway's own stairs visible through it. A run stops at a gap of more
+    than `SEAM` cells. Whatever stands over the gap is a run of its own and
+    is emitted where it is (`standing_runs`).
+
     Surfaces are voxelised, not volumes, so a crate is a shell: the columns
     through its sides are solid all the way up and the column through its
-    middle is solid only where its lid is. Taking the highest surface rather
-    than a run of solid cells is what makes those agree - both give the height
-    of the lid.
+    middle is solid only where its lid is. Inside the band, taking the
+    highest surface rather than a run of solid cells is what makes those
+    agree - both give the height of the lid.
     """
     nx, ny, nz = grid.shape
     ground = 1  # row 0 is the ground plane itself.
@@ -480,14 +495,24 @@ def obstacle_heights(grid):
     for y in range(ground, ceiling):
         band[grid[:, y, :]] = y * CELL
 
-    whole = np.zeros((nx, nz))
-    for y in range(ground, ny):
-        whole[grid[:, y, :]] = y * CELL
+    # The wall that fills the band, followed up from the band's top row
+    # across seams of up to `SEAM` empty cells, and no further.
+    top = np.full((nx, nz), ceiling - 1)
+    climbing = grid[:, ceiling - 1, :].copy()
+    missing = np.zeros((nx, nz), dtype=np.int32)
+    for y in range(ceiling, ny):
+        here = grid[:, y, :]
+        top = np.where(climbing & here, y, top)
+        missing = np.where(here, 0, missing + 1)
+        climbing &= missing <= SEAM
+        if not climbing.any():
+            break
 
-    # Anything that fills the band is taller than a player and takes its real
-    # height; anything shorter is cover and takes the height it actually is.
+    # Anything that fills the band is taller than a player and takes the
+    # height of that wall; anything shorter is cover and takes the height it
+    # actually is.
     tall = band >= (ceiling - 1) * CELL - 1e-6
-    return np.where(band <= 0.0, 0.0, np.where(tall, whole, band))
+    return np.where(band <= 0.0, 0.0, np.where(tall, top * CELL, band))
 
 
 # --- reading the model, mesh by mesh ---------------------------------------
@@ -973,11 +998,26 @@ def standing_runs(grid, ground_height):
     of being dragged down to the ground, which is the whole point - a room
     under a roof keeps its air.
 
-    Each run does reach down to whatever is under it when the gap is no more
-    than a player could step up. Under a stair tread that is the tread below,
-    and the flight comes out solid; without it a tread is a slab with a hole
-    behind it and walking up a staircase is a series of small falls. Under a
-    gantry there is nothing within a step, so the space below stays open.
+    Each run does reach down to whatever is under it when its foot is no more
+    than a step above it. Under a stair tread that is the tread below, and the
+    flight comes out solid; without it a tread is a slab with a hole behind it
+    and walking up a staircase is a series of small falls. Under a gantry
+    there is nothing within a step, so the space below stays open.
+
+    A step, and not a cell more. This used to reach a cell further than a
+    step - surfaces a metre apart - and under the lintel of a window a metre
+    tall that is the sill: the window was filled, and so was every opening
+    of its size or less. And it reaches all the way down, to the surface it
+    stands on: what is under it ends at the bottom of its top cell, and a
+    foot a cell above that left a slit a quarter of a metre high through
+    every wall that was joined back together over a gap.
+
+    A run one cell deep has no thickness of its own. Under open air it is a
+    floor, and is given a cell of thickness downwards. With more of the same
+    solid within a step over it, it is that solid's underside - a lintel, a
+    slab - and needs nothing: the run above reaches down onto it. Given a
+    cell downwards as well, it hung a cell under what is drawn, across the
+    top of every doorway.
 
     Returns `(bottom, top, mask)` groups ready to be covered with rectangles.
     """
@@ -1003,11 +1043,15 @@ def standing_runs(grid, ground_height):
         if beginning.any():
             # Where the run's feet end up: down to whatever is within a step
             # below it, or its own bottom if there is nothing that close.
-            gap = low - below - 1
-            foot = np.where((gap <= reach) & (below >= 0), below + 1, low)
+            step = low - below
+            foot = np.where((step <= reach) & (below >= 0), below, low)
             # Nothing at all below and low enough to be a kerb: take it to
             # the ground, so a doorstep is a step rather than a ledge.
             foot = np.where((below < 0) & (low <= reach), 0, foot)
+
+            # Which of them have a run starting within a step over them,
+            # which will reach down onto them.
+            covered = grid[:, low + 1:low + 1 + reach, :].any(axis=1)
 
             finishes = np.where(beginning, end_row[:, low, :], np.int16(-1))
             for high in np.unique(finishes[beginning]):
@@ -1017,12 +1061,16 @@ def standing_runs(grid, ground_height):
                     if not mask.any():
                         continue
                     # Bottom and top are both the surfaces themselves. A run
-                    # one cell deep would then have no thickness at all, so
-                    # it is given a cell of it downwards - a tread has to be
+                    # one cell deep would then have no thickness at all. The
+                    # underside of something is covered by the run above it;
+                    # a floor is given a cell downwards - a tread has to be
                     # something to stand on, not a plane.
                     bottom = float(int(start_row) * CELL)
                     top = float(int(high) * CELL)
                     if top - bottom < CELL:
+                        mask = mask & ~covered
+                        if not mask.any():
+                            continue
                         bottom = max(top - CELL, 0.0)
                     if top <= bottom:
                         continue

@@ -1574,15 +1574,17 @@ material with a name `SURFACES` does not list - the whole yard - gets the
 plain grain it always had.
 
 Two rules govern what may be built, both found the hard way and both in that
-file's docstrings. **Nothing may be built over a column whose own obstacle
-reaches 1.75 m**: `obstacle_heights` gives such a column the height of the
-highest surface anywhere in it, so a walkway over a ramp that reaches head
-height is not read as spanning it — the two weld and everything between fills
-in solid. `scratchpad`-style probes aside, the map of which columns those are
-is what to check first. And **each tread of a staircase must be its own box**,
-spanning only its own depth: `voxelise` marks the cells a *surface* passes
-through, not the cells inside a volume, so nested boxes stamp every tread's top
-face onto every column below it and the flight comes back as floating slabs.
+file's docstrings. **Anything with air under it needs more than a step of
+it**: a run off the ground reaches down to whatever is within a step under
+it (that is what makes a staircase of separate treads solid), so a deck
+less than 0.65 m over an obstacle is read as one more tread and the air
+between fills in solid. `check-buildable.py` takes the deck's height and
+marks the columns it would be joined to. It used to be far worse - see
+*Every opening can be shot through* below. And **each tread of a staircase
+must be its own box**, spanning only its own depth: `voxelise` marks the
+cells a *surface* passes through, not the cells inside a volume, so nested
+boxes stamp every tread's top face onto every column below it and the
+flight comes back as floating slabs.
 
 **The arena's ways up are ramps, not stairs** (`Parts.ramp`), at Conrad's
 asking: thirteen of them, three metres wide, about thirty degrees where the
@@ -1749,11 +1751,47 @@ decides what is solid. This also subsumes two earlier patches - a stair tread
 at 2.25 m is a run, and so is the wall of an upstairs room - so the separate
 upper-storey pass is gone.
 
-A run does reach down to whatever is under it when the gap is no more than a
-step. Without that, a stair tread is a slab with a hole behind it: the player
+A run does reach down to whatever is under it when its foot is no more than
+a step above it - all the way down, to the surface it stands on. Without that, a stair tread is a slab with a hole behind it: the player
 steps up, their box overhangs the edge, and they drop into the gap. That is
 what the runs change broke and this restored, and it is the difference
 between a staircase and a series of small falls.
+
+**Every opening can be shot through** (`MAP_VERSION` 30). Conrad could not
+shoot through a window in the arena's tower room, nor through the openings
+under its high walkway, and the collision had filled both. Three rules in
+the generator did it, and all three are fixed:
+
+- `obstacle_heights` took any column whose obstacle filled the player's band
+  and made it solid to the *highest surface anywhere in it*. A window over a
+  player's head was filled from the ground to the eaves, and the 4.6 m of
+  air between a low wall and the walkway over it became a colonnade of
+  invisible 9 m pillars. It now follows the wall up from the band only as far
+  as it goes - across a seam of one empty cell (`SEAM`: two pieces of one
+  wall, stacked), and no further - and whatever stands over the gap is a run
+  of its own.
+- `standing_runs` joined a run to what was under it across *a metre* - a
+  cell further than the step it was meant to be - and under a window's
+  lintel that is the sill. A step, and not a cell more.
+- A run one cell deep was given its thickness downwards, which is right for
+  a floor and hung every lintel a cell under what is drawn, across the top
+  of every doorway. With more of the same solid within a step over it, it
+  is that solid's underside, and the run above already reaches down onto
+  it. And a joined run stopped a cell short of what it stood on, which left
+  a slit a quarter of a metre high through every wall joined over a gap.
+
+The arena went from 4,414 rays stopped where nothing was drawn to 1,425,
+and the yard from 10,305 to 6,546; walking is unchanged on all three maps
+(`check-passable.py`, every spawn test), and no wall a player can reach
+lost its collision (`check-collision.py`). Two of the facility's four
+watchtower cabins can now be walked into from their stairs, as
+`build-facility.py` meant them to be.
+`scripts/check-openings.py` is the check: from everywhere a player can
+stand it fires rays at the heights a gun is held, and lists where the
+derived structure stops one in open air. What it still lists is mostly not
+an opening - the crawlspace under the low end of a sloped ramp, filled from
+the floor by the ground pass; slab undersides given their thickness
+downwards - and its docstring says which.
 
 `scripts/check-reachable.py` is the other half of the picture: it asks
 whether the places a player can *stand* can be walked to, which a doorway
@@ -1850,11 +1888,12 @@ respect what it assumes. Every one of these was found by a test failing:
   Left open to the edge of the grid, `outside_the_art` reads the channel as
   void and seals it. `the_facility_river_cannot_be_entered` checks it.
 - **Anything tall under a roof is a node of its own** (`Layout.solid`). In the
-  structure mesh a rack or a machine fills a player's height, so
-  `obstacle_heights` extends it to the highest surface in its column - the
-  roof - and it becomes an invisible wall to the ceiling. A node is judged as
-  a prop and collides as exactly its box. Interior stairs need a hole in the
-  roof over the stairwell for the same reason.
+  structure mesh a rack or a machine fills a player's height, and
+  `obstacle_heights` used to extend it to the highest surface in its
+  column - the roof - as an invisible wall to the ceiling. It no longer does,
+  but a node is judged as a prop and collides as exactly its box, which is
+  still better than a voxelised shell. Interior stairs have a hole in the
+  roof over the stairwell for the same old reason.
 - **Long thin faces are cut** (`Kit.box`, `FACE_ASPECT`). The voxeliser
   samples a triangle by its area, so a 40 m wall a quarter metre thick comes
   out as a comb with gaps a player walks through.
