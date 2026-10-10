@@ -364,9 +364,10 @@ export const SNIPER = variant(RIFLE, {
   },
   flashSeconds: 0.06,
   // The bolt worked by hand after each shot: lifted, run back - which is when
-  // the case comes out, `casings.delay` - run home and turned down.
+  // the case comes out, `casings.delay`: `after` and `BOLT_WORK.back` in
+  // audio.js - run home and turned down.
   action: { bolt: null, boltAction: { after: 0.32, lift: 1.05, back: 0.085 }, trigger: 0.25, magazine: [0, -0.12, 0], charge: 0 },
-  casings: { port: [0.1, 0.1, -0.05], radius: 0.006, length: 0.051, delay: 0.52, seconds: 1.4 },
+  casings: { port: [0.1, 0.1, -0.05], radius: 0.006, length: 0.051, delay: 0.59, seconds: 1.4 },
   smoke: { size: [0.09, 0.55], opacity: 0.32 },
 });
 

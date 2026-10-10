@@ -83,6 +83,38 @@ export const SOUND_SETS = {
     "hit-flesh-4",
     "hit-flesh-5"
   ],
+  "fall": [
+    "fall-1",
+    "fall-2",
+    "fall-3",
+    "fall-4",
+    "fall-5"
+  ],
+  "reload-pistol-out": [
+    "reload-pistol-out-1"
+  ],
+  "reload-pistol-in": [
+    "reload-pistol-in-1"
+  ],
+  "reload-pistol-slide": [
+    "reload-pistol-slide-1"
+  ],
+  "reload-mag-out": [
+    "reload-mag-out-1"
+  ],
+  "reload-mag-in": [
+    "reload-mag-in-1",
+    "reload-mag-in-2"
+  ],
+  "reload-charge": [
+    "reload-charge-1",
+    "reload-charge-2",
+    "reload-charge-3",
+    "reload-charge-4"
+  ],
+  "bolt": [
+    "bolt-1"
+  ],
   "hit-ground": [
     "hit-ground-1",
     "hit-ground-2",
@@ -96,13 +128,6 @@ export const SOUND_SETS = {
     "hit-metal-3",
     "hit-metal-4",
     "hit-metal-5"
-  ],
-  "fall": [
-    "fall-1",
-    "fall-2",
-    "fall-3",
-    "fall-4",
-    "fall-5"
   ],
   "voice-a-pain": [
     "voice-a-pain-1",

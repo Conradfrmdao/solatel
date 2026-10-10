@@ -947,7 +947,7 @@ export class Remotes {
     // long as that gun takes.
     if (entry.reloading && !player.reloading) {
       player.reloadAt = player.age;
-      this.reloads.push({ at: [entry.x, entry.y, entry.z], seconds: this._reloadSeconds(player) });
+      this.reloads.push({ at: [entry.x, entry.y, entry.z], seconds: this._reloadSeconds(player), weapon: player.weapon });
     }
     player.reloading = entry.reloading;
     if (this.throws.has(player.id)) {

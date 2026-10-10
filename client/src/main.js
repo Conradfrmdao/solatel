@@ -706,7 +706,7 @@ async function boot() {
             : 0;
           world.landRound(key, landing, Math.max(0, delay), mine, () => {
             if (landing.struck) impacts.strike(origin ?? landing.at, landing.at, landing.hit_player, camera.position);
-            if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward);
+            if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward, world.struckAt(...landing.at));
             if (landing.hit_player) {
               // Into somebody else: blood out of them, the round's blow, a
               // cry in their own voice, and the body jolted by it. Whose body
@@ -852,7 +852,8 @@ async function boot() {
         own: true,
       });
     }
-    if (local.takeReloadStart()) audio.reload(local.gun.reloadSeconds);
+    if (local.takeReloadStart()) audio.reload(local.gun.reloadSeconds, local.weapon);
+    else if (local.reloadMs === 0) audio.cancelReload();
     if (local.takeThrow()) viewmodel.onThrow();
 
     // 4. Render state, interpolated between the last two ticks.
@@ -1018,6 +1019,7 @@ async function boot() {
     viewmodel.setAiming(playing && input.aiming && local.health > 0 && local.reloadMs === 0);
     viewmodel.setReload(
       local.reloadMs > 0 ? 1 - local.reloadMs / (local.gun.reloadSeconds * 1000) : null,
+      local.gun.reloadSeconds,
     );
     viewmodel.setEyeOffset(local.eyeOffset ?? SIM.eyeOffset);
     if (dying) {
@@ -1062,7 +1064,7 @@ async function boot() {
     world.setZone(local.zoneRadius);
     world.setGrenades(local.matchId ? local.liveGrenades : []);
     remotes.update(now, dt, local.id, camera.position, camera);
-    for (const { at, seconds } of remotes.takeReloads()) audio.reloadAt(at, eye, forward, seconds);
+    for (const { at, seconds, weapon } of remotes.takeReloads()) audio.reloadAt(at, eye, forward, seconds, weapon);
     // Everybody else's footsteps, by what they walk on, and this player's own.
     for (const step of remotes.takeSteps()) {
       const surface = world.surfaceAt(step.at[0], step.at[1], step.at[2]);
