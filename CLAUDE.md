@@ -1121,10 +1121,25 @@ knows which gun it is holding.
 `viewmodel.js`, tuned from `weapons.js` - one entry per weapon, every number
 in it, nothing hard-coded in the controller. The pose each frame is layers
 added together: hip-to-sights, sway from turning, a breath when still, a
-figure-of-eight bob paced by *distance covered* (so it quickens with speed),
-a lift in the air and a dip on landing, then recoil. Every layer eases with
-an exponential that takes `dt`, so the feel is the same at any frame rate,
-and most of them are steadied with the sights up.
+figure-of-eight bob paced by *distance covered* (so it quickens with speed)
+that turns the gun with each stride as well as moving it, a lag and a cant
+when going sideways (`move`), a lift in the air and a dip on landing, then
+recoil. Every layer eases with an exponential that takes `dt`, so the feel
+is the same at any frame rate, and most of them are steadied with the
+sights up. Each gun has its own numbers, after the brief Conrad gave with
+pictures of the four: the pistol light and quick to settle with a small
+flip, the SMG a fast buzz that settles at once, the machine gun slow - more
+lag, a deeper breath and stride, a bigger shove - and the sniper rifle one
+big slow kick.
+
+**Where each gun sits at the hip is after those pictures** (`hip` in
+`weapons.js`): in the lower right, the sight a little under the middle of
+the picture and right of it, turned in so the muzzle points near the
+crosshair and the gun's left side is seen, canted in a little, with the
+support hand on the handguard and its forearm coming up out of the bottom;
+the pistol out in both hands near the middle, level, and at arm's length
+with the sights up. For months they sat lower and further out and the
+hands were never seen.
 
 **Aiming down the sights is solved, not tuned.** The gun's model gives the
 two sight points - the optic's tube ends, or the iron sights - and the rig
@@ -1180,20 +1195,37 @@ how each closes on the rifle, measured against the rifle it would be holding
 with `grip.js`, which both modules use. It does not supply the **arms**: the
 first version bolted the whole third-person pose onto the first-person
 rifle, which put the soldier's shoulders in front of the camera and pushed
-the sleeves up through the bottom of the screen as stumps. Each arm now
-hangs from a point below the frame (`arms` in `weapons.js`) and is solved
-every frame (`_poseArms`, two bones, elbow bent towards a pole, the arm
-turned as a whole frame so the elbow hinges the way the clip's did, half
-the hand's roll handed to the forearm). The left palm sits on the handguard
-rather than out by the front sight where the clip holds it, because no arm
-reaches that far from below the screen.
+the sleeves up through the bottom of the screen as stumps.
+
+**An arm is worked out from the hand back** (`_poseArms`), every frame. The
+forearm leaves the wrist in line with the hand - a wrist at rest, measured
+off the model as made (`straight`) - turned towards where that elbow hangs
+(`arms.*.elbow` in `weapons.js`) by `WRIST_BEND`, and further, a step at a
+time up to `WRIST_MOST`, while the elbow or its sleeve would be in the
+picture or above the hand. With the sights up the wrists are behind the gun
+and the forearms are what is seen, so they bend further (`WRIST_BEND_AIMED`)
+towards a lower elbow (`elbowAimed`) and fall away under the gun - a pistol
+held out at the eye, its forearms coming back along it, filled the bottom
+of the picture with sleeves; the pistol's wrists, hidden in two hands, bend
+further at the hip too (`arms.wrist`). The upper arm runs from the elbow back towards
+the shoulder, which is where a person's is (beside and below the eyes) and
+goes wherever the arm's length puts it, out of sight. The arm is turned as
+a whole frame so the elbow hinges the way the clip's did, and half the
+hand's roll goes to the forearm. It used to be solved the other way, from
+a shoulder half a metre below the eye to the hand: every elbow came out
+under its hand and every wrist was bent 80 to 100 degrees - forearms
+standing up out of the bottom of the screen with the hands folded over
+them, which Conrad saw as arms bending. They are 20 to 35 now, through a
+whole reload, and no elbow is ever in the picture.
 
 **Each hand is fitted to the gun it holds** (`fingers.js`, `_fitHands`), once
 per gun, because the clip's hands were made for the rifle the game started
 with and put fingers into every real gun since - the AK's grip is thick and
 raked, the M700's is a sporting stock's wrist. The hand is turned to that
-gun's hold (`HOLDS`: the right along the grip's rake, the left palm up under
-the handguard, thumb along the near side and fingers round the far one),
+gun's hold (`HOLDS`: the right along the grip's rake, the left cupped under
+the handguard with its fingers reaching forward and up round the far side,
+so its forearm comes up to it from below - with the fingers straight across
+the gun, a straight wrist sent the forearm out sideways),
 brought in from outside along the way its palm faces until the palm rests
 on the gun's own triangles - the grip's measured point is on its centre
 line, which set the palm *inside* it - and each finger closed from open
@@ -1204,15 +1236,16 @@ is distance tests against the gun's triangles near the hand, in a grid; it
 never reads a point deep inside the gun as clear, because it only ever
 approaches from outside. The pistol's left hand cups the right and keeps
 the clip's. Remote players are still posed by the clip and `_reachLeft`.
+The support hand holds the middle of the handguard, where it is seen:
+each gun's file puts it at the back, by the magazine (`support`), and
+`supportAhead` moves it forward; a reload carries the hand from there.
 
 **The arms are lit as the gun is**,
 by the weapon scene's own lights, not by the map's baked light: they are
 drawn round that scene's camera at the origin, so the baked light they read
 was whatever stood at the middle of the map, with their facings in the
 camera's frame - sleeves dark or off-colour, whatever skin was worn
-(`dressed(..., { baked: false })`). `hip.position` is high enough that
-the support forearm is in the frame; lower it and the arm is cut off at the
-wrist.
+(`dressed(..., { baked: false })`).
 
 **Each shot throws a case and leaves a puff of smoke**, both pooled and
 tuned in `weapons.js` (`casings`, `smoke`). Once out of the rifle they live
@@ -2075,7 +2108,12 @@ dust where the server said, when the streak gets there.
 prism, and a 3x and 4x scope. Through a magnified one, at full aim, the
 picture is the scope's own: the world at its magnification in a round
 eyepiece, the gun hidden, and a reticle whose holdover marks are worked out
-from the shared flight (`hud.js`).
+from the shared flight (`hud.js`). The red dot is seen on the point of aim
+from wherever the eye is behind it, as a real one is (`_placeDot`): it is
+drawn on its glass where the line from the eye straight ahead crosses it,
+and not at all where that line misses the glass - so not from the hip.
+Painted on the glass, it rode the gun, and the bob and sway kept with the
+sights up carried it off the middle of the picture, where the shot goes.
 
 **The models are real ones**: an AK-47, an MP5, an M700 and an M1911 from
 Stein Games' CC0 pack, the scope from 3DModelsCC0's (ATTRIBUTION.md), and

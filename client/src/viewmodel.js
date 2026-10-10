@@ -24,6 +24,7 @@
 //   sway             the weapon lagging a turn of the view, then settling
 //   idle breath      standing still only
 //   bob              moving on the ground, paced by distance covered
+//   strafe lag       going sideways, the gun lagging out and canting
 //   air and landing  a lift while airborne, a dip when coming down
 //   recoil           kick back, up and sideways per shot, recovering
 //
@@ -102,6 +103,7 @@ const _bend = new THREE.Vector3();
 const _upper = new THREE.Vector3();
 const _lower = new THREE.Vector3();
 const _hinge = new THREE.Vector3();
+const _hang = new THREE.Vector3();
 const _armTurn = new THREE.Quaternion();
 const _foreTurn = new THREE.Quaternion();
 const _roll = new THREE.Quaternion();
@@ -266,15 +268,43 @@ function setWorldRotation(bone, world) {
  *  wrings the wrist into a twisted rope instead. */
 const FOREARM_ROLL = 0.5;
 
+/** How far a wrist bends, in radians, turning the forearm from in line with
+ *  the hand towards where the elbow hangs (`_poseArms`): what a hand holding
+ *  a gun bends easily, and not the right angle a forearm solved from the
+ *  shoulder alone came to. */
+const WRIST_BEND = 0.5;
+
+/** How far it bends with the sights up, where the wrists are behind the gun
+ *  and the forearms are what is seen: they fall away under it out of the
+ *  picture, rather than coming back along it at the eye - which, true as it
+ *  is of a pistol held out, filled the bottom of the picture with sleeves. */
+const WRIST_BEND_AIMED = 1.25;
+
+/** How far it may bend, and in what steps, when less would leave the elbow
+ *  in the picture: a pistol held out at the eye has its forearms coming back
+ *  past the face otherwise. */
+const WRIST_MOST = 1.35;
+const WRIST_STEP = 0.1;
+
+/** How far outside the picture an elbow has to be, in metres: the sleeve's
+ *  reach round it, so the sleeve is out of the picture too. */
+const SLEEVE = 0.07;
+
 /** How long the rifle is out of the way for a throw. */
 const THROW_SECONDS = 0.65;
+
+/** Metres a second at which the bob, and the lag of a gun carried sideways,
+ *  are at their fullest: a run. */
+const FULL_SPEED = 8;
 
 /** Of a change of gun, how much is spent taking the old one down: the rest
  *  brings the new one up. */
 const PUT_AWAY = 0.4;
 
-/** How far down and tipped a gun goes, out of sight, while guns change. */
-const LOWERED = { drop: 0.34, tip: 0.85 };
+/** How far down, tipped and rolled out a gun goes, out of sight, while guns
+ *  change: down past the bottom of the picture, muzzle first, turning over
+ *  to the right as a hand takes it down. */
+const LOWERED = { drop: 0.34, tip: 0.85, roll: 0.45 };
 
 /** Seconds a trigger stays pulled for a shot, and takes to come back. */
 const TRIGGER_PULL = 0.05;
@@ -300,10 +330,22 @@ function onGrip(rake) {
   };
 }
 
-/** A left hand palm up under a handguard, rolled a little to the gun's
- *  right so the fingers wrap its far side and the thumb lies along the near
- *  one, the fingers angled a little forward. */
-const UNDER = { palm: new THREE.Vector3(0.45, 1, 0), across: new THREE.Vector3(-0.34, 0, -0.94) };
+/**
+ * A left hand cupped under a handguard: the fingers reaching forward and up
+ * round its far side, the palm up against its underside, and so the forearm
+ * coming up to it from below and behind, in line with the hand - as a
+ * shooter holds one. With the fingers straight across the gun instead, a
+ * straight wrist sent the forearm out sideways to the left, its elbow in
+ * the bottom of the picture; bent to come from below, the wrist folded over
+ * at a right angle.
+ */
+function cupped(fingers, up) {
+  const reach = fingers.clone().normalize();
+  const palm = up.clone().addScaledVector(reach, -up.dot(reach)).normalize();
+  // A left hand's knuckles, little finger to index, run palm × fingers.
+  return { palm, across: new THREE.Vector3().crossVectors(palm, reach) };
+}
+const UNDER = cupped(new THREE.Vector3(0.45, 0.45, -0.77), new THREE.Vector3(0.3, 1, 0));
 
 /**
  * How each gun is held, in its own frame (+X its right, +Y up, the muzzle
@@ -386,6 +428,8 @@ export class Viewmodel {
     this.sway = { x: 0, y: 0, pitch: 0, yaw: 0 };
     this.bobPhase = 0;
     this.bobWeight = 0;
+    /** How fast the player is going sideways, -1 to 1 of a run, eased. */
+    this.strafe = 0;
     this.airLift = 0;
     this.landDip = 0;
     this.recoil = { back: 0, rise: 0, yaw: 0, roll: 0 };
@@ -807,6 +851,19 @@ export class Viewmodel {
     if (!hands.handR || !hands.handL || !this.rifle) return;
     // Each finger open, as the model was made, before the clip curls it.
     const fingers = { right: fingerChains(hands.handR, 'Right'), left: fingerChains(hands.handL, 'Left') };
+    // And each wrist straight: which way the forearm leaves the hand, in the
+    // hand's own frame, as the model was made - in line with it.
+    body.updateMatrixWorld(true);
+    const straight = {};
+    for (const [side, prefix] of [['right', 'Right'], ['left', 'Left']]) {
+      const fore = bones[`mixamorig${prefix}ForeArm`];
+      const hand = bones[`mixamorig${prefix}Hand`];
+      if (!fore || !hand) return;
+      straight[side] = fore.getWorldPosition(new THREE.Vector3())
+        .sub(hand.getWorldPosition(new THREE.Vector3()))
+        .normalize()
+        .applyQuaternion(hand.getWorldQuaternion(new THREE.Quaternion()).invert());
+    }
 
     const mixer = new THREE.AnimationMixer(body);
     mixer.clipAction(pose).play();
@@ -861,8 +918,10 @@ export class Viewmodel {
         foreTurn: fore.getWorldQuaternion(new THREE.Quaternion()),
         // Which way the forearm runs, in its own space: along the hand.
         foreAxis: hand.position.clone().normalize(),
+        straight: straight[side],
         shoulder: new THREE.Vector3(...arms[side].shoulder),
-        elbow: new THREE.Vector3(...arms[side].elbow).normalize(),
+        elbow: new THREE.Vector3(...arms[side].elbow),
+        elbowAimed: new THREE.Vector3(...(arms[side].elbowAimed ?? arms[side].elbow)),
         fingers: fingers[side],
         frame: frames[side],
       });
@@ -899,7 +958,8 @@ export class Viewmodel {
     for (const limb of this.arms) {
       this._clipGrip(limb, this.config, limb.grip);
       limb.shoulder.set(...arms[limb.side].shoulder);
-      limb.elbow.set(...arms[limb.side].elbow).normalize();
+      limb.elbow.set(...arms[limb.side].elbow);
+      limb.elbowAimed.set(...(arms[limb.side].elbowAimed ?? arms[limb.side].elbow));
     }
     this._fitHands();
   }
@@ -968,18 +1028,39 @@ export class Viewmodel {
   /**
    * Both arms, onto the rifle where it is this frame.
    *
-   * A two-bone solve from the shoulder to the wrist, with the elbow bent
-   * towards `elbow`. The upper arm and forearm are turned as whole frames -
-   * direction and the plane they bend in - from how the pose held them, so
-   * the elbow hinges the way it did in the clip rather than whichever way
-   * the shortest rotation happens to leave it. The hand is then set to how
-   * the pose held the rifle, and half its roll is handed back to the
-   * forearm.
+   * Worked out from the hand back, not from the shoulder forward. The
+   * forearm leaves the wrist in line with the hand - a wrist at rest - and
+   * is turned towards where the elbow hangs by `WRIST_BEND`, or as much
+   * further as keeps the elbow and its sleeve out of the picture; the elbow
+   * is a forearm's length along it, and the upper arm runs from there
+   * towards the shoulder at its own length, the shoulder going wherever
+   * that puts it, out of sight. Solved the other way, from a shoulder below
+   * the screen to a hand in front of the eye, every elbow came out under its
+   * hand and every wrist bent at a right angle: forearms standing up out of
+   * the bottom of the screen with the hands folded over the top of them,
+   * which Conrad saw as arms bending. The upper arm and forearm are turned
+   * as whole frames - direction and the plane they bend in - from how the
+   * pose held them, so the elbow hinges the way it did in the clip rather
+   * than whichever way the shortest rotation happens to leave it. The hand
+   * is then set to how it holds the gun, and half its roll is handed back to
+   * the forearm.
    */
   _poseArms() {
     if (!this.arms || !this.rifle) return;
     this.root.updateMatrixWorld(true);
     const rifle = this.rifle.matrixWorld;
+    // The picture's edges, as slopes from the eye, for keeping elbows out:
+    // a point is seen if it is less than a sleeve's reach outside every one
+    // of them, measured square to each.
+    const tall = Math.tan((this.camera.fov * Math.PI) / 360);
+    const wide = tall * this.camera.aspect;
+    const across = 1 / Math.sqrt(1 + wide * wide);
+    const up = 1 / Math.sqrt(1 + tall * tall);
+    const seen = (p) => Math.min(
+      (-p.z * wide - Math.abs(p.x)) * across,
+      (-p.z * tall - Math.abs(p.y)) * up,
+      -p.z,
+    ) > -SLEEVE;
     for (const limb of this.arms) {
       if (limb.side === 'left' && this.leftShift.lengthSq() > 0) {
         const { x, y, z } = this.leftShift;
@@ -989,29 +1070,39 @@ export class Viewmodel {
       }
       _target.decompose(_wrist, _grip, _scaleOut);
 
-      const reach = limb.upperLength + limb.lowerLength;
-      _shoulder.copy(limb.shoulder);
-      _reach.subVectors(_wrist, _shoulder);
-      let distance = _reach.length();
-      // Out of reach: the shoulder comes forward rather than the hand
-      // leaving the rifle.
-      if (distance > reach * 0.995) {
-        _shoulder.addScaledVector(_reach, 1 - (reach * 0.995) / distance);
-        _reach.subVectors(_wrist, _shoulder);
-        distance = _reach.length();
+      // From the wrist to the elbow: in line with the hand, turned towards
+      // where the elbow hangs by `WRIST_BEND` - and on towards it, a step at
+      // a time up to `WRIST_MOST`, while the elbow would still be in the
+      // picture, or above the hand: elbows hang below the hands that hold a
+      // gun, and the M700's steeply raked grip, held with a straight wrist,
+      // put that elbow up by the ear with its sleeve down the edge of the
+      // picture.
+      _upper.copy(limb.straight).applyQuaternion(_grip);
+      _hang.lerpVectors(limb.elbow, limb.elbowAimed, this.aim);
+      _reach.subVectors(_hang, _wrist).normalize();
+      const off = _upper.angleTo(_reach);
+      _bend.crossVectors(_upper, _reach);
+      // Straight away from where the elbow hangs: any turn will do.
+      if (_bend.lengthSq() < 1e-10) _bend.crossVectors(_upper, limb.shoulder);
+      _bend.normalize();
+      const easy = this.config.arms.wrist ?? WRIST_BEND;
+      let turn = Math.min(off, easy + (WRIST_BEND_AIMED - easy) * this.aim);
+      for (;;) {
+        _lower.copy(_upper).applyAxisAngle(_bend, turn);
+        _elbow.copy(_wrist).addScaledVector(_lower, limb.lowerLength);
+        const most = Math.min(off, WRIST_MOST);
+        if (turn >= most || (!seen(_elbow) && _elbow.y <= _wrist.y)) break;
+        turn = Math.min(most, turn + WRIST_STEP);
       }
-      _reach.divideScalar(distance);
-      const l1 = limb.upperLength;
-      const l2 = limb.lowerLength;
-      const cos = Math.max(-1, Math.min(1, (l1 * l1 + distance * distance - l2 * l2) / (2 * l1 * distance)));
-      const sin = Math.sqrt(1 - cos * cos);
-      _bend.copy(limb.elbow).addScaledVector(_reach, -limb.elbow.dot(_reach)).normalize();
-      _elbow.copy(_shoulder).addScaledVector(_reach, l1 * cos).addScaledVector(_bend, l1 * sin);
+      // The upper arm from the elbow towards the shoulder, at its length.
+      _upper.subVectors(limb.shoulder, _elbow).normalize();
+      _shoulder.copy(_elbow).addScaledVector(_upper, limb.upperLength);
 
-      _upper.subVectors(_elbow, _shoulder).normalize();
-      _lower.subVectors(_wrist, _elbow).normalize();
+      // Shoulder to elbow and elbow to wrist, for turning the bones.
+      _upper.negate();
+      _lower.negate();
       _hinge.crossVectors(_upper, _lower);
-      if (_hinge.lengthSq() < 1e-8) _hinge.crossVectors(_upper, _bend);
+      if (_hinge.lengthSq() < 1e-8) _hinge.crossVectors(_upper, limb.elbow);
       _hinge.normalize();
 
       alignFrames(limb.upper, limb.hinge, _upper, _hinge, _armTurn).multiply(limb.armTurn);
@@ -1156,12 +1247,24 @@ export class Viewmodel {
 
     // Bob, paced by distance so it quickens with speed.
     const moving = onGround && speed > 0.5;
-    this.bobWeight = damp(this.bobWeight, moving ? Math.min(1, speed / 8) : 0, c.bob.fade, dt);
+    this.bobWeight = damp(this.bobWeight, moving ? Math.min(1, speed / FULL_SPEED) : 0, c.bob.fade, dt);
     this.bobPhase += speed * dt * c.bob.cyclesPerMetre * Math.PI * 2;
     const bob = c.bob.amount * this.bobWeight * steady(c.ads.bobScale);
     const bobX = Math.sin(this.bobPhase) * bob;
     const bobY = Math.sin(this.bobPhase * 2) * bob * 0.5 - bob * 0.3;
     const bobRoll = Math.sin(this.bobPhase) * c.bob.roll * this.bobWeight * steady(c.ads.bobScale);
+    // The stride turns the gun a little as well: across with each step, and
+    // up and down with each footfall.
+    const swing = c.bob.rotation * this.bobWeight * steady(c.ads.bobScale);
+    const bobYaw = Math.sin(this.bobPhase) * swing;
+    const bobPitch = Math.sin(this.bobPhase * 2) * swing * 0.5;
+
+    // Going sideways, the gun lags the way the body goes: out, and canted.
+    const across = onGround && this.hasEye
+      ? this.eyeVelocity.x * Math.cos(yaw) - this.eyeVelocity.z * Math.sin(yaw)
+      : 0;
+    this.strafe = damp(this.strafe, clamp(across / FULL_SPEED, 1), c.move.rate, dt);
+    const lag = this.strafe * steady(c.ads.bobScale);
 
     // Breath, fading out as the bob fades in.
     const breath = (1 - this.bobWeight) * steady(c.ads.swayScale);
@@ -1216,7 +1319,7 @@ export class Viewmodel {
     const hip = this.hipPosition;
     const ads = this.adsPosition;
     this.root.position.set(
-      hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX,
+      hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX - lag * c.move.shift,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
         - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop,
@@ -1228,10 +1331,11 @@ export class Viewmodel {
     // feel welded to the screen looking up and down; with the sights up it
     // must not, or they would leave the middle.
     this.root.rotation.set(
-      hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch
+      hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch + bobPitch
         + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.7 - lowered * LOWERED.tip,
-      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + reload * c.reloadPose.yaw,
-      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + reload * c.reloadPose.roll + seat * 0.06,
+      hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + bobYaw + reload * c.reloadPose.yaw,
+      hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + lag * c.move.roll + reload * c.reloadPose.roll + seat * 0.06
+        - lowered * LOWERED.roll,
       'YXZ',
     );
 
@@ -1254,7 +1358,33 @@ export class Viewmodel {
 
     this._workParts();
     this._poseArms();
+    this._placeDot();
     this._updateDebris(dt);
+  }
+
+  /**
+   * A red dot is seen on the point of aim from wherever the eye is behind
+   * it - that is what one is for - so it is drawn on its glass where the
+   * line from the eye straight ahead crosses it, and not at all where that
+   * line misses the glass, as a real one is not seen from the hip. Painted
+   * on the glass instead, it rode the gun: a bob or a sway with the sights
+   * up carried it off the middle of the picture, where the shot goes.
+   */
+  _placeDot() {
+    const dot = this.rifle?.dot;
+    if (!dot) return;
+    _inverse.copy(this.rifle.matrixWorld).invert();
+    _v.setFromMatrixPosition(this.camera.matrixWorld).applyMatrix4(_inverse);
+    _w.set(0, 0, -1).transformDirection(this.camera.matrixWorld).transformDirection(_inverse);
+    const along = _w.z !== 0 ? (dot.z - _v.z) / _w.z : -1;
+    const x = _v.x + _w.x * along;
+    const y = _v.y + _w.y * along;
+    const seen = along > 0 && Math.hypot(x, y - dot.height) < dot.radius;
+    dot.red.visible = seen;
+    dot.halo.visible = seen;
+    if (!seen) return;
+    dot.red.position.set(x, y, dot.z);
+    dot.halo.position.set(x, y, dot.haloZ);
   }
 
   /**
@@ -1344,18 +1474,20 @@ export class Viewmodel {
       magazine.node.visible = shown;
     }
 
-    // The left hand: off the support onto the magazine, or the handle.
+    // The left hand: off where it holds the gun onto the magazine, or the
+    // handle.
     const points = this.rig.model.userData.points;
+    _support.fromArray(this.config.arms.leftPalm);
     if (carry > 0 && points?.magazine) {
       _hand.fromArray(points.magazine).add(_shift.set(mx * out, my * out, mz * out).divideScalar(UNIT));
-      this.leftShift.copy(_hand.sub(_support.fromArray(points.support)).multiplyScalar(carry));
+      this.leftShift.copy(_hand.sub(_support).multiplyScalar(carry));
     }
     if (atHandle > 0 && bolt) {
       // The handle stands out on the gun's right; the hand goes over to it.
       bolt.node.getWorldPosition(_hand);
       this.rifle.worldToLocal(_hand);
       _hand.x += HANDLE_REACH / UNIT;
-      this.leftShift.lerp(_hand.sub(_support.fromArray(points.support)), atHandle);
+      this.leftShift.lerp(_hand.sub(_support), atHandle);
     }
   }
 
