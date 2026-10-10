@@ -27,9 +27,9 @@ export const LEVELS = ['low', 'medium', 'high', 'ultra'];
  * grade); without it the frame is drawn straight to the canvas. `bloom` and
  * `ao` are its two expensive passes - ambient occlusion alone measured 60 fps
  * against 23 on an Intel Iris Xe. `shadows` is the shadow map's size in
- * texels over the same area at every level. `grass` is how far out, as a
- * share of the full radius, and `sky` whether birds and chimney smoke are
- * drawn.
+ * texels over the same area at every level. `grass` is the share of the
+ * map's tufts planted - fewer everywhere, never nearer - and `sky` whether
+ * birds and chimney smoke are drawn.
  */
 export const PRESETS = {
   low: { ratio: 1, scale: 0.75, post: false, bloom: false, ao: false, shadows: 1024, grass: 0.55, sky: false },
