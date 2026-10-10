@@ -40,10 +40,10 @@ export const WEAPON_IDS = ['pistol', 'smg', 'rifle', 'lmg', 'sniper'];
  *  textures. */
 const FILE = { rifle: 'ak47', lmg: 'ak47', smg: 'mp5', sniper: 'm700', pistol: 'm1911' };
 
-/** The pistol's support hand cups the right one rather than holding the
- *  gun: this far from the grip, in model units - under it and a little
- *  ahead. */
-const PISTOL_SUPPORT = [-0.02, -0.32, -0.14];
+/** Where the pistol's support hand starts from, to be brought in over the
+ *  right one (`OVER` in viewmodel.js): this far from the grip, in model
+ *  units - on its left, a little down it. */
+const PISTOL_SUPPORT = [-0.15, -0.1, 0.02];
 
 /** Where the eye is with the sights up: on the stock, this far behind the
  *  grip, in metres - a cheek on the comb. The sights are seen from there,
@@ -62,7 +62,7 @@ const PART_NAMES = ['magazine', 'bolt', 'trigger', 'hammer'];
  *   muzzle    the face of the muzzle, on the bore
  *   magazine  where a hand takes the magazine
  *   port      where spent cases leave
- *   support   where the left palm closes (the pistol's cups the right hand)
+ *   support   where the left palm closes (the pistol's wraps the right hand)
  *   rail      where an optic's mount sits: its top, and its middle along z
  *   irons     the iron sights' line, as [height, z] at the front and rear
  *   cheek     where the eye is along z with the sights up, or undefined

@@ -63,10 +63,11 @@ const RELOAD_AUDIBLE = 22;
 /**
  * How far a round striking the world is heard, in metres, and how steeply
  * it falls away inside that. A strike is a small sound: next to it, it is a
- * crack and a spray of grit; across the yard it is nothing under the shot
- * that sent it. It used to carry as far as a gunshot and land as hard.
+ * crack and a spray of grit; a few paces off it is a tick, and past ten
+ * metres nothing under the shot that sent it. It carried 25 m once, and
+ * Conrad heard his rounds land on a wall he was nowhere near.
  */
-const IMPACT_AUDIBLE = 25;
+const IMPACT_AUDIBLE = 10;
 const IMPACT_FALL = 2;
 
 /**
@@ -569,9 +570,9 @@ export class Audio {
   /**
    * A round striking the world, at the far end of a shot that missed, on
    * `surface` (`world.struckAt`: `metal`, `wood`, `soft`, `grass`, or
-   * `concrete`): steel rings, earth, sand and rubber take it dull, and
-   * concrete and wood crack and throw grit. Heard only close
-   * (`IMPACT_AUDIBLE`).
+   * `concrete`): steel rings, earth, sand and rubber take it as a thump,
+   * and concrete and wood crack and throw grit - wood with the top taken
+   * off. Heard only close (`IMPACT_AUDIBLE`).
    */
   impact(at, listener, forward, surface = 'concrete') {
     if (!this.ready) return;
@@ -581,25 +582,25 @@ export class Audio {
     if (!place) return;
     const { context } = this;
     const start = context.currentTime + place.delay;
-    const level = 0.9 * (1 - distance / IMPACT_AUDIBLE) ** IMPACT_FALL;
+    const level = 0.7 * (1 - distance / IMPACT_AUDIBLE) ** IMPACT_FALL;
     const rate = 0.94 + Math.random() * 0.12;
     if (surface === 'metal') {
       this._play('hit-metal', place.input, start, 0.75 * level, rate);
       return;
     }
-    // Earth swallows the top of it; wood and concrete crack.
+    if (surface === 'grass' || surface === 'soft') {
+      this._play('hit-dirt', place.input, start, level, rate);
+      return;
+    }
     const tone = context.createBiquadFilter();
     tone.type = 'lowpass';
-    const dull = surface === 'grass' || surface === 'soft';
-    tone.frequency.value = dull ? 2400 : 9000;
+    tone.frequency.value = surface === 'wood' ? 4500 : 12000;
     tone.Q.value = 0.5;
     tone.connect(place.input);
-    if (!this._play('hit-ground', tone, start, level, rate)) return;
-    if (!dull) {
-      this.burst(place.input, start, {
-        gain: 0.55 * level, attack: 0.0002, decay: 0.012, type: 'highpass', frequency: surface === 'wood' ? 1400 : 2600, q: 0.7,
-      });
-    }
+    if (!this._play('hit-hard', tone, start, level, rate)) return;
+    this.burst(place.input, start, {
+      gain: 0.45 * level, attack: 0.0002, decay: 0.01, type: 'highpass', frequency: surface === 'wood' ? 1400 : 2600, q: 0.7,
+    });
   }
 
   /** A round into somebody: a heavy, wet blow, from where they stood. */
@@ -843,7 +844,7 @@ export class Audio {
     });
     // Debris coming down after it.
     for (let i = 0; i < 3; i += 1) {
-      this._play('hit-ground', out, start + 0.35 + Math.random() * 0.6, 0.35 * place.gain, 0.8 + Math.random() * 0.3);
+      this._play('hit-dirt', out, start + 0.35 + Math.random() * 0.6, 0.35 * place.gain, 0.8 + Math.random() * 0.3);
     }
   }
 

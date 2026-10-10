@@ -4,6 +4,35 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026 (evening): too big, the pistol, and a voice in the wall
+
+Conrad played the guns above live and sent two photographs: "the weapon is
+too big ... the size before was okay ... the handling is okay"; the pistol
+"very stupid ... is that how you think a pistol is being held?"; and the
+wall "still making a human sound". Done:
+
+- **The long guns are back at the size they were** (`hip`): 0.4 m from the
+  eye in the lower right, turned in a little so the support hand is seen.
+  Brought nearer and up towards the middle to show the hands, an SMG with a
+  prism filled half the screen. The handling is what it was.
+- **The pistol is held in two hands, thumbs forward**: the left hand has a
+  hold of its own (`OVER`), wrapped over the right, where it used to keep
+  the rifle pose's hand under the grip; and both wrists are cocked, so the
+  forearms come up to the hands out of the bottom of the picture. A hand on
+  a raked grip held straight sends its forearm back and up, level with the
+  gun - the sleeve beside the pistol in his photograph. It is lower and a
+  touch further out, the muzzle tipped down so the slide's top is seen.
+- **The voice was real.** Every recording in the archive's BULLETS items
+  opens with a man reading out the slate, and two of the five "round into
+  concrete" sounds had been cut from him. Rounds into hard surfaces now
+  crack (`hit-hard`), into earth thump (`hit-dirt`), onto steel ring, all
+  cut after the slate; `build-sounds.py` stops on any take voiced like
+  speech; and a strike is heard only within 10 m, not 25.
+
+Checked by photographing the gun in hand from the eye, the side, above,
+in front and below (`handlab.mjs` in the session's scratchpad), and each
+gun at the hip and aimed in a real match.
+
 ## Status, 10 October 2026 (later): the guns in your hands
 
 Conrad's next brief, with four pictures of the look he wants (pistol, SMG,

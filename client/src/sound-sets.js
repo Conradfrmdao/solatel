@@ -115,12 +115,20 @@ export const SOUND_SETS = {
   "bolt": [
     "bolt-1"
   ],
-  "hit-ground": [
-    "hit-ground-1",
-    "hit-ground-2",
-    "hit-ground-3",
-    "hit-ground-4",
-    "hit-ground-5"
+  "hit-hard": [
+    "hit-hard-1",
+    "hit-hard-2",
+    "hit-hard-3",
+    "hit-hard-4",
+    "hit-hard-5",
+    "hit-hard-6"
+  ],
+  "hit-dirt": [
+    "hit-dirt-1",
+    "hit-dirt-2",
+    "hit-dirt-3",
+    "hit-dirt-4",
+    "hit-dirt-5"
   ],
   "hit-metal": [
     "hit-metal-1",

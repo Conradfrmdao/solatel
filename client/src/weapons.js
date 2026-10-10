@@ -43,17 +43,14 @@ export const RIFLE = {
     dotRadius: 0.011,
   },
 
-  /** From the hip: in the lower right of the picture, turned in so the
-   *  muzzle points near the crosshair and the gun's left side - and the hand
-   *  on it - is seen, a little up at the muzzle and canted in. Rotation is
-   *  [pitch, yaw, roll]. Where a modern shooter frames it, after the
-   *  pictures Conrad sent: the sight a little under the middle of the
-   *  picture and right of it, the support hand on the handguard and its
-   *  forearm coming up out of the bottom. It sat lower and further out for
-   *  months, and the hands were never seen. */
+  /** From the hip: down in the lower right of the picture, at the size
+   *  Conrad is used to, turned in a little so the gun's left side and the
+   *  support hand on it are seen, and canted in. Rotation is [pitch, yaw,
+   *  roll]. Brought nearer and up towards the middle, to show the hands, it
+   *  filled half the screen - "too big", which it was. */
   hip: {
-    position: [0.105, -0.1, -0.31],
-    rotation: [0.03, 0.08, -0.03],
+    position: [0.17, -0.18, -0.4],
+    rotation: [0.015, 0.07, -0.025],
   },
 
   /**
@@ -196,8 +193,8 @@ export const RIFLE = {
    * `fingers.js` fits them.
    */
   arms: {
-    right: { shoulder: [0.18, -0.24, 0.07], elbow: [0.22, -0.32, -0.1] },
-    left: { shoulder: [-0.18, -0.24, 0.07], elbow: [0.0, -0.36, -0.3] },
+    right: { shoulder: [0.18, -0.24, 0.07], elbow: [0.29, -0.41, -0.2] },
+    left: { shoulder: [-0.18, -0.24, 0.07], elbow: [0.07, -0.45, -0.4] },
     /** Where the left palm closes, in model units: under the handguard,
      *  where a real support hand sits. Each gun's file says (`support`),
      *  moved forward by `supportAhead`. */
@@ -274,14 +271,15 @@ function variant(base, changes) {
   return out;
 }
 
-/** The pistol: held out in both hands near the middle of the picture, the
- *  arms seen coming up to it; light, quick to settle, a short, small flip of
- *  a kick; small cases. */
+/** The pistol: held out in both hands a little right of the middle and
+ *  under it, the muzzle tipped down a touch so the top of the slide and the
+ *  thumbs are seen; light, quick to settle, a short, small flip of a kick;
+ *  small cases. */
 export const PISTOL = variant(RIFLE, {
   name: 'pistol',
   boreHeight: 0.066,
   muzzleFace: -0.27,
-  hip: { position: [0.04, -0.05, -0.33], rotation: [-0.06, 0.06, 0] },
+  hip: { position: [0.05, -0.095, -0.44], rotation: [-0.08, 0.06, 0] },
   // Out at arm's length with the sights up, where a pistol is held: closer,
   // the forearms coming back to it filled the bottom of the picture.
   ads: { eyeRelief: 0.6, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
@@ -301,32 +299,35 @@ export const PISTOL = variant(RIFLE, {
     cameraRecovery: 20,
   },
   flashSeconds: 0.035,
-  // The left hand cups the right, not the gun.
+  // The left hand is wrapped over the right, not on a handguard.
   supportAhead: 0,
   // The slide runs back and the hammer falls and is cocked again by it; a
   // reload ends with the slide racked.
   reloadPose: { drop: 0.04, back: 0.02, pitch: 0.28, yaw: 0.05, roll: -0.3 },
   action: { bolt: { back: 0.03, seconds: 0.07 }, hammer: 0.7, trigger: 0.25, magazine: [0, -0.18, 0.03], charge: 0.03 },
+  // Both wrists cocked down, as on any pistol, so the forearms leave the
+  // hands back and down and come up to them from the bottom of the picture;
+  // straight, a hand on a raked grip sends its forearm back and up, level
+  // with the gun, at the eye - the stub of sleeve beside the pistol Conrad
+  // asked "is that how a pistol is held?" of. The left hand, wrapped over
+  // the right, is turned further on the grip, so its wrist bends further.
   // With the sights up the elbows drop under the gun, and the forearms run
-  // down out of the picture rather than across the bottom of it; and the
-  // wrists, hidden in two hands round the grip, bend further than a rifle's
-  // to bring the forearms up from below, as a pistol is held.
+  // down out of the picture rather than across the bottom of it.
   arms: {
-    wrist: 1.0,
-    right: { shoulder: [0.18, -0.24, 0.07], elbow: [0.12, -0.38, -0.18], elbowAimed: [0.05, -0.62, -0.3] },
-    left: { shoulder: [-0.18, -0.24, 0.07], elbow: [-0.06, -0.38, -0.18], elbowAimed: [-0.05, -0.62, -0.3] },
-    leftPalm: [-0.02, -0.62, 0.48],
+    right: { shoulder: [0.18, -0.26, 0.05], wrist: 0.9, elbow: [0.15, -0.245, -0.19], elbowAimed: [0.05, -0.62, -0.3] },
+    left: { shoulder: [-0.18, -0.26, 0.05], wrist: 0.95, elbow: [-0.09, -0.265, -0.19], elbowAimed: [-0.05, -0.62, -0.3] },
   },
   casings: { port: [0.07, 0.13, 0.3], speed: [1.0, 1.4], lift: [1.4, 1.9], radius: 0.0049, length: 0.019 },
   smoke: { size: [0.04, 0.28], opacity: 0.22 },
 });
 
-/** A compact SMG: closer in, quick to the shoulder, light in the hands, a
- *  fast buzz of a kick with more of it sideways, settling at once. */
+/** A compact SMG: a little nearer, quick to the shoulder, light in the
+ *  hands, a fast buzz of a kick with more of it sideways, settling at
+ *  once. */
 export const SMG = variant(RIFLE, {
   name: 'smg',
   muzzleFace: -1.52,
-  hip: { position: [0.1, -0.095, -0.295], rotation: [0.03, 0.1, -0.04] },
+  hip: { position: [0.16, -0.17, -0.38], rotation: [0.015, 0.07, -0.025] },
   ads: { duration: 0.15 },
   sway: { recovery: 10 },
   idle: { position: 0.0028, rotation: 0.0065, rate: 0.24 },
@@ -359,7 +360,7 @@ export const SMG = variant(RIFLE, {
 export const LMG = variant(RIFLE, {
   name: 'lmg',
   muzzleFace: -3.35,
-  hip: { position: [0.11, -0.11, -0.32], rotation: [0.03, 0.07, -0.03] },
+  hip: { position: [0.17, -0.18, -0.4], rotation: [0.015, 0.07, -0.025] },
   ads: { duration: 0.3, swayScale: 0.35 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
   idle: { position: 0.004, rotation: 0.009, rate: 0.18 },
@@ -388,7 +389,7 @@ export const LMG = variant(RIFLE, {
 export const SNIPER = variant(RIFLE, {
   name: 'sniper',
   muzzleFace: -3.6,
-  hip: { position: [0.11, -0.1, -0.32], rotation: [0.03, 0.07, -0.02] },
+  hip: { position: [0.17, -0.18, -0.42], rotation: [0.015, 0.06, -0.02] },
   ads: { duration: 0.3, swayScale: 0.25 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
   idle: { position: 0.0035, rotation: 0.008, rate: 0.2 },

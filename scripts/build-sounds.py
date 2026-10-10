@@ -43,9 +43,14 @@ What it makes, and why each choice:
   pulled, one seated and an action racked, cut from takes of each; the
   bolt of a bolt-action rifle worked once, for the M700 after every shot.
   `audio.js` lines each up with the moment the hands do it.
-- **Rounds striking** (`HANDLING` as well): real rounds into dirt and
-  timber, and onto steel plate, in place of Kenney's thuds and clanks,
-  which Conrad found comic.
+- **Rounds striking** (`HANDLING` as well): real rounds cracking into hard
+  ground and thumping into earth, and onto steel plate, in place of
+  Kenney's thuds and clanks, which Conrad found comic.
+- **No voices where there should be none.** Every recording in the USC
+  collection's BULLETS items opens with a man reading out what it is, five
+  seconds of him, and two of the first strikes were cut from that: Conrad
+  heard a voice saying "bang" whenever a round hit a wall. A take that is
+  voiced the way speech is (`voiced_run`) now stops the build.
 - **Footsteps** by surface, **a round into a body**, **a body falling**,
   and **four men's voices** - pain and death - so a player keeps one voice
   for a whole match.
@@ -98,9 +103,8 @@ BOLT = 'GUNMech_Cocking bolt action rifle; indoors_CS_USC.flac'
 CLIP = 'GUNMech_Loading a clip into a rifle_CS_USC.flac'
 STEEL = 'METLImpt_Shooting gallery or anvil_CS_USC.flac'
 STRIKES = 'BLLTImpt_Bullets flying overhead and hitting objects_CS_USC.flac'
-RIFLE_STRIKES = 'GUNRif_Rifle bullets flying over and hitting objects_CS_USC.flac'
 HANDGUN = 'reload.wav'
-HANDLING_FILES = [COCKING, BOLT, CLIP, STEEL, STRIKES, RIFLE_STRIKES, HANDGUN]
+HANDLING_FILES = [COCKING, BOLT, CLIP, STEEL, STRIKES, HANDGUN]
 
 # Each set and its takes: (recording, from, to) in seconds, found by eye on
 # each recording's envelope. A take runs from just before its first sound to
@@ -122,10 +126,16 @@ HANDLING = {
     # second, home at a third and turned down by 0.4 - the M700's own
     # `BOLT_WORK` in viewmodel.js, which it was timed against.
     'bolt': [(BOLT, 2.30, 2.98)],
-    # Rounds striking: into dirt and timber, the strike and the start of
-    # the spray after it, and onto steel plate, a hard ring.
-    'hit-ground': [(STRIKES, 5.25, 5.5), (STRIKES, 8.568, 8.82), (STRIKES, 9.345, 9.6),
-                   (RIFLE_STRIKES, 0.27, 0.48), (RIFLE_STRIKES, 4.44, 4.69)],
+    # Rounds striking. Both strike recordings open with five seconds of a
+    # man reading out the slate, so every take is after it (and
+    # `voiced_run` checks); each ends before the next round lands. Into
+    # something hard, a crack with grit in it - the strikes whose top is
+    # louder than their bottom; into earth, a thump with no top at all; and
+    # onto steel plate, a hard ring.
+    'hit-hard': [(STRIKES, 5.246, 5.38), (STRIKES, 5.384, 5.58), (STRIKES, 6.358, 6.62),
+                 (STRIKES, 8.556, 8.72), (STRIKES, 8.726, 8.98), (STRIKES, 9.336, 9.54)],
+    'hit-dirt': [(STRIKES, 6.076, 6.21), (STRIKES, 6.214, 6.355), (STRIKES, 7.336, 7.47),
+                 (STRIKES, 10.324, 10.46), (STRIKES, 10.464, 10.59)],
     'hit-metal': [(STEEL, 0.219, 0.62), (STEEL, 1.879, 2.28), (STEEL, 5.896, 6.3),
                   (STEEL, 8.451, 8.85), (STEEL, 17.052, 17.45)],
 }
@@ -133,7 +143,12 @@ HANDLING = {
 # Sets whose takes die away from their first moment, this many seconds to
 # fall by e: a round into the ground is a strike, and the recordings go on
 # into the spray of dirt after it, which on its own is a hiss.
-DECAY = {'hit-ground': 0.07}
+DECAY = {'hit-hard': 0.07, 'hit-dirt': 0.06}
+
+# The longest a take may be voiced the way a voice is, in seconds. A strike
+# or a ring is never voiced for more than a frame or two; the slate's
+# syllables were for 50 to 80 ms.
+VOICED_MOST = 0.03
 
 # The voices, by man: short cries for a hit, longer ones for a death. Sorted
 # by length and by the shape of the pitch (a death's falls away at the end),
@@ -250,6 +265,37 @@ def take(x, start, end):
     return x
 
 
+def voiced_run(x):
+    """The longest stretch, in seconds, over which `x` (mono) is voiced the
+    way a man's voice is: 40 ms frames 10 ms apart, each periodic at a
+    speaking pitch (a normalised autocorrelation over 0.6 between 70 and
+    400 Hz) with its energy low in the band (a spectral centroid under
+    2 kHz), within 20 dB of the take's loudest frame. A steel plate rings
+    periodically too, but far higher; a strike, a thump or a rack of a bolt
+    is not periodic at all."""
+    x = x[:, 0] if x.ndim > 1 else x
+    n, hop = int(0.04 * RATE), int(0.01 * RATE)
+    window = np.hanning(n)
+    lo, hi = int(RATE / 400), int(RATE / 70)
+    freqs = np.fft.rfftfreq(n, 1 / RATE)
+    frames = [x[s : s + n] * window for s in range(0, len(x) - n, hop)]
+    if not frames:
+        return 0.0
+    energies = [float(np.dot(f, f)) for f in frames]
+    top = max(energies)
+    run = best = 0
+    for f, e in zip(frames, energies):
+        voiced = False
+        if e > top * 0.01:
+            ac = np.correlate(f, f, 'full')[n - 1 :]
+            spectrum = np.abs(np.fft.rfft(f))
+            centroid = (spectrum * freqs).sum() / spectrum.sum()
+            voiced = ac[lo:hi].max() / ac[0] > 0.6 and centroid < 2000
+        run = run + 1 if voiced else 0
+        best = max(best, run)
+    return best * hop / RATE
+
+
 def written(name, samples, bitrate):
     path = OUT / f'{name}.mp3'
     encode(samples, path, bitrate)
@@ -308,6 +354,10 @@ def main(argv):
             if file not in recordings:
                 recordings[file] = decode(handling / file, 1)
             cut = take(recordings[file], start, end)
+            voiced = voiced_run(cut)
+            if voiced > VOICED_MOST:
+                print(f'{name} take {i + 1}, {file} {start}-{end} s, is voiced like speech for {voiced:.2f} s')
+                return 1
             if name in DECAY:
                 cut *= np.exp(-np.arange(len(cut)) / (DECAY[name] * RATE))[:, None]
             # Levelled by what is sounding rather than by the peak, so the

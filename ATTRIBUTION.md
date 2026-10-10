@@ -192,15 +192,14 @@ near gunshots are also filtered and gently saturated (`weight`).
   Sounds](https://kenney.nl/assets/impact-sounds) 1.0, whose `License.txt`
   reads "Creative Commons Zero, CC0".
 - **Reloads, the bolt, and rounds striking** - `reload-mag-*`,
-  `reload-charge-*`, `bolt-*`, `hit-ground-*` and `hit-metal-*` - are cut
-  from recordings in the USC Cinema / Sunset Editorial sound effects
-  collection on the Internet Archive, CC0 1.0: "Cock and fire empty rifle;
-  many takes", "Cocking bolt action rifle; indoors" and "Loading a clip into
-  a rifle" from [SSE Library:
+  `reload-charge-*`, `bolt-*`, `hit-hard-*`, `hit-dirt-*` and `hit-metal-*`
+  - are cut from recordings in the USC Cinema / Sunset Editorial sound
+  effects collection on the Internet Archive, CC0 1.0: "Cock and fire empty
+  rifle; many takes", "Cocking bolt action rifle; indoors" and "Loading a
+  clip into a rifle" from [SSE Library:
   GUNS](https://archive.org/details/SSE_Library_GUNS), "Bullets flying
   overhead and hitting objects" from [SSE Library:
-  BULLETS](https://archive.org/details/SSE_Library_BULLETS), "Rifle bullets
-  flying over and hitting objects" from SSE Library: GUNS, and "Shooting
+  BULLETS](https://archive.org/details/SSE_Library_BULLETS), and "Shooting
   gallery or anvil" from [SSE Library:
   METAL](https://archive.org/details/SSE_Library_METAL).
 - **The pistol's reload** - `reload-pistol-*` - is zer0_sol's [Handgun Reload
