@@ -851,15 +851,31 @@ Things about the files that are not obvious:
   against still has tooth.
 
 **The sky is a photographed HDR panorama** (`assets/sky`), **one per map**
-(`SKIES` in `world.js`): partly cloudy over the facility, a heavy overcast
-over the yard with a weak sun and soft shadows, a late clear sun over the
-arena. Each is read alongside its map and kept once read. Blurred by PMREM
+(`SKIES` in `world.js`): a midday sun among cumulus over the facility, a
+clear midday sky over the yard, a late clear sun over the arena. The yard
+was overcast and the facility's sun too weak against its sky, and Conrad
+asked for both to be sunny: **what reads as sunny is the sun giving the
+ground three times or more the sky's light**, so the shade is a third as
+bright as the sunlit ground and every shadow is crisp. Both are at three;
+at four the shade went nearly black, and somebody standing in the shade
+has to be as easy to see as somebody in the sun. Each is read alongside
+its map and kept once read. Blurred by PMREM
 into `scene.environment` it is what everything reflects, and the light of
 whatever the bake below does not cover. The sun is put where the
 panorama's own sun is (its brightest texel), so shadows agree with the sky,
 and the fog takes the colour of the panorama's horizon. The water is a
 standard material with travelling-sine wave normals in the shader,
 reflecting that same environment: no mirror pass.
+
+**The haze is brighter towards the sun** (`SUN_HAZE`, a replacement for
+three.js's `fog_fragment`). The air between the eye and a far wall scatters
+sunlight forwards, so in a photograph of a sunny day the distance is bright
+and warm towards the sun and the sky's blue away from it - which a fog of
+one colour cannot be. The fog adds the sun's own colour, read from
+`directionalLights[0]` in every lit material (three.js sorts shadow-casting
+lights first, and the sun is the only one), strongest looking straight at
+the sun and gone by a right angle. It changes only what is far enough to be
+fogged, and is the same at every quality.
 
 **The sky's light has no sun in it** (`cutSun`). Left in, the photograph's
 sun was blurred into the environment as a second sun that cast no shadow -
@@ -1105,7 +1121,7 @@ to the sky - which the baked light knows, so never under a roof - is darker
 and glossier in patches, puddles more so and smoothed over. Never a mirror:
 the environment map is the sky alone and knows nothing of the walls round a
 puddle, and a mirror puddle in a walled yard read as a white hole in the
-ground. The overcast yard is the wettest map, the arena the driest.
+ground. The yard and the facility are dry under their midday sun, with a little damp in the hollows; the arena keeps a little more.
 
 ### The weapon in your hands
 

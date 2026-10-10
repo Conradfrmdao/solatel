@@ -620,14 +620,25 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
  * (`assets/sky/<file>`), how strong and what colour its sun, how much the
  * sky itself lights, and how wet it has left the ground (puddles and damp,
  * from 0 to 1, in the open only). The sun and sky strengths are baked into
- * the map's light: change them and run `scripts/bake-light.py`. The yard is under cloud, so its sun is weak and its
- * shadows soft; the arena has a late sun, low and warm. Weather is the same
- * for everybody on a map, which is all the fairness it needs - a darker sky
- * is a harder map for every player on it alike.
+ * the map's light: change them and run `scripts/bake-light.py`. The yard and
+ * the facility are in a midday sun - the yard's sky clear, the facility's
+ * with cumulus - and the arena has a late sun, low and warm. Weather is the
+ * same for everybody on a map, which is all the fairness it needs - a darker
+ * sky is a harder map for every player on it alike.
+ *
+ * **On a sunny day the sun gives the ground three to five times the sky's
+ * light**, and that ratio is what reads as sunny: the shade a quarter or a
+ * third as bright as the sunlit ground, so every shadow is crisp. The
+ * facility's sun gave the ground less than twice the sky's light (5.0
+ * against 1.5) and Conrad saw a dull day under a blue sky; the yard was
+ * overcast. Both are at three now, and brighter than they were. Not four or
+ * five: at four the shade went nearly black, and on a map people are paid
+ * to shoot across, somebody standing in the shade has to be as easy to see
+ * as somebody standing in the sun.
  */
 const SKIES = {
-  facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5, wet: 0.5 },
-  yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25, wet: 0.9 },
+  facility: { file: 'partly', sun: 7.5, sunColour: 0xfff1de, sky: 1.4, wet: 0.15 },
+  yard: { file: 'clear', sun: 9.5, sunColour: 0xfff0dc, sky: 1.75, wet: 0.15 },
   arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
 
@@ -637,6 +648,38 @@ const WETNESS = { value: 0 };
 
 /** The sky for anything not in `SKIES`. */
 const DEFAULT_SKY = 'facility';
+
+/**
+ * How much of the sun's own light the haze takes on, looking towards it.
+ *
+ * Distance is not the same colour every way: the air between the eye and a
+ * far wall scatters sunlight forwards, so towards the sun the haze is bright
+ * and warm and away from it it is the sky's blue - the thing that most says
+ * "a sunny day outdoors" in a photograph, and the thing fog of one colour
+ * cannot do. The fog's colour is the horizon's; this adds the sun's colour
+ * to it, strongest looking straight at the sun and gone by a right angle,
+ * read from the scene's own sun - `directionalLights[0]`, which every lit
+ * material already has: three.js puts the lights that cast shadows first,
+ * and the sun is the only one that does - so there is nothing to keep in
+ * step. It colours only what is far enough to be fogged, and is the same at
+ * every quality.
+ */
+const SUN_HAZE = 0.035;
+{
+  const mixFog = 'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );';
+  if (THREE.ShaderChunk.fog_fragment.split(mixFog).length !== 2) {
+    throw new Error('three.js has changed its fog; the sun haze needs looking at');
+  }
+  THREE.ShaderChunk.fog_fragment = THREE.ShaderChunk.fog_fragment.replace(
+    mixFog,
+    `vec3 hazeColor = fogColor;
+	#if ( defined( STANDARD ) || defined( PHONG ) || defined( LAMBERT ) ) && NUM_DIR_LIGHTS > 0
+		float towardSun = max( dot( normalize( - vViewPosition ), directionalLights[ 0 ].direction ), 0.0 );
+		hazeColor += directionalLights[ 0 ].color * ( ${SUN_HAZE.toFixed(4)} * pow( towardSun, 6.0 ) );
+	#endif
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, hazeColor, fogFactor );`,
+  );
+}
 
 /** The files a map's sky is read from, to be fetched ahead of time. */
 export function skyFiles(mapName) {

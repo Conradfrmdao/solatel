@@ -4,6 +4,59 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026 (end of session): sunny maps, in progress - READ FIRST
+
+Conrad's latest ask: "make the yard map be sunny and more realistic, so
+should the facility ... I want these maps to be the best", Call of Duty level.
+
+**Done and merged/live:** openings fix (PR #35, MAP_VERSION 30, live as
+b4e0de6); results card (PR #34); gun size, pistol hold, impact sounds
+(PR #33).
+
+**Done on this branch, NOT yet merged** (`claude/confident-feynman-6benf7`,
+commit "WIP: sunny yard and facility"):
+- `SKIES` in `client/src/world.js`: the yard is now `clear`
+  (kloofendal_43d_clear_puresky), with sun 9.5 and sky 1.75; the facility
+  keeps `partly`, with sun 7.5 and sky 1.4. Both use wet 0.15. The sun:sky
+  ratio on the ground is about 3; at 4 the shade went nearly black, which is
+  a visibility and fairness problem.
+- Sun haze: `SUN_HAZE` patch of three.js `fog_fragment` in world.js. The
+  fog brightens toward the sun.
+- `assets/light/yard.bin` and `facility.bin` re-baked; the yard was a full
+  re-trace.
+- New sky `assets/sky/clear*`; overcast removed. Fetch list and
+  ATTRIBUTION.md updated. CLAUDE.md sky and haze paragraphs updated.
+- Checked with `client/tour.mjs` screenshots: the yard went from flat
+  overcast to sunny with crisp shadows, and the facility is brighter and
+  crisper.
+
+**Left to do, in order:**
+1. Re-shoot the yard's menu card `assets/menu/map-yard.webp` (880x550,
+   still overcast) in the sunny light. Optionally re-shoot the facility's
+   too.
+2. Run `cargo test --workspace`, clippy, `npm --prefix client run build`,
+   and `node client/menu.mjs`. Then PR, merge, and watch `deploy.json`.
+   Tell Conrad and ask for a playtest.
+3. The "COD-level" realism beyond lighting has not started. Ideas:
+   - wall detail and trims on the yard's plain concrete slabs;
+   - more props and decals (oil stains, painted bay lines, signage);
+   - a warmer grade for sunny maps;
+   - cheaper AO at high quality (GTAO is ultra only).
+   Keep every map under the ~50 MB budget, and change nothing that hides
+   players.
+4. Known leftover from the openings work (`scripts/check-openings.py`): the
+   ground pass fills the low crawlspace under sloped ramps and tables from
+   the floor up, and slab undersides hang a cell. Neither is an opening
+   Conrad reported.
+5. Older pending: an audit of what is not done; bigger maps (50-100 MB).
+
+**Environment notes:** the session `DATABASE_URL` points at Neon, which
+this container can't reach. Run local servers with
+`DATABASE_URL=postgres://solatel:solatel@localhost:5432/solatel`. Use a
+second free-play server on `BIND_ADDR=127.0.0.1:8090` with
+`SOLATEL_FREE_PLAY=1 SOLATEL_WARMUP=900` for tours. Don't `pkill -f` a
+pattern that appears in your own command line.
+
 ## Status, 10 October 2026 (late): every opening can be shot through
 
 Conrad, with two photographs from the arena: "I can't shoot through that

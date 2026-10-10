@@ -109,7 +109,7 @@ const FOLIAGE = {
  */
 const SKIES = {
   partly: 'kloofendal_48d_partly_cloudy_puresky',
-  overcast: 'overcast_soil_puresky',
+  clear: 'kloofendal_43d_clear_puresky',
   afternoon: 'syferfontein_18d_clear_puresky',
 };
 

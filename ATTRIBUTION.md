@@ -232,7 +232,7 @@ one and re-encodes it; nothing else is done to them.
   not in the game.
 - Skies, one per map, each as the 1k HDR for lighting and the tonemapped
   panorama at 4096 px for the background: `kloofendal_48d_partly_cloudy_puresky`
-  (the facility), `overcast_soil_puresky` (the yard) and
+  (the facility), `kloofendal_43d_clear_puresky` (the yard) and
   `syferfontein_18d_clear_puresky` (the arena). The client spreads the sun
   disc over a few degrees before blurring the HDR, which changes no total
   light and is noted here only because it is a change to the data.
