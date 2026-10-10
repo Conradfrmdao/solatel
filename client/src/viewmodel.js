@@ -348,19 +348,34 @@ function cupped(fingers, up) {
 const UNDER = cupped(new THREE.Vector3(0.45, 0.45, -0.77), new THREE.Vector3(0.3, 1, 0));
 
 /**
+ * The pistol's left hand over the right, thumbs forward: its palm against
+ * the left of the grip, where the right hand's fingertips come round, its
+ * fingers forward and down round the front of the right hand's, and its
+ * thumb along the frame under the right one. It rests a finger's thickness
+ * further out than a hand on the gun would (`depth`, `finger`), because
+ * the right hand's fingers are between it and the grip.
+ */
+const OVER = {
+  ...cupped(new THREE.Vector3(0, -0.3, -0.95), new THREE.Vector3(1, 0, 0.1)),
+  depth: PALM_DEPTH + 2 * FINGER_RADIUS,
+  finger: 3 * FINGER_RADIUS,
+  slide: [-0.02, -0.01, 0, 0.01, 0.02],
+};
+
+/**
  * How each gun is held, in its own frame (+X its right, +Y up, the muzzle
  * down -Z): which way each palm faces and which way its knuckles run, from
  * the little finger to the index (`fingers.placeHand`). The right hand
  * along each grip's own rake - the M700's is the wrist of a sporting
- * stock, nearly level; the left palm up under the handguard. The pistol's
- * left hand cups the right and is not fitted to the gun.
+ * stock, nearly level; the left palm up under the handguard, or on the
+ * pistol, wrapped over the right hand.
  */
 const HOLDS = {
   rifle: { right: onGrip(20), left: UNDER },
   lmg: { right: onGrip(20), left: UNDER },
   smg: { right: onGrip(14), left: UNDER },
   sniper: { right: onGrip(52), left: UNDER },
-  pistol: { right: onGrip(20), left: null },
+  pistol: { right: onGrip(10), left: OVER },
 };
 
 /** How far out on the gun's right the hand goes to work the action, in
@@ -949,8 +964,8 @@ export class Viewmodel {
    * The arms onto the gun in hand. The right hand is where it is on every
    * gun, because every gun's grip is where the rifle's is. The left is moved
    * from where the pose held the rifle onto this gun's support - under its
-   * handguard, or for the pistol, under the right hand - and each arm hangs
-   * from this gun's shoulders.
+   * handguard, or for the pistol, beside the grip, to be wrapped over the
+   * right hand - and each arm hangs from this gun's shoulders.
    */
   _retargetArms() {
     if (!this.arms) return;
@@ -980,8 +995,7 @@ export class Viewmodel {
    * Both hands fitted to the gun in hand (`fingers.js`): turned to its hold
    * (`HOLDS`), brought in until the palm rests on it, and every finger
    * closed until it touches. Once per gun, kept on its rig. A hand the hold
-   * leaves out - the pistol's left, cupping the right - keeps the clip's
-   * hand where the gun's `support` puts it.
+   * leaves out keeps the clip's hand where the gun's `support` puts it.
    */
   _fitHands() {
     const rig = this.rig;
@@ -1008,7 +1022,10 @@ export class Viewmodel {
       if (!want) continue;
       const clip = this._clipGrip(limb, rig.config, new THREE.Matrix4());
       const centre = limb.frame.centre.clone().applyMatrix4(clip);
-      const surface = surfaceNear(rig.model, centre, HAND_REACH / scale, (2 * PALM_DEPTH) / scale, PALM_DEPTH / scale);
+      const depth = want.depth ?? PALM_DEPTH;
+      const finger = want.finger ?? FINGER_RADIUS;
+      const pad = Math.max(depth, finger);
+      const surface = surfaceNear(rig.model, centre, HAND_REACH / scale, (2 * pad) / scale, pad / scale);
       // Up and down the grip, for where the fingers close round it best: a
       // hand set where the grip's centre was measured can have its fingers
       // stopped on the trigger guard rather than round the grip.
@@ -1016,8 +1033,8 @@ export class Viewmodel {
       let best = null;
       for (const slide of want.slide ?? [0]) {
         const start = clip.clone().premultiply(_slide.makeTranslation(along.clone().multiplyScalar(-slide / scale)));
-        const grip = placeHand(start, limb.frame, want.palm, want.across, surface, PALM_DEPTH / scale, HAND_APPROACH / scale);
-        const closed = closeOn(limb.fingers, grip, surface, FINGER_RADIUS / scale);
+        const grip = placeHand(start, limb.frame, want.palm, want.across, surface, depth / scale, HAND_APPROACH / scale);
+        const closed = closeOn(limb.fingers, grip, surface, finger / scale);
         const score = gripScore(closed) - Math.abs(slide) * 4;
         if (!best || score > best.score) best = { grip, curls: closed.map((f) => f.curl), score };
       }
@@ -1085,8 +1102,10 @@ export class Viewmodel {
       // Straight away from where the elbow hangs: any turn will do.
       if (_bend.lengthSq() < 1e-10) _bend.crossVectors(_upper, limb.shoulder);
       _bend.normalize();
-      const easy = this.config.arms.wrist ?? WRIST_BEND;
-      let turn = Math.min(off, easy + (WRIST_BEND_AIMED - easy) * this.aim);
+      const arms = this.config.arms;
+      const easy = arms[limb.side].wrist ?? arms.wrist ?? WRIST_BEND;
+      const aimed = arms[limb.side].wristAimed ?? arms.wristAimed ?? WRIST_BEND_AIMED;
+      let turn = Math.min(off, easy + (aimed - easy) * this.aim);
       for (;;) {
         _lower.copy(_upper).applyAxisAngle(_bend, turn);
         _elbow.copy(_wrist).addScaledVector(_lower, limb.lowerLength);

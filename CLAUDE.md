@@ -1132,14 +1132,14 @@ flip, the SMG a fast buzz that settles at once, the machine gun slow - more
 lag, a deeper breath and stride, a bigger shove - and the sniper rifle one
 big slow kick.
 
-**Where each gun sits at the hip is after those pictures** (`hip` in
-`weapons.js`): in the lower right, the sight a little under the middle of
-the picture and right of it, turned in so the muzzle points near the
-crosshair and the gun's left side is seen, canted in a little, with the
-support hand on the handguard and its forearm coming up out of the bottom;
-the pistol out in both hands near the middle, level, and at arm's length
-with the sights up. For months they sat lower and further out and the
-hands were never seen.
+**Where each gun sits at the hip** (`hip` in `weapons.js`): the long guns
+down in the lower right, 0.4 m from the eye, turned in a little and canted
+so the gun's left side and the support hand on it are seen. They were once
+brought nearer and up towards the middle to show the hands, and filled half
+the screen; Conrad called them too big and the size before right. The
+pistol is out in both hands a little right of the middle and under it, its
+muzzle tipped down a touch so the top of the slide and the thumbs are seen,
+and at arm's length with the sights up.
 
 **Aiming down the sights is solved, not tuned.** The gun's model gives the
 two sight points - the optic's tube ends, or the iron sights - and the rig
@@ -1206,8 +1206,8 @@ picture or above the hand. With the sights up the wrists are behind the gun
 and the forearms are what is seen, so they bend further (`WRIST_BEND_AIMED`)
 towards a lower elbow (`elbowAimed`) and fall away under the gun - a pistol
 held out at the eye, its forearms coming back along it, filled the bottom
-of the picture with sleeves; the pistol's wrists, hidden in two hands, bend
-further at the hip too (`arms.wrist`). The upper arm runs from the elbow back towards
+of the picture with sleeves; a gun can say how far its wrists bend, each
+arm its own (`arms.right.wrist`, `wristAimed`), as the pistol's do. The upper arm runs from the elbow back towards
 the shoulder, which is where a person's is (beside and below the eyes) and
 goes wherever the arm's length puts it, out of sight. The arm is turned as
 a whole frame so the elbow hinges the way the clip's did, and half the
@@ -1234,8 +1234,19 @@ tried up and down its grip and kept where the middle, ring and little
 fingers close round it rather than stopping on the trigger guard. All of it
 is distance tests against the gun's triangles near the hand, in a grid; it
 never reads a point deep inside the gun as clear, because it only ever
-approaches from outside. The pistol's left hand cups the right and keeps
-the clip's. Remote players are still posed by the clip and `_reachLeft`.
+approaches from outside. The pistol's left hand is wrapped over the right
+(`OVER`), thumbs forward: its palm on the left of the grip where the right
+hand's fingertips come round, its fingers round the front of the right
+hand's, fitted like any other hand but a finger's thickness further out,
+because the right hand's fingers are between it and the grip. It used to
+keep the clip's hand, made for a rifle's handguard, under the grip.
+**A pistol's wrists are cocked** (`arms.right.wrist`, `arms.left.wrist`):
+a hand on a raked grip, held straight, sends its forearm back and up -
+level with the gun, at the eye, as a stub of sleeve beside the pistol,
+which Conrad asked "is that how a pistol is held?" of. Bent down, the
+forearms leave the hands back and down and come up to them out of the
+bottom of the picture. Remote players are still posed by the clip and
+`_reachLeft`.
 The support hand holds the middle of the handguard, where it is seen:
 each gun's file puts it at the back, by the magazine (`support`), and
 `supportAhead` moves it forward; a reload carries the hand from there.
@@ -1415,12 +1426,16 @@ the encoder's padding and a late gunshot feels late.
   movement. A reload cut short by a change of gun stops what has not
   sounded yet (`cancelReload`). Conrad called the synthesised clicks they
   replaced cringe.
-- **A round striking the world is heard only close** - within 25 m, falling
+- **A round striking the world is heard only close** - within 10 m, falling
   away steeply (`IMPACT_AUDIBLE`) - and sounds like what it hit
   (`world.struckAt`, from the boxes of the map's separate pieces by their
-  surface names): steel rings, earth, sand and rubber take it dull, and
-  concrete and timber crack. It used to carry like a gunshot and was a
-  Kenney thud or, one time in five whatever it hit, a clank.
+  surface names): steel rings (`hit-metal`), earth, sand and rubber thump
+  (`hit-dirt`), and concrete and timber crack (`hit-hard`). It used to
+  carry like a gunshot and was a Kenney thud or, one time in five whatever
+  it hit, a clank. **The archive's recordings open with a man reading out
+  the slate**, and two of the first strikes were cut from him: Conrad heard
+  a voice saying "bang" on every other wall he hit. `build-sounds.py`
+  now refuses a take voiced like speech (`voiced_run`).
 - **Footsteps** (`takeSteps` in `remotes.js`, `step` in `audio.js`): a
   footfall every stride on the ground, longer at speed; heard to 30 m
   running, 16 walking, 6 crouched - moving slowly to be unheard works. On
