@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 20;
+pub const PROTOCOL_VERSION: u16 = 21;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -336,6 +336,36 @@ pub struct ScoreEntry {
 
 fn is_zero(n: &u8) -> bool {
     *n == 0
+}
+
+/// How one player's match went, for the card that ends it: sent with
+/// [`ServerMsg::Eliminated`] and [`ServerMsg::MatchEnded`].
+///
+/// Every figure is the server's. The card says what happened to the stake
+/// by what the ledger was asked to do with it, not by what a client worked
+/// out the rules must have meant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchReport {
+    /// Where they finished: first for anybody still standing at the end,
+    /// otherwise one more than how many were standing when they went.
+    pub place: u32,
+    /// How many bought into the match.
+    pub players: u32,
+    /// How many were still standing at the end of this player's part in
+    /// it: at the whistle for a survivor, this one included, and the
+    /// moment they went for anybody else.
+    pub standing: u32,
+    /// Milliseconds of the live match they were in it for.
+    pub alive_ms: u32,
+    /// Their own line of the board as it finished.
+    pub stats: ScoreEntry,
+    /// The entry fee they paid, in micro-USD. Zero in free play, where
+    /// nothing is charged.
+    pub stake_micro_usd: i64,
+    /// What of it came back to them, in micro-USD: all of it to a survivor,
+    /// the reward to somebody who fell or walked away with nobody to credit,
+    /// and nothing to the killed - theirs went to whoever killed them.
+    pub stake_back_micro_usd: i64,
 }
 
 /// One map this server runs.
@@ -646,6 +676,8 @@ pub enum ServerMsg {
         /// What they won in the match they have just left, in micro-USD.
         /// Already in their wallet - this is the statement, not the payment.
         winnings_micro_usd: i64,
+        /// How their match went, for the card after the death is played out.
+        report: MatchReport,
     },
     /// The state of the lobby: what tables exist and what this player is
     /// waiting for.
@@ -711,6 +743,8 @@ pub enum ServerMsg {
         entries: Vec<ScoreEntry>,
         /// What this player won in it, in micro-USD. Already in their wallet.
         winnings_micro_usd: i64,
+        /// How their match went, for the card it ends on.
+        report: MatchReport,
     },
     /// Everyone in the match and how they are doing.
     ///
@@ -936,6 +970,55 @@ mod tests {
         ] {
             assert!(wire.contains(field), "{field} missing from {wire}");
         }
+    }
+
+    #[test]
+    fn the_match_report_field_names_are_the_wire_contract() {
+        // The results screen reads these off the JSON by name, and two of
+        // them are money: a renamed field would decode as missing and the
+        // card would say a stake went nowhere.
+        let wire = encode(&ServerMsg::Eliminated {
+            winnings_micro_usd: 900_000,
+            report: MatchReport {
+                place: 3,
+                players: 13,
+                standing: 2,
+                alive_ms: 125_000,
+                stats: ScoreEntry {
+                    id: PlayerId::new(),
+                    name: "Conrad".into(),
+                    kills: 1,
+                    deaths: 1,
+                    shots_fired: 20,
+                    shots_hit: 9,
+                    headshots: 2,
+                    damage_dealt: 340,
+                    alive: false,
+                    winnings_micro_usd: 900_000,
+                    skin: 0,
+                },
+                stake_micro_usd: 1_000_000,
+                stake_back_micro_usd: 0,
+            },
+        })
+        .unwrap();
+        for field in [
+            "\"t\":\"eliminated\"",
+            "\"report\":{",
+            "\"place\":3",
+            "\"players\":13",
+            "\"standing\":2",
+            "\"alive_ms\":125000",
+            "\"stats\":{",
+            "\"stake_micro_usd\":1000000",
+            "\"stake_back_micro_usd\":0",
+        ] {
+            assert!(wire.contains(field), "{field} missing from {wire}");
+        }
+        assert!(matches!(
+            decode::<ServerMsg>(&wire),
+            Ok(ServerMsg::Eliminated { .. })
+        ));
     }
 
     #[test]

@@ -321,6 +321,18 @@ console.log(
 const victim = clients.find((c) => c.playerId === kill.victim);
 const killer = clients.find((c) => c.playerId === kill.killer);
 if (!victim.eliminated) fail('the victim was never told they were out');
+// And told how their match went, for the card it ends on: out, a place
+// behind everybody still standing, and none of their stake back - it went
+// to whoever killed them.
+const report = victim.eliminated.report;
+if (!report) fail('the victim was not told how their match went');
+if (report.stats?.alive !== false || report.place !== report.standing + 1) {
+  fail(`the victim's report does not add up: ${JSON.stringify(report)}`);
+}
+if (report.stake_back_micro_usd !== 0) {
+  fail(`a killed player was told $${(report.stake_back_micro_usd / 1e6).toFixed(2)} of their stake came back`);
+}
+console.log(`>> the victim was told they finished #${report.place} of ${report.players}, their stake gone`);
 const diedIn = killer.matchId;
 for (let i = 0; i < 40; i += 1) {
   victim.send(queue);
