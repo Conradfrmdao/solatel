@@ -161,6 +161,7 @@ export function buildGun(weapon, optic) {
   if (rail) rail.visible = mounted !== null;
 
   let sight = { front: points.irons.front, rear: points.irons.rear, optic: 'irons' };
+  let dot = null;
   if (mounted === 'x3' || mounted === 'x4') {
     // The scope on its rings, in the gun's own metres, its feet on the rail.
     const size = SCOPE_SCALE[mounted];
@@ -176,9 +177,11 @@ export function buildGun(weapon, optic) {
   } else if (mounted) {
     const shape = opticShape(mounted, points.rail);
     const built = assemble(`optic_${mounted}`, gather([scopeParts(shape)], KINDS), opticMaterials());
-    built.add(glassFor(shape));
+    const glass = glassFor(shape);
+    built.add(glass);
     group.add(built);
     sight = { front: [shape.height, shape.front], rear: [shape.height, shape.rear], optic: mounted };
+    dot = glass.dot ?? null;
   }
 
   const parts = {};
@@ -187,6 +190,9 @@ export function buildGun(weapon, optic) {
     if (node) parts[name] = { node, position: node.position.clone(), quaternion: node.quaternion.clone() };
   }
   group.userData = { weapon, points, sight, parts };
+  // Not in `userData`, which a copy of the gun turns into JSON: only the
+  // first-person gun places its dot, and nobody else's copy needs it.
+  group.dot = dot;
   return group;
 }
 
@@ -276,6 +282,9 @@ function glassFor({ height, front, rear, profile, dot = 0 }) {
   }
   if (dot > 0) {
     // Lit, not painted: the tone curve would turn an LED's red to brick.
+    // Where it is drawn on its glass is the viewmodel's to say each frame:
+    // on the line from the eye straight ahead, as a real one is seen,
+    // wherever the gun has swung to (`Viewmodel._placeDot`).
     const red = new THREE.Mesh(
       new THREE.CircleGeometry(dot, 20),
       new THREE.MeshBasicMaterial({ color: 0xff2a20, side: THREE.DoubleSide, toneMapped: false }),
@@ -296,6 +305,15 @@ function glassFor({ height, front, rear, profile, dot = 0 }) {
     );
     halo.position.set(0, height, front + length * 0.051);
     group.add(halo);
+    group.dot = {
+      red,
+      halo,
+      height,
+      z: red.position.z,
+      haloZ: halo.position.z,
+      // The glass's clear opening, inside the tube's wall.
+      radius: profile[0][1] * WALL,
+    };
   }
   return group;
 }

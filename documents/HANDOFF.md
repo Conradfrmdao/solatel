@@ -4,6 +4,37 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026 (later): the guns in your hands
+
+Conrad's next brief, with four pictures of the look he wants (pistol, SMG,
+machine gun, sniper): realistic first-person guns placed in the lower right
+with the hands and arms seen, every animation, each gun feeling different,
+nothing that touches aim; and then, "look at the arm in first person - it
+looks like it's bending". Measured, every wrist was bent 80 to 100 degrees.
+Done:
+
+- **Arms worked out from the hand back** (`_poseArms`): the forearm in line
+  with the hand, turned towards where the elbow hangs by a comfortable
+  bend, more only to keep the elbow and its sleeve out of the picture;
+  shoulders where a person's are. Wrists 20 to 35 degrees through a whole
+  reload; no elbow in the picture on any gun, at the hip or aimed.
+- **Each gun placed after his pictures** (`hip`), the support hand moved
+  forward onto the handguard (`supportAhead`) and cupped under it, so both
+  hands and the forearms are seen; the pistol out in both hands near the
+  middle, and at arm's length aimed.
+- **Feel per gun**: a stronger breath and stride (the stride turns the gun
+  too), a lag and cant going sideways, the pistol's kick lighter and
+  quicker, the SMG's faster, the machine gun's heavier and slower; a switch
+  rolls the gun out as it goes down.
+- **The red dot sits on the point of aim** wherever the gun has swung to,
+  as a real one does (`_placeDot`): painted on its glass, a bob or sway
+  with the sights up carried it off the middle of the picture.
+
+Checked with a harness that holds the page's clock (the software renderer
+draws a map once every three seconds): every gun at the hip, aimed, coming
+off the sights, firing, at four points of a reload, half way through a
+switch, running and strafing, in a real match.
+
 ## Status, 10 October 2026: Conrad's first live playtest, answered
 
 **The game is live** at https://solatelgame.com on an OVHcloud VPS-3

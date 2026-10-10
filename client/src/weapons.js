@@ -43,13 +43,17 @@ export const RIFLE = {
     dotRadius: 0.011,
   },
 
-  /** From the hip: down and out into the corner, turned in so the muzzle
-   *  points near the crosshair. Rotation is [pitch, yaw, roll]. High enough
-   *  that the support hand and its forearm are in the frame: any lower and
-   *  the bottom of the screen cuts the arm off at the wrist. */
+  /** From the hip: in the lower right of the picture, turned in so the
+   *  muzzle points near the crosshair and the gun's left side - and the hand
+   *  on it - is seen, a little up at the muzzle and canted in. Rotation is
+   *  [pitch, yaw, roll]. Where a modern shooter frames it, after the
+   *  pictures Conrad sent: the sight a little under the middle of the
+   *  picture and right of it, the support hand on the handguard and its
+   *  forearm coming up out of the bottom. It sat lower and further out for
+   *  months, and the hands were never seen. */
   hip: {
-    position: [0.17, -0.18, -0.4],
-    rotation: [0, 0.04, 0],
+    position: [0.105, -0.1, -0.31],
+    rotation: [0.03, 0.08, -0.03],
   },
 
   /**
@@ -103,25 +107,33 @@ export const RIFLE = {
     recovery: 9,
   },
 
-  /** Standing still: a slow breath, barely there. */
+  /** Standing still: a slow breath, a figure of eight - seen, not felt. */
   idle: {
-    position: 0.0015,
-    rotation: 0.004,
+    position: 0.003,
+    rotation: 0.007,
     /** Breaths per second. */
     rate: 0.22,
   },
 
   /** Moving: a figure-of-eight driven by distance covered, so it quickens
-   *  with speed rather than playing at a fixed rate. */
+   *  with speed rather than playing at a fixed rate, and the gun turns a
+   *  little with each step as well as riding up and down. */
   bob: {
     /** Metres of sideways travel at full speed; vertical is half this. */
-    amount: 0.011,
-    roll: 0.012,
+    amount: 0.016,
+    roll: 0.02,
+    /** Radians the gun swings across with each stride, and half that up
+     *  and down. */
+    rotation: 0.012,
     /** Cycles per metre walked. Each cycle is two footfalls. */
     cyclesPerMetre: 0.2,
     /** How fast the bob fades in and out when starting and stopping. */
     fade: 8,
   },
+
+  /** Moving sideways: the gun lags the way the body goes, out and canted,
+   *  at full speed by this many metres and radians, eased at `rate`. */
+  move: { shift: 0.012, roll: 0.05, rate: 6 },
 
   /** Off the ground: the weapon rides up a little. On landing it dips by an
    *  amount that grows with how hard the landing was. */
@@ -177,18 +189,26 @@ export const RIFLE = {
 
   /**
    * The arms, in the viewmodel camera's space (metres; +X right, +Y up, -Z
-   * ahead). Each hangs from `shoulder` - below the bottom of the screen, so
-   * no shoulder or upper arm is ever seen and the forearm comes up into the
-   * frame - and bends its elbow towards `elbow`. The hands close on the
-   * rifle the way the third-person soldier's do.
+   * ahead). Each forearm leaves its hand in line with it and turns towards
+   * `elbow`, where that elbow hangs, and the upper arm runs from the elbow
+   * back towards `shoulder` - where a person's is, a little behind the eyes
+   * and below them (`_poseArms`). The hands close on the gun the way
+   * `fingers.js` fits them.
    */
   arms: {
-    right: { shoulder: [0.3, -0.5, 0.02], elbow: [0.9, -0.7, 0.3] },
-    left: { shoulder: [0.06, -0.5, -0.25], elbow: [-0.7, -0.8, 0.1] },
+    right: { shoulder: [0.18, -0.24, 0.07], elbow: [0.22, -0.32, -0.1] },
+    left: { shoulder: [-0.18, -0.24, 0.07], elbow: [0.0, -0.36, -0.3] },
     /** Where the left palm closes, in model units: under the handguard,
-     *  towards its back, where a real support hand sits. */
+     *  where a real support hand sits. Each gun's file says (`support`),
+     *  moved forward by `supportAhead`. */
     leftPalm: [0, -0.2, -0.75],
   },
+
+  /** How far forward of where its file puts the support hand the left palm
+   *  closes, in model units: the files put it at the back of the handguard,
+   *  by the magazine, where it sat under the gun out of sight; a shooter
+   *  holds the middle of it, where it is seen. */
+  supportAhead: 0.42,
 
   /**
    * Spent cases, thrown out of the ejection port to the right and a little
@@ -254,61 +274,78 @@ function variant(base, changes) {
   return out;
 }
 
-/** A 9 mm pistol: held out in both hands, near the middle; a sharp, quick
- *  flip of a kick; small cases. */
+/** The pistol: held out in both hands near the middle of the picture, the
+ *  arms seen coming up to it; light, quick to settle, a short, small flip of
+ *  a kick; small cases. */
 export const PISTOL = variant(RIFLE, {
   name: 'pistol',
   boreHeight: 0.066,
   muzzleFace: -0.27,
-  hip: { position: [0.11, -0.13, -0.4], rotation: [0.01, 0.025, 0] },
-  ads: { eyeRelief: 0.42, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
-  sway: { position: 0.03, rotation: 0.4 },
+  hip: { position: [0.04, -0.05, -0.33], rotation: [-0.06, 0.06, 0] },
+  // Out at arm's length with the sights up, where a pistol is held: closer,
+  // the forearms coming back to it filled the bottom of the picture.
+  ads: { eyeRelief: 0.6, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
+  sway: { position: 0.03, rotation: 0.4, recovery: 11 },
+  idle: { position: 0.0025, rotation: 0.006, rate: 0.26 },
+  bob: { amount: 0.012, roll: 0.016, rotation: 0.01 },
   recoil: {
-    back: 0.035,
-    rise: 0.13,
-    maxRise: 0.22,
-    sideways: 0.01,
-    roll: 0.025,
+    back: 0.025,
+    rise: 0.065,
+    maxRise: 0.16,
+    sideways: 0.008,
+    roll: 0.015,
     pattern: [0, 0.5, -0.5, 0.4, -0.4],
     patternReset: 0.35,
-    recovery: 14,
-    cameraRoll: 0.005,
-    cameraRecovery: 18,
+    recovery: 17,
+    cameraRoll: 0.004,
+    cameraRecovery: 20,
   },
   flashSeconds: 0.035,
+  // The left hand cups the right, not the gun.
+  supportAhead: 0,
   // The slide runs back and the hammer falls and is cocked again by it; a
   // reload ends with the slide racked.
   reloadPose: { drop: 0.04, back: 0.02, pitch: 0.28, yaw: 0.05, roll: -0.3 },
   action: { bolt: { back: 0.03, seconds: 0.07 }, hammer: 0.7, trigger: 0.25, magazine: [0, -0.18, 0.03], charge: 0.03 },
+  // With the sights up the elbows drop under the gun, and the forearms run
+  // down out of the picture rather than across the bottom of it; and the
+  // wrists, hidden in two hands round the grip, bend further than a rifle's
+  // to bring the forearms up from below, as a pistol is held.
   arms: {
-    right: { shoulder: [0.24, -0.5, 0.05], elbow: [0.9, -0.7, 0.2] },
-    left: { shoulder: [-0.12, -0.5, 0.0], elbow: [-0.9, -0.8, 0.1] },
+    wrist: 1.0,
+    right: { shoulder: [0.18, -0.24, 0.07], elbow: [0.12, -0.38, -0.18], elbowAimed: [0.05, -0.62, -0.3] },
+    left: { shoulder: [-0.18, -0.24, 0.07], elbow: [-0.06, -0.38, -0.18], elbowAimed: [-0.05, -0.62, -0.3] },
     leftPalm: [-0.02, -0.62, 0.48],
   },
   casings: { port: [0.07, 0.13, 0.3], speed: [1.0, 1.4], lift: [1.4, 1.9], radius: 0.0049, length: 0.019 },
   smoke: { size: [0.04, 0.28], opacity: 0.22 },
 });
 
-/** A compact SMG: a little further in, quicker to the shoulder, a light
- *  buzz of a kick with more of it sideways. */
+/** A compact SMG: closer in, quick to the shoulder, light in the hands, a
+ *  fast buzz of a kick with more of it sideways, settling at once. */
 export const SMG = variant(RIFLE, {
   name: 'smg',
   muzzleFace: -1.52,
-  hip: { position: [0.16, -0.17, -0.38], rotation: [0, 0.04, 0] },
+  hip: { position: [0.1, -0.095, -0.295], rotation: [0.03, 0.1, -0.04] },
   ads: { duration: 0.15 },
+  sway: { recovery: 10 },
+  idle: { position: 0.0028, rotation: 0.0065, rate: 0.24 },
+  bob: { amount: 0.015, roll: 0.018, rotation: 0.011 },
   recoil: {
-    back: 0.028,
-    rise: 0.03,
-    maxRise: 0.14,
-    sideways: 0.014,
-    roll: 0.016,
+    back: 0.022,
+    rise: 0.024,
+    maxRise: 0.12,
+    sideways: 0.013,
+    roll: 0.014,
     pattern: [0, 0.6, -0.8, 0.9, -0.5, 0.7, -1.0, 0.6],
     patternReset: 0.22,
-    recovery: 14,
-    cameraRoll: 0.004,
-    cameraRecovery: 18,
+    recovery: 18,
+    cameraRoll: 0.003,
+    cameraRecovery: 20,
   },
   flashSeconds: 0.03,
+  // The MP5's forend is short, and the file's point is already its middle.
+  supportAhead: 0.1,
   // An MP5's cocking handle does not move when it fires; it is pulled back
   // and slapped home at the end of a reload.
   action: { bolt: null, trigger: 0.3, magazine: [0, -0.2, -0.05], charge: 0.06 },
@@ -316,40 +353,47 @@ export const SMG = variant(RIFLE, {
   smoke: { size: [0.05, 0.32], opacity: 0.22 },
 });
 
-/** A belt-fed machine gun: heavy, slow to the shoulder, a deep shove of a
+/** A machine gun: heavy - slow to the shoulder, lagging a turn and slow to
+ *  settle, a deep, slow breath and a heavier stride, and a deep shove of a
  *  kick that walks. */
 export const LMG = variant(RIFLE, {
   name: 'lmg',
   muzzleFace: -3.35,
-  hip: { position: [0.17, -0.18, -0.4], rotation: [0, 0.04, 0] },
+  hip: { position: [0.11, -0.11, -0.32], rotation: [0.03, 0.07, -0.03] },
   ads: { duration: 0.3, swayScale: 0.35 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
-  bob: { amount: 0.014 },
+  idle: { position: 0.004, rotation: 0.009, rate: 0.18 },
+  bob: { amount: 0.021, roll: 0.026, rotation: 0.016 },
+  move: { shift: 0.016, roll: 0.065, rate: 4.5 },
   recoil: {
-    back: 0.05,
-    rise: 0.04,
-    maxRise: 0.16,
-    sideways: 0.016,
-    roll: 0.022,
+    back: 0.06,
+    rise: 0.05,
+    maxRise: 0.2,
+    sideways: 0.02,
+    roll: 0.028,
     pattern: [0, 0.5, -0.7, 0.9, -0.6, 0.8, -1.0, 0.7],
     patternReset: 0.3,
-    recovery: 10,
-    cameraRoll: 0.007,
-    cameraRecovery: 14,
+    recovery: 9,
+    cameraRoll: 0.009,
+    cameraRecovery: 12,
   },
   flashSeconds: 0.045,
+  supportAhead: 0.5,
   action: { bolt: { back: 0.075, seconds: 0.075 }, trigger: 0.3, magazine: [0, -0.26, -0.04], charge: 0.075 },
   casings: { port: [0.1, 0.0, 0.05], lift: [0.9, 1.3], radius: 0.0029, length: 0.045 },
 });
 
-/** A bolt-action .308: long, heavy, a big slow kick, and the case comes out
- *  when the bolt is worked rather than with the shot. */
+/** A bolt-action .308: long, heavy, slow to the eye, a big slow kick, and
+ *  the case comes out when the bolt is worked rather than with the shot. */
 export const SNIPER = variant(RIFLE, {
   name: 'sniper',
   muzzleFace: -3.6,
-  hip: { position: [0.17, -0.18, -0.42], rotation: [0, 0.035, 0] },
+  hip: { position: [0.11, -0.1, -0.32], rotation: [0.03, 0.07, -0.02] },
   ads: { duration: 0.3, swayScale: 0.25 },
   sway: { position: 0.045, rotation: 0.55, recovery: 7 },
+  idle: { position: 0.0035, rotation: 0.008, rate: 0.2 },
+  bob: { amount: 0.018, roll: 0.022, rotation: 0.014 },
+  move: { shift: 0.014, roll: 0.055, rate: 5 },
   recoil: {
     back: 0.11,
     rise: 0.15,
@@ -363,6 +407,7 @@ export const SNIPER = variant(RIFLE, {
     cameraRecovery: 8,
   },
   flashSeconds: 0.06,
+  supportAhead: 0.45,
   // The bolt worked by hand after each shot: lifted, run back - which is when
   // the case comes out, `casings.delay`: `after` and `BOLT_WORK.back` in
   // audio.js - run home and turned down.
@@ -402,7 +447,7 @@ export function feelFor(weapon, optic, sight, magnification, points) {
         boreHeight: points.muzzle[1],
         muzzleFace: points.muzzle[2],
         casings: { ...base.casings, port: points.port },
-        arms: { ...base.arms, leftPalm: points.support },
+        arms: { ...base.arms, leftPalm: [points.support[0], points.support[1], points.support[2] - (base.supportAhead ?? 0)] },
       }
     : {};
   return {
