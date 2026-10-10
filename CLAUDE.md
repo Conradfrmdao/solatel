@@ -977,8 +977,9 @@ that pays per kill. What moves is the pixel ratio (low draws at three
 quarters), the composer (off on low, where the renderer tonemaps directly),
 bloom, ambient occlusion (ultra only - 60 fps against 23 on an Iris Xe), the
 shadow map's resolution over the *same* area (shadows get coarser, never
-shorter or absent, because a shadow round a corner is information), how far
-out grass is planted, and birds and chimney smoke. Grass may vary only
+shorter or absent, because a shadow round a corner is information), how
+much of the map's grass is planted (fewer tufts everywhere, never fewer far
+off), and birds and chimney smoke. Grass may vary only
 because it is too short to hide anybody: the tallest tuft is about 0.7 m
 against 1.25 m for a crouched player. Anything added to a preset has to pass
 the same test.
@@ -1029,15 +1030,19 @@ Colour and alpha are separate files because a canvas stores colour
 premultiplied: encoding them together lost the colour under every
 transparent pixel and filtering dragged each leaf's edge to black.
 
-Grass is tufts of the scanned grass cards, planted within `GRASS_RADIUS` of
-the eye from the map's `ground` extra (a run-length coded metre grid of
-where grass grows and how high), from a hash of each spot so nothing pops
-when the patch is replanted. It grows in over the last `GRASS_FADE` metres of
-the radius, measured from the eye *every frame* in the vertex shader, and is
-planted out past the radius by as far as the eye walks between replants. It
-used to be sized when it was planted, so for five metres a tuft stayed the
-size it was planted at and then jumped - the whole outer ring growing by half
-in a frame, every five metres: what Conrad saw as grass popping up. `smoke` lists chimneys; birds circle whatever
+Grass is tufts of the scanned grass cards, **all of a map's grass planted
+once, at full size**, from the map's `ground` extra (a run-length coded metre
+grid of where grass grows and how high) and a hash of each spot, in squares
+of `GRASS_TILE` metres the frustum culls - the facility's 68,000 clumps are
+sixty-four draws at most and a dozen or so in view. The three kinds of clump
+are one geometry: which tufts a clump's three cards show is chosen per
+instance in the vertex shader (`grassField`), so a square is one draw rather
+than three. Nothing grows in or out as a player walks. It used to be planted
+round the eye and grown in towards the edge of that patch, which Conrad saw
+as grass moving with him; a patch measured from the eye always will be.
+The quality setting thins the whole field instead (`setNatureDetail`), and
+re-planting at another share keeps every tuft it keeps where it was.
+`smoke` lists chimneys; birds circle whatever
 map has trees. All of it is marked `scenery`, so the fog is sized without it.
 
 ### Static batching
@@ -1158,10 +1163,12 @@ wedge. The sights are on the view's axis, so it moves nothing aimed.
 AK's carrier and handle and the pistol's slide run back with each shot and
 the pistol's hammer falls and is cocked again, the M700's bolt is worked by
 hand after its shot - lifted, run back (which is when the case comes out),
-home and down - and every trigger is pulled. A reload cants the gun to show
+home and down, to the recording of a bolt worked (`BOLT_WORK` in
+`audio.js`) - and every trigger is pulled. A reload cants the gun to show
 the magazine well (`reloadPose`), the left hand takes the magazine out,
-goes away for the next one and seats it, and the AK, the RPK, the MP5 and
-the pistol are racked at the end. The sights cannot come up during a reload;
+goes away for the next one and seats it, the AK, the RPK, the MP5 and the
+pistol are racked at the end, and the M700's bolt is worked to chamber the
+new round (`BOLT_IN_RELOAD`). The sights cannot come up during a reload;
 `onThrow` drops the gun out of the way for 0.65 s. Mixamo has reload and
 throw clips for the third-person body; they are not in `soldier.glb` yet.
 
@@ -1179,7 +1186,31 @@ every frame (`_poseArms`, two bones, elbow bent towards a pole, the arm
 turned as a whole frame so the elbow hinges the way the clip's did, half
 the hand's roll handed to the forearm). The left palm sits on the handguard
 rather than out by the front sight where the clip holds it, because no arm
-reaches that far from below the screen. `hip.position` is high enough that
+reaches that far from below the screen.
+
+**Each hand is fitted to the gun it holds** (`fingers.js`, `_fitHands`), once
+per gun, because the clip's hands were made for the rifle the game started
+with and put fingers into every real gun since - the AK's grip is thick and
+raked, the M700's is a sporting stock's wrist. The hand is turned to that
+gun's hold (`HOLDS`: the right along the grip's rake, the left palm up under
+the handguard, thumb along the near side and fingers round the far one),
+brought in from outside along the way its palm faces until the palm rests
+on the gun's own triangles - the grip's measured point is on its centre
+line, which set the palm *inside* it - and each finger closed from open
+until it touches, keeping the clip's curl as its shape. The right hand is
+tried up and down its grip and kept where the middle, ring and little
+fingers close round it rather than stopping on the trigger guard. All of it
+is distance tests against the gun's triangles near the hand, in a grid; it
+never reads a point deep inside the gun as clear, because it only ever
+approaches from outside. The pistol's left hand cups the right and keeps
+the clip's. Remote players are still posed by the clip and `_reachLeft`.
+
+**The arms are lit as the gun is**,
+by the weapon scene's own lights, not by the map's baked light: they are
+drawn round that scene's camera at the origin, so the baked light they read
+was whatever stood at the middle of the map, with their facings in the
+camera's frame - sleeves dark or off-colour, whatever skin was worn
+(`dressed(..., { baked: false })`). `hip.position` is high enough that
 the support forearm is in the frame; lower it and the arm is cut off at the
 wrist.
 
@@ -1322,12 +1353,12 @@ says.
 
 **The sounds are recordings** (`assets/sounds`, `scripts/build-sounds.py`,
 ATTRIBUTION.md): every gun from beside the shooter and from mid distance,
-footsteps by surface, rounds into bodies and ground and metal, bodies
-falling, and four men's voices. 1.2 MB, fetched at boot (`audio.preload`)
-and decoded when the audio device starts. What a recording would not help -
-the till, the hit tick, the countdown, a reload's clicks, the crack of a
-round going by - is still synthesised, and so is a gunshot heard before its
-recording decodes. MP3 because every browser decodes it; each sound's onset
+each gun's reload, the M700's bolt, footsteps by surface, rounds into
+bodies, ground and steel, bodies falling, and four men's voices. 1.3 MB,
+fetched at boot (`audio.preload`) and decoded when the audio device starts.
+What a recording would not help - the till, the hit tick, the countdown,
+the crack of a round going by - is still synthesised, and so is a gunshot
+heard before its recording decodes. MP3 because every browser decodes it; each sound's onset
 is found when it is decoded (`onsetOf`), because not every decoder removes
 the encoder's padding and a late gunshot feels late.
 
@@ -1338,7 +1369,25 @@ the encoder's padding and a late gunshot feels late.
   then dulled by the air. A shooter's last shot is turned down over a tenth
   of a second when the next one starts, so automatic fire does not stack
   ten tails and the last one rings out. A limiter on the master holds a
-  firefight under clipping.
+  firefight under clipping. The near recordings are given weight when they
+  are built (`weight`: the inaudible rumble out, the body lifted, a little
+  saturation), and the player's own shot has a low thump under it
+  (`_kick`), the blow in the shoulder a recording beside a gun does not
+  have.
+- **Reloads are recordings, placed on the hands** (`RELOADS`): a real
+  handgun reload in three parts for the pistol, and for the rifles a
+  magazine knocked out, one rocked in to a clack and the action racked -
+  the RPK's lower, the MP5's lighter - each placed so that its last loud
+  moment, the seat or the slam, falls where `_workParts` finishes that
+  movement. A reload cut short by a change of gun stops what has not
+  sounded yet (`cancelReload`). Conrad called the synthesised clicks they
+  replaced cringe.
+- **A round striking the world is heard only close** - within 25 m, falling
+  away steeply (`IMPACT_AUDIBLE`) - and sounds like what it hit
+  (`world.struckAt`, from the boxes of the map's separate pieces by their
+  surface names): steel rings, earth, sand and rubber take it dull, and
+  concrete and timber crack. It used to carry like a gunshot and was a
+  Kenney thud or, one time in five whatever it hit, a clank.
 - **Footsteps** (`takeSteps` in `remotes.js`, `step` in `audio.js`): a
   footfall every stride on the ground, longer at speed; heard to 30 m
   running, 16 walking, 6 crouched - moving slowly to be unheard works. On
@@ -1796,6 +1845,14 @@ inside every shed pallet racking - a hidden solid box for the collision,
 the rack and its load drawn over it (`Layout.rack`) - with pallets, drums
 and crates in the corners clear of the doors, and lamps (`lamp`, emissive)
 hung under the roof.
+
+**A prop borrowed from the yard stands where the yard stood it.** The
+yard's water tower has legs that end at four different heights, hidden
+because the yard sinks it two metres into its ground; stood on its lowest
+foot, three legs hung up to 1.1 m in the air, which Conrad saw from the
+road. It is sunk `WATER_TOWER_SUNK`. Every other borrowed prop meets the
+ground with all four quarters of its footprint, and a new one should be
+checked the same way before it is placed.
 
 `FACILITY_CLIMBS` in `map.rs` walks every staircase, ramp and ladder of high
 ground with the real resolver; add to it when adding something to stand on.

@@ -175,8 +175,9 @@ Rifle" by Zsky from Sketchfab, which shipped with no licence and is long gone.
 is allowed, commercially included; the sources are recorded here so the
 originals can be found. `scripts/build-sounds.py` makes every file from the
 downloads, which are not in this repository, and records what it does: each
-recording resampled to 48 kHz, cut into single shots, steps or cries at
-their onsets, faded out, levelled, and encoded as MP3.
+recording resampled to 48 kHz, cut into single shots, steps, cries or parts
+of a reload at their onsets, faded out, levelled, and encoded as MP3; the
+near gunshots are also filtered and gently saturated (`weight`).
 
 - **Gunshots** - `<gun>-near-*.mp3` and `<gun>-far-*.mp3` - are from
   [The Free Firearm Sound Library](https://opengameart.org/content/the-free-firearm-sound-library),
@@ -186,9 +187,25 @@ their onsets, faded out, levelled, and encoded as MP3.
   submachine gun like the MP5), the 1911 (the pistol) and the Tikka T3 (the
   sniper rifle, a bolt action like the M700), each from beside the shooter
   and from mid distance.
-- **Footsteps, hits and falls** - `step-*`, `hit-*` and `fall-*` - are from
-  Kenney's [Impact Sounds](https://kenney.nl/assets/impact-sounds) 1.0,
-  whose `License.txt` reads "Creative Commons Zero, CC0".
+- **Footsteps, a round into a body, and falls** - `step-*`, `hit-flesh-*`
+  and `fall-*` - are from Kenney's [Impact
+  Sounds](https://kenney.nl/assets/impact-sounds) 1.0, whose `License.txt`
+  reads "Creative Commons Zero, CC0".
+- **Reloads, the bolt, and rounds striking** - `reload-mag-*`,
+  `reload-charge-*`, `bolt-*`, `hit-ground-*` and `hit-metal-*` - are cut
+  from recordings in the USC Cinema / Sunset Editorial sound effects
+  collection on the Internet Archive, CC0 1.0: "Cock and fire empty rifle;
+  many takes", "Cocking bolt action rifle; indoors" and "Loading a clip into
+  a rifle" from [SSE Library:
+  GUNS](https://archive.org/details/SSE_Library_GUNS), "Bullets flying
+  overhead and hitting objects" from [SSE Library:
+  BULLETS](https://archive.org/details/SSE_Library_BULLETS), "Rifle bullets
+  flying over and hitting objects" from SSE Library: GUNS, and "Shooting
+  gallery or anvil" from [SSE Library:
+  METAL](https://archive.org/details/SSE_Library_METAL).
+- **The pistol's reload** - `reload-pistol-*` - is zer0_sol's [Handgun Reload
+  Sound Effect](https://opengameart.org/content/handgun-reload-sound-effect)
+  on OpenGameArt, CC0 1.0, cut into its three parts.
 - **Voices** - `voice-*` - are from HaelDB's [Male Grunt/Yelling
   sounds](https://opengameart.org/content/male-gruntyelling-sounds), offered
   under both OGA-BY 3.0 and CC0; we take them under CC0. Four men, each a

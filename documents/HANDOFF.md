@@ -4,6 +4,29 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026: Conrad's first live playtest, answered
+
+**The game is live** at https://solatelgame.com on an OVHcloud VPS-3
+(`vps-f4cc43bc.vps.ovh.ca`, in Canada), test-month settings committed with
+his yes. He played it and sent a list; all of it is done, in two PRs:
+
+- *First PR (#30):* the boot art fills the screen; the menu is one window
+  with no scrolling (maps on top; the gun, outfit and stakes appear beside
+  them once a map is picked; a stake button is the play button); the stall
+  before the menu answered is gone (its pictures are files now); a picked
+  map says it is downloading; the pistol is automatic; the machine gun's
+  drum takes 5.5 s; the game takes the whole screen.
+- *This one:* the red dot works (its ring was a solid disc closing the
+  tube; 2x, 3x and 4x checked in a match); reloads, the M700's bolt and
+  rounds striking are real recordings, the reloads placed on the hands
+  and the strikes heard only within 25 m and by what was hit; near
+  gunshots carry more weight; first-person hands are fitted to each gun
+  (`fingers.js`) and the sleeves keep their skin's colour; all of a map's
+  grass is planted at once, so nothing grows in round the player; the
+  facility's water tower stands on all four legs (map version 29).
+
+Next: his playtest of this, then the audit (task list) and bigger maps.
+
 ## Status, 9 October 2026 (evening): going live, and intensity
 
 **The game goes live this month on one VPS** that Conrad is buying -
