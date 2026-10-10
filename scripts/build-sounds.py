@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""The game's recorded sounds, cut from three CC0 libraries.
+"""The game's recorded sounds, cut from CC0 libraries.
 
-    python3 scripts/build-sounds.py <firearms-dir> <kenney-dir> <voices-dir>
+    python3 scripts/build-sounds.py <firearms-dir> <kenney-dir> <voices-dir> <handling-dir>
 
 <firearms-dir> is "Prepared SFX Library" from The Free Firearm Sound Library
 (the folder holding AK-47/, 1911/, Tikka/ ...); <kenney-dir> is the Audio/
 folder of Kenney's Impact Sounds; <voices-dir> is "yelling sounds" from
-HaelDB's Male Grunt/Yelling sounds. All three are CC0 (the voices are
-OGA-BY 3.0 as well; we take them as CC0) - see ATTRIBUTION.md. None of them
-is in the repository: they are 540 MB of 96 kHz field recordings and the
-rest, and only the cuts below are.
+HaelDB's Male Grunt/Yelling sounds; <handling-dir> holds the recordings in
+`HANDLING_FILES` under the names they are downloaded as - from the USC
+Cinema / Sunset Editorial collection on archive.org, and zer0_sol's handgun
+reload from OpenGameArt. All of them are CC0 (the voices are OGA-BY 3.0 as
+well; we take them as CC0) - see ATTRIBUTION.md. None of them is in the
+repository: they are 550 MB of field recordings and the rest, and only the
+cuts below are.
 
 Needs numpy, scipy and ffmpeg (with libmp3lame) on the PATH. Writes
 `assets/sounds/*.mp3` and `client/src/sound-sets.js`, which says what is
@@ -29,9 +32,23 @@ What it makes, and why each choice:
   the MP5 is a 9 mm submachine gun and so is the Carl Gustav M45; the RPK
   fires the AK's 7.62x39 and the SKS was recorded firing it; the M700 is a
   bolt-action .308 and the Tikka T3 is a bolt-action .30-06.
-- **Footsteps** by surface, **hits** (a round into a body, into the ground,
-  into metal), **a body falling**, and **four men's voices** - pain and
-  death - so a player keeps one voice for a whole match.
+- **Weight in the near shots** (`weight`): the rumble under 25 Hz the
+  microphone took from the blast is three quarters of the sniper rifle's
+  recording and none of it is heard, and every near recording had its crack
+  20 dB over its body, which plays as a click with a tail. The rumble is
+  taken out, the body under 150 Hz lifted, and the whole saturated a
+  little, so a shot lands as a blow.
+- **Reloads that are recordings** (`HANDLING`): a real pistol reload in
+  three parts - magazine out, in, slide - and for the rifles a magazine
+  pulled, one seated and an action racked, cut from takes of each; the
+  bolt of a bolt-action rifle worked once, for the M700 after every shot.
+  `audio.js` lines each up with the moment the hands do it.
+- **Rounds striking** (`HANDLING` as well): real rounds into dirt and
+  timber, and onto steel plate, in place of Kenney's thuds and clanks,
+  which Conrad found comic.
+- **Footsteps** by surface, **a round into a body**, **a body falling**,
+  and **four men's voices** - pain and death - so a player keeps one voice
+  for a whole match.
 - **MP3**, because it is the one format every browser's `decodeAudioData`
   takes. Its encoder pads the start; the client finds each sound's onset
   when it decodes it rather than trusting any decoder to remove the pad.
@@ -69,10 +86,54 @@ KENNEY = {
     'step-wood': ('footstep_wood', 0.35),
     'step-metal': ('impactMetal_light', 0.3),
     'hit-flesh': ('impactPunch_heavy', 0.45),
-    'hit-ground': ('impactGeneric_light', 0.3),
-    'hit-metal': ('impactMetal_medium', 0.35),
     'fall': ('impactSoft_heavy', 0.5),
 }
+
+# The handling recordings, by the names they download as. From the USC
+# Cinema / Sunset Editorial collection on archive.org (items SSE_Library_GUNS,
+# SSE_Library_BULLETS and SSE_Library_METAL), CC0, and zer0_sol's "Handgun
+# Reload Sound Effect" on OpenGameArt, CC0.
+COCKING = 'GUNMech_Cock and fire empty rifle; many takes_CS_USC.flac'
+BOLT = 'GUNMech_Cocking bolt action rifle; indoors_CS_USC.flac'
+CLIP = 'GUNMech_Loading a clip into a rifle_CS_USC.flac'
+STEEL = 'METLImpt_Shooting gallery or anvil_CS_USC.flac'
+STRIKES = 'BLLTImpt_Bullets flying overhead and hitting objects_CS_USC.flac'
+RIFLE_STRIKES = 'GUNRif_Rifle bullets flying over and hitting objects_CS_USC.flac'
+HANDGUN = 'reload.wav'
+HANDLING_FILES = [COCKING, BOLT, CLIP, STEEL, STRIKES, RIFLE_STRIKES, HANDGUN]
+
+# Each set and its takes: (recording, from, to) in seconds, found by eye on
+# each recording's envelope. A take runs from just before its first sound to
+# where its last has died away; `audio.js` lines up each take's loudest
+# moment (or, for the bolt, its start) with the hands.
+HANDLING = {
+    # One handgun reload, in its three parts: the magazine dropped, the new
+    # one pushed home, the slide racked back and let go.
+    'reload-pistol-out': [(HANDGUN, 0.07, 0.34)],
+    'reload-pistol-in': [(HANDGUN, 0.55, 0.88)],
+    'reload-pistol-slide': [(HANDGUN, 1.0, 1.5)],
+    # A rifle's: the magazine knocked out, a fresh one rocked in to a clack,
+    # and the action pulled back and let fly - four takes, each ending on the
+    # slam of the bolt going home.
+    'reload-mag-out': [(CLIP, 1.30, 1.55)],
+    'reload-mag-in': [(CLIP, 4.47, 5.04), (CLIP, 5.64, 6.09)],
+    'reload-charge': [(COCKING, 0.72, 1.16), (COCKING, 3.27, 3.62), (COCKING, 4.98, 5.34), (COCKING, 5.41, 5.78)],
+    # A bolt worked once, quickly: lifted 0.04 s in, back by a quarter of a
+    # second, home at a third and turned down by 0.4 - the M700's own
+    # `BOLT_WORK` in viewmodel.js, which it was timed against.
+    'bolt': [(BOLT, 2.30, 2.98)],
+    # Rounds striking: into dirt and timber, the strike and the start of
+    # the spray after it, and onto steel plate, a hard ring.
+    'hit-ground': [(STRIKES, 5.25, 5.5), (STRIKES, 8.568, 8.82), (STRIKES, 9.345, 9.6),
+                   (RIFLE_STRIKES, 0.27, 0.48), (RIFLE_STRIKES, 4.44, 4.69)],
+    'hit-metal': [(STEEL, 0.219, 0.62), (STEEL, 1.879, 2.28), (STEEL, 5.896, 6.3),
+                  (STEEL, 8.451, 8.85), (STEEL, 17.052, 17.45)],
+}
+
+# Sets whose takes die away from their first moment, this many seconds to
+# fall by e: a round into the ground is a strike, and the recordings go on
+# into the spray of dirt after it, which on its own is a hiss.
+DECAY = {'hit-ground': 0.07}
 
 # The voices, by man: short cries for a hit, longer ones for a death. Sorted
 # by length and by the shape of the pitch (a death's falls away at the end),
@@ -163,6 +224,32 @@ def loudness_to(x, db, ceiling=-1.0):
     return x * gain
 
 
+def weight(x, drive=1.8):
+    """A near shot as it is heard from behind the gun rather than measured
+    beside it: the rumble under 25 Hz the blast put on the microphone taken
+    out (it is three quarters of the sniper rifle's recording, and none of
+    it is heard), the body under 150 Hz lifted by about 4 dB, and the whole
+    gently saturated, which brings the body up about 5 dB against the crack
+    - a click with a tail becomes a blow."""
+    from scipy.signal import butter, sosfilt
+
+    x = sosfilt(butter(2, 25, 'highpass', fs=RATE, output='sos'), x, axis=0)
+    low = sosfilt(butter(2, 150, 'lowpass', fs=RATE, output='sos'), x, axis=0)
+    x = peak_to(x + 0.6 * low, 0.0)
+    return np.tanh(drive * x) / np.tanh(drive)
+
+
+def take(x, start, end):
+    """A stretch of a recording, with a fade in too short to soften its
+    attack and a fade out over its last third, so it ends on nothing."""
+    x = x[int(start * RATE) : int(end * RATE)].copy()
+    n_in = int(0.002 * RATE)
+    x[:n_in] *= np.linspace(0, 1, n_in)[:, None]
+    n_out = len(x) // 3
+    x[-n_out:] *= (np.cos(np.linspace(0, np.pi, n_out)) * 0.5 + 0.5)[:, None] ** 1.5
+    return x
+
+
 def written(name, samples, bitrate):
     path = OUT / f'{name}.mp3'
     encode(samples, path, bitrate)
@@ -171,10 +258,14 @@ def written(name, samples, bitrate):
 
 
 def main(argv):
-    if len(argv) != 4:
+    if len(argv) != 5:
         print(__doc__)
         return 2
-    firearms, kenney, voices = (Path(a) for a in argv[1:])
+    firearms, kenney, voices, handling = (Path(a) for a in argv[1:])
+    missing = [name for name in HANDLING_FILES if not (handling / name).exists()]
+    if missing:
+        print(f'not in {handling}: {missing}')
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
     for old in OUT.glob('*.mp3'):
         old.unlink()
@@ -194,6 +285,8 @@ def main(argv):
                 # From a little before the shot; its onset is found 30 dB
                 # down, above the noise of a recording made out of doors.
                 cut = shape(x[max(0, at - int(0.05 * RATE)) : end - int(0.05 * RATE)], keep, below=30)
+                if kind == 'near':
+                    cut = weight(cut)
                 names.append(written(f'{gun}-{kind}-{i + 1}', peak_to(cut), bitrate))
             sets[f'{gun}-{kind}'] = names
 
@@ -205,6 +298,21 @@ def main(argv):
             cut = shape(x, keep, lead=0.001)
             level = loudness_to(cut, -16) if name.startswith('step') else peak_to(cut)
             names.append(written(f'{name}-{i + 1}', level, '64k'))
+        sets[name] = names
+
+    print('>> reloads, the bolt, and rounds striking')
+    recordings = {}
+    for name, takes in HANDLING.items():
+        names = []
+        for i, (file, start, end) in enumerate(takes):
+            if file not in recordings:
+                recordings[file] = decode(handling / file, 1)
+            cut = take(recordings[file], start, end)
+            if name in DECAY:
+                cut *= np.exp(-np.arange(len(cut)) / (DECAY[name] * RATE))[:, None]
+            # Levelled by what is sounding rather than by the peak, so the
+            # takes of a set are as loud as one another.
+            names.append(written(f'{name}-{i + 1}', loudness_to(cut, -16), '96k'))
         sets[name] = names
 
     print('>> voices')

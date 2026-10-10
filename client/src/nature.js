@@ -4,8 +4,8 @@
 // boxes, and a field drawn as one flat face looks like a carpet. So a map can
 // carry, in its scene extras, where each tree stands and where grass grows,
 // and this module does the rest: tapered trunks, branches, leaves that catch
-// the light as a rounded crown, a sway in the wind, and tufts of grass round
-// the player that move with it.
+// the light as a rounded crown, a sway in the wind, and a field of grass
+// tufts wherever the map says grass grows.
 //
 // # None of it is the world
 //
@@ -18,10 +18,12 @@
 //
 // # Cost
 //
-// Everything is instanced: one draw per kind of tree and one for the grass,
-// however many there are. Grass is only planted within `GRASS_RADIUS` of the
-// eye and re-planted as it moves, from a hash of each spot so that a tuft
-// never jumps when the patch is rebuilt.
+// Everything is instanced: one draw per kind of tree, however many there
+// are, and one per square of the map for the grass (`GRASS_TILE`), so the
+// squares behind the eye are not drawn. All of a map's grass is planted
+// once, at full size, when the map is: nothing grows in or out as a player
+// walks. It used to be planted round the eye and grown in towards the edge
+// of that patch, which Conrad saw as grass moving with him.
 
 import * as THREE from 'three';
 import { foliageSet, photoFiles, photoSet } from './photo.js';
@@ -31,32 +33,24 @@ import { lightMaterial } from './light.js';
 /** Seconds of wind, shared by every swaying material. */
 const wind = { value: 0 };
 
-/** How far from the eye grass is planted, in metres. */
-const GRASS_RADIUS = 34;
-
 /** Metres between grass tufts before jitter. */
 const GRASS_STEP = 0.6;
 
-/** How far the eye moves before the grass is re-planted round it. */
-const GRASS_REPLANT = 5;
-
 /**
- * Over how many metres short of the radius a tuft grows from nothing to its
- * full size, measured from the eye every frame in the vertex shader.
- *
- * It used to be worked out when the patch was planted, from where the eye
- * was then - so for the five metres walked before the next replant a tuft
- * stayed the size it had been planted at, and at the replant it jumped:
- * the outer tufts grew by half in a frame, all round, every five metres.
- * That was the grass "popping up" as a player walked towards it.
+ * The side of a square of grass that is one draw, in metres. The frustum
+ * skips the squares out of view; smaller squares skip more of the field and
+ * cost more draws. The facility, 320 m across, is sixty-four of them, of
+ * which a dozen or so are in front of the eye at a time.
  */
-const GRASS_FADE = 7;
+const GRASS_TILE = 40;
 
 /**
  * How much of the scenery is drawn, from the graphics quality: `grass` is
- * the share of `GRASS_RADIUS` planted and `sky` whether birds and chimney
- * smoke are. Nothing here changes what a player can see of another player -
- * the trees are the same at every level - which is the rule the presets keep.
+ * the share of the map's tufts planted, the same share everywhere, and
+ * `sky` whether birds and chimney smoke are. Nothing here changes what a
+ * player can see of another player - the trees are the same at every level,
+ * and no tuft is tall enough to hide anybody - which is the rule the presets
+ * keep.
  */
 const detail = { grass: 1, sky: true, version: 0 };
 
@@ -611,34 +605,88 @@ function leafShadow({ albedo, alpha }) {
 
 // ---- the grass -------------------------------------------------------------
 
+/** How tall each of a clump's three cards is, in metres before scaling. */
+const GRASS_CARD_HEIGHTS = [0.42, 0.35, 0.29];
+
 /**
- * One clump: three cards of photographed tufts standing crossed at sixty
+ * Every clump: three cards of photographed tufts standing crossed at sixty
  * degrees, so it is the same clump from any side. Each card is as wide as
  * its own tuft is in the atlas for its height - stretched, a tuft reads as
  * smeared - and they are of slightly different heights, as grass is.
+ *
+ * Which tufts a clump is made of (`GRASS_CLUMPS`) is chosen per instance,
+ * in the vertex shader (`grassField`), so every kind of clump is one
+ * geometry and a square of the field is one draw rather than three. Here
+ * each card is only its corners - `uv` - and which card it is.
  */
-function tuftGeometry(clump) {
-  const b = new Builder();
-  const up = new THREE.Vector3(0, 1, 0);
-  const heights = [0.42, 0.35, 0.29];
-  clump.forEach((tuft, k) => {
-    const [u0, v0, u1, v1] = GRASS_TUFTS[tuft];
-    const height = heights[k];
-    // The atlas is square, so a texel is as wide as it is tall.
-    const width = (height * (u1 - u0)) / (v1 - v0);
-    const angle = (k * Math.PI) / 3;
-    const dx = Math.cos(angle) * width * 0.5;
-    const dz = Math.sin(angle) * width * 0.5;
-    const ids = [
-      b.vertex(new THREE.Vector3(-dx, 0, -dz), up, u0, v0, 0),
-      b.vertex(new THREE.Vector3(dx, 0, dz), up, u1, v0, 0),
-      b.vertex(new THREE.Vector3(dx, height, dz), up, u1, v1, 1),
-      b.vertex(new THREE.Vector3(-dx, height, -dz), up, u0, v1, 1),
-    ];
-    b.quad(ids[0], ids[1], ids[2], ids[3]);
-  });
-  return b.geometry();
+function fieldGeometry() {
+  const g = new THREE.BufferGeometry();
+  const corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const positions = [];
+  const uvs = [];
+  const cards = [];
+  const sway = [];
+  const index = [];
+  for (let k = 0; k < 3; k += 1) {
+    for (const [u, v] of corners) {
+      // Placed by the shader; here only something for three to measure.
+      positions.push(u - 0.5, v * GRASS_CARD_HEIGHTS[0], 0);
+      uvs.push(u, v);
+      cards.push(k);
+      sway.push(v);
+    }
+    const at = k * 4;
+    index.push(at, at + 1, at + 2, at, at + 2, at + 3);
+  }
+  const count = cards.length;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(count).fill([0, 1, 0]).flat(), 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setAttribute('grassCard', new THREE.Float32BufferAttribute(cards, 1));
+  g.setAttribute('sway', new THREE.Float32BufferAttribute(sway, 1));
+  g.setAttribute('shade', new THREE.Float32BufferAttribute(new Array(count).fill(1), 1));
+  g.setIndex(index);
+  return g;
 }
+
+/**
+ * The vertex shader's half of `fieldGeometry`: the card's corner put where
+ * its tuft makes it, and the atlas read where that tuft is.
+ */
+const GRASS_FIELD_PARS = `
+  attribute float grassCard;
+  attribute float grassClump;
+  uniform vec4 grassRects[${GRASS_TUFTS.length}];
+  uniform int grassTufts[${GRASS_CLUMPS.length * 3}];
+  uniform float grassHeights[3];`;
+
+const GRASS_FIELD_UV = `
+  #ifdef USE_INSTANCING
+  {
+    vec4 rect = grassRects[grassTufts[int(grassClump + 0.5) * 3 + int(grassCard + 0.5)]];
+    vec2 atlas = mix(rect.xy, rect.zw, uv);
+    #ifdef USE_MAP
+      vMapUv = (mapTransform * vec3(atlas, 1.0)).xy;
+    #endif
+    #ifdef USE_ALPHAMAP
+      vAlphaMapUv = (alphaMapTransform * vec3(atlas, 1.0)).xy;
+    #endif
+  }
+  #endif`;
+
+const GRASS_FIELD_POSITION = `
+  #ifdef USE_INSTANCING
+  {
+    int card = int(grassCard + 0.5);
+    vec4 rect = grassRects[grassTufts[int(grassClump + 0.5) * 3 + card]];
+    float height = grassHeights[card];
+    // The atlas is square, so a texel is as wide as it is tall.
+    float width = height * (rect.z - rect.x) / (rect.w - rect.y);
+    float angle = float(card) * 1.0471976;
+    float across = (uv.x - 0.5) * width;
+    transformed = vec3(cos(angle) * across, uv.y * height, sin(angle) * across);
+  }
+  #endif`;
 
 /** Above this, in world metres, a foot is on something standing on the
  *  ground rather than on the ground the grass grows from. */
@@ -666,11 +714,7 @@ function hash2(x, z) {
 class Grass {
   constructor(ground, parent, textures) {
     this.ground = decodeGround(ground);
-    // Planted out past the radius by as far as the eye can walk before the
-    // next replant, so wherever the eye is there is grass all the way out to
-    // where the shader has grown it back to nothing.
-    const reach = GRASS_RADIUS + GRASS_REPLANT;
-    const capacity = Math.ceil((Math.PI * reach * reach) / (GRASS_STEP * GRASS_STEP));
+    this.parent = parent;
     const material = lightMaterial(windy(
       new THREE.MeshStandardMaterial({
         map: textures.grass.albedo,
@@ -682,48 +726,30 @@ class Grass {
       { flutter: 0.0, lean: 0.12 },
     ));
     material.alphaToCoverage = true;
-    // Grown in by distance from the eye, every frame (see `GRASS_FADE`).
-    this.fade = {
-      grassEye: { value: new THREE.Vector3() },
-      grassFade: { value: new THREE.Vector2(GRASS_RADIUS - GRASS_FADE, GRASS_RADIUS) },
+    const field = {
+      grassRects: { value: GRASS_TUFTS.map(([u0, v0, u1, v1]) => new THREE.Vector4(u0, v0, u1, v1)) },
+      grassTufts: { value: GRASS_CLUMPS.flat() },
+      grassHeights: { value: GRASS_CARD_HEIGHTS },
     };
-    const fade = this.fade;
     const before = material.onBeforeCompile;
     material.onBeforeCompile = function onBeforeCompile(shader, renderer) {
       before.call(this, shader, renderer);
-      Object.assign(shader.uniforms, fade);
+      Object.assign(shader.uniforms, field);
+      // After the wind's own `begin_vertex`, which it keeps at the top of
+      // what it puts there: the card is placed first, then it sways.
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 grassEye;\nuniform vec2 grassFade;')
-        .replace(
-          '#include <project_vertex>',
-          `#ifdef USE_INSTANCING
-            transformed *= 1.0 - smoothstep(grassFade.x, grassFade.y,
-              distance(vec2(instanceMatrix[3][0], instanceMatrix[3][2]), grassEye.xz));
-          #endif
-          #include <project_vertex>`,
-        );
+        .replace('#include <common>', `#include <common>\n${GRASS_FIELD_PARS}`)
+        .replace('#include <uv_vertex>', `#include <uv_vertex>\n${GRASS_FIELD_UV}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GRASS_FIELD_POSITION}`);
     };
     const key = material.customProgramCacheKey;
     material.customProgramCacheKey = function customProgramCacheKey() {
-      return `${key.call(this)}|grass-fade`;
+      return `${key.call(this)}|grass-field`;
     };
-    // One mesh per kind of clump, sharing the material: three draws, and a
-    // field that does not repeat one clump to the horizon.
-    this.meshes = GRASS_CLUMPS.map((clump) => {
-      const mesh = new THREE.InstancedMesh(tuftGeometry(clump), material, capacity);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.count = 0;
-      mesh.receiveShadow = true;
-      mesh.frustumCulled = false;
-      mesh.name = 'grass';
-      parent.add(mesh);
-      return mesh;
-    });
-    this.at = null;
-    this._matrix = new THREE.Matrix4();
-    this._colour = new THREE.Color();
-    this._q = new THREE.Quaternion();
-    this._up = new THREE.Vector3(0, 1, 0);
+    this.material = material;
+    this.geometry = fieldGeometry();
+    this.meshes = [];
+    this._detail = -1;
   }
 
   heightAt(x, z) {
@@ -735,59 +761,91 @@ class Grass {
     return code === 0 ? -1 : (code - 1) * 0.25;
   }
 
-  /** Plant round `eye` (in the map's own units) if it has moved far enough,
-   *  or if the quality setting has changed how far out to plant. */
-  plant(eye) {
-    const radius = GRASS_RADIUS * detail.grass;
-    this.fade.grassEye.value.set(eye.x, eye.y, eye.z);
-    this.fade.grassFade.value.set(Math.max(0, radius - GRASS_FADE), radius);
-    const moved = !this.at || Math.hypot(eye.x - this.at.x, eye.z - this.at.z) >= GRASS_REPLANT;
-    if (!moved && this._detail === detail.version) return;
-    this.at = { x: eye.x, z: eye.z };
+  /**
+   * Plant all of the map's grass, at the share of it the quality setting
+   * asks for - once, and again only if that setting changes. Every spot is
+   * decided by a hash of where it is, so a replant at another share keeps
+   * every tuft it keeps exactly where it was.
+   */
+  plant() {
+    if (this._detail === detail.version) return;
     this._detail = detail.version;
-    const m = this._matrix;
-    const counts = this.meshes.map(() => 0);
-    const capacity = this.meshes[0].instanceMatrix.count;
-    const r2 = (radius + GRASS_REPLANT) ** 2;
-    const reach = radius + GRASS_REPLANT;
-    const i0 = Math.floor((eye.x - reach) / GRASS_STEP);
-    const i1 = Math.ceil((eye.x + reach) / GRASS_STEP);
-    const j0 = Math.floor((eye.z - reach) / GRASS_STEP);
-    const j1 = Math.ceil((eye.z + reach) / GRASS_STEP);
+    for (const mesh of this.meshes) {
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      mesh.dispose();
+    }
+    this.meshes = [];
+    const g = this.ground;
+    const share = detail.grass;
+    const tiles = new Map();
+    const i0 = Math.floor(g.x0 / GRASS_STEP);
+    const i1 = Math.ceil((g.x0 + g.width * g.cell) / GRASS_STEP);
+    const j0 = Math.floor(g.z0 / GRASS_STEP);
+    const j1 = Math.ceil((g.z0 + g.height * g.cell) / GRASS_STEP);
     for (let i = i0; i <= i1; i += 1) {
       for (let j = j0; j <= j1; j += 1) {
         const h = hash2(i, j);
         const x = (i + hash2(j, i) - 0.5) * GRASS_STEP;
         const z = (j + h - 0.5) * GRASS_STEP;
-        const d2 = (x - eye.x) ** 2 + (z - eye.z) ** 2;
-        if (d2 > r2) continue;
         // Patchy, as a field is: thick in places, sparse in others.
         const patch = Math.sin(x * 0.21 + Math.cos(z * 0.13) * 2.0) * Math.cos(z * 0.17 - x * 0.05);
         if (h > 0.55 + patch * 0.4) continue;
+        if (share < 1 && hash2(x * 1.3 + 7.1, z * 0.7 - 3.3) >= share) continue;
         const y = this.heightAt(x, z);
         if (y < 0) continue;
-        // Full size: the shader shrinks it to nothing towards the edge.
-        const size = 0.7 + hash2(x, z) * 0.7;
-        this._q.setFromAxisAngle(this._up, h * 6.28);
-        m.compose(new THREE.Vector3(x, y, z), this._q, new THREE.Vector3(size, size * (0.8 + patch * 0.35), size));
-        const kind = Math.floor(hash2(z * 1.7, x * 0.9) * this.meshes.length) % this.meshes.length;
-        const mesh = this.meshes[kind];
-        const n = counts[kind];
-        if (n >= capacity) continue;
+        const key = `${Math.floor((x - g.x0) / GRASS_TILE)},${Math.floor((z - g.z0) / GRASS_TILE)}`;
+        let tile = tiles.get(key);
+        if (!tile) {
+          tile = [];
+          tiles.set(key, tile);
+        }
+        tile.push(x, y, z, h, patch);
+      }
+    }
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const at = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    const colour = new THREE.Color();
+    for (const [key, tile] of tiles) {
+      const count = tile.length / 5;
+      const mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
+      const clumps = new Float32Array(count);
+      let low = Infinity;
+      let high = -Infinity;
+      for (let n = 0; n < count; n += 1) {
+        const [x, y, z, h, patch] = [tile[n * 5], tile[n * 5 + 1], tile[n * 5 + 2], tile[n * 5 + 3], tile[n * 5 + 4]];
+        const scale = 0.7 + hash2(x, z) * 0.7;
+        q.setFromAxisAngle(up, h * 6.28);
+        m.compose(at.set(x, y, z), q, size.set(scale, scale * (0.8 + patch * 0.35), scale));
         mesh.setMatrixAt(n, m);
+        clumps[n] = Math.floor(hash2(z * 1.7, x * 0.9) * GRASS_CLUMPS.length) % GRASS_CLUMPS.length;
         const dry = 0.5 + 0.5 * Math.sin(x * 0.05 + z * 0.037);
         // Darker than the photograph, which was shot in full sun: a field
         // of it at full brightness reads as lime rather than as grass.
-        this._colour.setRGB(0.5 + dry * 0.16, 0.62 + hash2(z, x) * 0.1, 0.36 - dry * 0.08);
-        mesh.setColorAt(n, this._colour);
-        counts[kind] = n + 1;
+        colour.setRGB(0.5 + dry * 0.16, 0.62 + hash2(z, x) * 0.1, 0.36 - dry * 0.08);
+        mesh.setColorAt(n, colour);
+        low = Math.min(low, y);
+        high = Math.max(high, y);
       }
+      // Per instance, beside the matrix: which clump this one is.
+      mesh.geometry = this.geometry.clone();
+      mesh.geometry.setAttribute('grassClump', new THREE.InstancedBufferAttribute(clumps, 1));
+      // The whole square, and a tuft's reach past its edge and over its
+      // highest ground, is what the frustum is asked about.
+      const [tx, tz] = key.split(',').map(Number);
+      const half = GRASS_TILE / 2;
+      mesh.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3(g.x0 + (tx + 0.5) * GRASS_TILE, (low + high) / 2 + 0.3, g.z0 + (tz + 0.5) * GRASS_TILE),
+        Math.hypot(half + 1, half + 1, (high - low) / 2 + 0.6),
+      );
+      mesh.receiveShadow = true;
+      mesh.name = 'grass';
+      this.parent.add(mesh);
+      this.meshes.push(mesh);
     }
-    this.meshes.forEach((mesh, kind) => {
-      mesh.count = counts[kind];
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    });
   }
 }
 
@@ -939,8 +997,9 @@ export function natureFiles(extras) {
 
 /**
  * Grow what `map`'s extras describe, as children of the map. Returns an
- * object whose `update(eye)` keeps the grass round the eye, or null if the
- * map describes nothing to grow.
+ * object whose `update()` moves the smoke and the birds and plants the grass
+ * again if the quality setting has changed, or null if the map describes
+ * nothing to grow.
  */
 export async function growNature(map) {
   const extras = map.userData ?? {};
@@ -1043,7 +1102,6 @@ export async function growNature(map) {
   const grass = extras.ground && textures.grass ? new Grass(extras.ground, group, textures) : null;
   const smoke = Array.isArray(extras.smoke) && extras.smoke.length ? new Smoke(group, extras.smoke) : null;
   const birds = trees.length ? new Birds(group) : null;
-  const local = new THREE.Vector3();
   const foot = new THREE.Vector3();
   let last = wind.value;
   return {
@@ -1056,7 +1114,7 @@ export async function growNature(map) {
       map.worldToLocal(foot);
       return grass.heightAt(foot.x, foot.z) >= 0;
     },
-    update(eye) {
+    update() {
       const dt = Math.min(0.1, Math.max(0, wind.value - last));
       last = wind.value;
       smoke?.show(detail.sky);
@@ -1065,10 +1123,7 @@ export async function growNature(map) {
         birds.mesh.visible = detail.sky;
         if (detail.sky) birds.update(wind.value);
       }
-      if (!grass) return;
-      local.copy(eye);
-      map.worldToLocal(local);
-      grass.plant(local);
+      grass?.plant();
     },
   };
 }

@@ -10,11 +10,16 @@
 // like a toy. The recordings are 1.2 MB, fetched at boot with the guns and
 // kept for good.
 //
+// Reloads are recordings too: a real handgun reload, and a rifle's magazine
+// pulled, one seated and its action racked, each lined up with the moment
+// the hands do it on screen. Conrad called the synthesised clicks they
+// replaced cringe, which they were.
+//
 // Everything that is a message rather than a sound in the world - the till,
 // the hit tick, the countdown - is still synthesised, and so is what has no
-// recording worth having: the crack of a round going past, a reload's
-// clicks, a landing. So is any gunshot heard before its recording has
-// decoded, which is the first second of a page at most.
+// recording worth having: the crack of a round going past, a landing. So is
+// any gunshot heard before its recording has decoded, which is the first
+// second of a page at most.
 //
 // # Why it matters more than it sounds
 //
@@ -54,6 +59,55 @@ const MAX_AUDIBLE = 220;
 
 /** How far away somebody else's reload can be heard, in metres. */
 const RELOAD_AUDIBLE = 22;
+
+/**
+ * How far a round striking the world is heard, in metres, and how steeply
+ * it falls away inside that. A strike is a small sound: next to it, it is a
+ * crack and a spray of grit; across the yard it is nothing under the shot
+ * that sent it. It used to carry as far as a gunshot and land as hard.
+ */
+const IMPACT_AUDIBLE = 25;
+const IMPACT_FALL = 2;
+
+/**
+ * Each gun's reload, as recordings placed where the hands are in
+ * `viewmodel.js` (`_workParts`), in fractions of the reload: the magazine
+ * coming out at 0.13, the fresh one seated at 0.6 (the jolt of `seat`), and
+ * the action let fly home at 0.79 - or on the M700 its bolt worked, done at
+ * `BOLT_IN_RELOAD` plus its stroke. Each recording is placed by its last
+ * loud moment - the clack of the seat, the slam of the bolt going home -
+ * which is the moment the hands finish what they are doing. The rifles share
+ * their recordings and are told apart by `rate`: the machine gun's drum
+ * lower and heavier, the MP5 lighter.
+ */
+const RELOADS = {
+  rifle: { rate: 1, steps: [['reload-mag-out', 0.13], ['reload-mag-in', 0.6], ['reload-charge', 0.79]] },
+  lmg: { rate: 0.86, steps: [['reload-mag-out', 0.13], ['reload-mag-in', 0.6], ['reload-charge', 0.79]] },
+  smg: { rate: 1.12, steps: [['reload-mag-out', 0.13], ['reload-mag-in', 0.6], ['reload-charge', 0.79]] },
+  sniper: { rate: 1.04, steps: [['reload-mag-out', 0.13], ['reload-mag-in', 0.6], ['bolt', null]] },
+  pistol: { rate: 1, steps: [['reload-pistol-out', 0.13], ['reload-pistol-in', 0.6], ['reload-pistol-slide', 0.79]] },
+};
+
+/**
+ * The M700's bolt as the recording of it has it (`bolt` in
+ * build-sounds.py), in seconds from the hand on it: lifted by 0.08, run
+ * back by 0.27, home by 0.34 and turned down by 0.41. `viewmodel.js` works
+ * the bolt on screen to these, so what is seen is what is heard.
+ */
+export const BOLT_WORK = { lifted: 0.08, back: 0.27, home: 0.34, done: 0.41 };
+
+/** When the M700's bolt is worked in a reload, as a fraction of it: the new
+ *  magazine is home at 0.62, and a bolt action chambers its round by hand. */
+export const BOLT_IN_RELOAD = 0.68;
+
+/** How long after its shot the M700's bolt starts to be worked, in seconds:
+ *  `boltAction.after` in weapons.js. */
+const BOLT_AFTER_SHOT = 0.32;
+
+/** A felt thump under the player's own shot, by gun - a recording made
+ *  beside a gun is the sound of it, and what a shooter has as well is the
+ *  blow in the shoulder. Peak level before the master. */
+const KICK = { rifle: 0.5, lmg: 0.6, smg: 0.32, pistol: 0.38, sniper: 0.8 };
 
 /** Under this many metres a shot is all its near recording; past `FAR_FROM`,
  *  all its far one; between, the two crossed. */
@@ -197,7 +251,7 @@ export class Audio {
     const bytes = this.raw.get(name);
     this.raw.delete(name);
     this.context.decodeAudioData(bytes).then(
-      (buffer) => this.buffers.set(name, { buffer, onset: onsetOf(buffer) }),
+      (buffer) => this.buffers.set(name, { buffer, onset: onsetOf(buffer), anchor: lastLoudOf(buffer) }),
       () => {},
     );
   }
@@ -354,6 +408,7 @@ export class Audio {
     if (at === OWN_WEAPON) {
       voice.connect(place.input);
       this._play(`${weapon}-near`, voice, start, loud * OWN_LOUDNESS, rate);
+      this._kick(place.input, start, KICK[weapon] ?? KICK.rifle);
       this._mechanism(place.input, start, weapon);
     } else {
       // The air between: the further, the less top end - a shot across the
@@ -370,19 +425,41 @@ export class Audio {
         // and are quieter for it; brought up to stand in for the near one.
         this._play(`${weapon}-far`, voice, start, loud * place.gain * Math.sqrt(far) * 1.6, rate);
       }
+      // A bolt worked within earshot, as a reload is.
+      if (weapon === 'sniper' && place.distance < RELOAD_AUDIBLE) {
+        this._mechanism(place.input, start, weapon, 1 - place.distance / RELOAD_AUDIBLE);
+      }
     }
     this._steal(at === OWN_WEAPON ? OWN_WEAPON : shooter, voice, start);
   }
 
-  /** The player's own gun's mechanism: heard only up close, and for a bolt
-   *  action, the bolt worked a moment after the shot. The recordings carry
-   *  their own action; this is the hand on it. */
-  _mechanism(output, start, weapon) {
+  /** The blow of the player's own shot: a short low sweep, felt more than
+   *  heard, under the recording. */
+  _kick(output, start, level) {
+    const { context } = this;
+    const thump = context.createOscillator();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(95, start);
+    thump.frequency.exponentialRampToValueAtTime(42, start + 0.09);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(level, start + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+    thump.connect(gain).connect(output);
+    thump.start(start);
+    thump.stop(start + 0.13);
+  }
+
+  /** A gun's mechanism after its shot: for a bolt action, the bolt worked
+   *  by hand, as the hands work it on screen (`BOLT_WORK`). The recordings
+   *  carry each gun's own action; this is the hand on it. */
+  _mechanism(output, start, weapon, loudness = 1) {
     const v = VOICINGS[weapon] ?? VOICINGS.rifle;
     if (!v.bolt) return;
+    if (this._placed('bolt', output, start + BOLT_AFTER_SHOT + BOLT_WORK.done, 0.9 * loudness)) return;
     for (const [after, frequency] of [[0.42, 1900], [0.58, 2600]]) {
       this.burst(output, start + after, {
-        gain: 0.28, attack: 0.0006, decay: 0.03, type: 'bandpass', frequency, q: 2.4,
+        gain: 0.28 * loudness, attack: 0.0006, decay: 0.03, type: 'bandpass', frequency, q: 2.4,
       });
     }
   }
@@ -489,15 +566,38 @@ export class Audio {
     source.stop(start + length + 0.02);
   }
 
-  /** A round striking the world, at the far end of a shot that missed. */
-  impact(at, listener, forward) {
+  /**
+   * A round striking the world, at the far end of a shot that missed, on
+   * `surface` (`world.struckAt`: `metal`, `wood`, `soft`, `grass`, or
+   * `concrete`): steel rings, earth, sand and rubber take it dull, and
+   * concrete and wood crack and throw grit. Heard only close
+   * (`IMPACT_AUDIBLE`).
+   */
+  impact(at, listener, forward, surface = 'concrete') {
     if (!this.ready) return;
+    const distance = Math.hypot(at[0] - listener.x, at[1] - listener.y, at[2] - listener.z);
+    if (!(distance < IMPACT_AUDIBLE)) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
-    const start = this.context.currentTime + place.delay;
-    if (!this._play(Math.random() < 0.18 ? 'hit-metal' : 'hit-ground', place.input, start, 0.7 * place.gain)) {
+    const { context } = this;
+    const start = context.currentTime + place.delay;
+    const level = 0.9 * (1 - distance / IMPACT_AUDIBLE) ** IMPACT_FALL;
+    const rate = 0.94 + Math.random() * 0.12;
+    if (surface === 'metal') {
+      this._play('hit-metal', place.input, start, 0.75 * level, rate);
+      return;
+    }
+    // Earth swallows the top of it; wood and concrete crack.
+    const tone = context.createBiquadFilter();
+    tone.type = 'lowpass';
+    const dull = surface === 'grass' || surface === 'soft';
+    tone.frequency.value = dull ? 2400 : 9000;
+    tone.Q.value = 0.5;
+    tone.connect(place.input);
+    if (!this._play('hit-ground', tone, start, level, rate)) return;
+    if (!dull) {
       this.burst(place.input, start, {
-        gain: 0.5 * place.gain, attack: 0.0008, decay: 0.07, type: 'bandpass', frequency: 2600, q: 1.2,
+        gain: 0.55 * level, attack: 0.0002, decay: 0.012, type: 'highpass', frequency: surface === 'wood' ? 1400 : 2600, q: 0.7,
       });
     }
   }
@@ -747,10 +847,30 @@ export class Audio {
     }
   }
 
-  /** The magazine out, and a moment later the new one in and the bolt. */
-  reload(seconds) {
+  /** The player's own reload of `weapon`, taking `seconds`: the magazine
+   *  out, the new one in and the action, each as the hands do it. */
+  reload(seconds, weapon = 'rifle') {
     if (!this.ready) return;
-    this._reloadClicks(this.master, this.context.currentTime, seconds, 1);
+    this.cancelReload();
+    this._own = [];
+    this._reloadSounds(this.master, this.context.currentTime, seconds, 0.8, weapon, this._own);
+  }
+
+  /** The player's own reload stopped short - a change of gun puts it away
+   *  half done - so whatever of it has not sounded yet does not. */
+  cancelReload() {
+    if (!this._own) return;
+    const now = this.context.currentTime;
+    for (const { source, start } of this._own) {
+      if (start > now) {
+        try {
+          source.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+    }
+    this._own = null;
   }
 
   /**
@@ -759,25 +879,43 @@ export class Audio {
    * not across a map, and hearing one round a corner is exactly the
    * information a player standing there would have.
    */
-  reloadAt(at, listener, forward, seconds) {
+  reloadAt(at, listener, forward, seconds, weapon = 'rifle') {
     if (!this.ready) return;
     const distance = Math.hypot(at[0] - listener.x, at[1] - listener.y, at[2] - listener.z);
     if (!(distance < RELOAD_AUDIBLE)) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
     const loudness = place.gain * (1 - distance / RELOAD_AUDIBLE);
-    this._reloadClicks(place.input, this.context.currentTime + place.delay, seconds, loudness);
+    this._reloadSounds(place.input, this.context.currentTime + place.delay, seconds, loudness, weapon);
   }
 
-  _reloadClicks(output, start, seconds, loudness) {
-    const click = (at, frequency, gain) =>
-      this.burst(output, at, {
-        gain: gain * loudness, attack: 0.001, decay: 0.03, type: 'bandpass', frequency, q: 3,
+  /** `weapon`'s reload, `RELOADS`, from `start`; its sources into `track`
+   *  if given. A recording not decoded yet is a click in its place. */
+  _reloadSounds(output, start, seconds, loudness, weapon, track) {
+    const plan = RELOADS[weapon] ?? RELOADS.rifle;
+    for (const [set, at] of plan.steps) {
+      const when = at === null ? start + seconds * BOLT_IN_RELOAD + BOLT_WORK.done : start + seconds * at;
+      const rate = plan.rate * (0.97 + Math.random() * 0.06);
+      if (this._placed(set, output, when, loudness, rate, track)) continue;
+      this.burst(output, when, {
+        gain: 0.4 * loudness, attack: 0.001, decay: 0.03, type: 'bandpass', frequency: 1900, q: 3,
       });
-    click(start + 0.12, 1900, 0.35);
-    click(start + seconds * 0.62, 1500, 0.45);
-    click(start + seconds * 0.85, 2400, 0.4);
-    click(start + seconds * 0.88, 1200, 0.35);
+    }
+  }
+
+  /**
+   * One recording of set `name` placed so that its last loud moment - the
+   * clack, the slam - falls at `when`, rather than its start. Returns
+   * whether there was one to play.
+   */
+  _placed(name, output, when, gain, rate = 1, track = null) {
+    const pick = this._pick(name);
+    if (!pick) return false;
+    const { buffer, onset, anchor } = this.buffers.get(pick);
+    const start = when - Math.max(0, anchor - onset) / rate;
+    const source = this._source(buffer, output, start, onset, gain, rate);
+    track?.push({ source, start });
+    return true;
   }
 
   /** An empty magazine. */
@@ -897,15 +1035,28 @@ export class Audio {
    * `output` at `start`. Returns whether there was one to play.
    */
   _play(name, output, start, gain, rate = 1) {
+    const pick = this._pick(name);
+    if (!pick) return false;
+    const { buffer, onset } = this.buffers.get(pick);
+    this._source(buffer, output, start, onset, gain, rate);
+    return true;
+  }
+
+  /** Which recording of set `name` to play: a decoded one, never the one
+   *  played last. */
+  _pick(name) {
     const set = SOUND_SETS[name];
-    if (!set) return false;
+    if (!set) return null;
     const ready = set.filter((n) => this.buffers.has(n));
-    if (!ready.length) return false;
+    if (!ready.length) return null;
     const last = this.last.get(name);
     const choices = ready.length > 1 ? ready.filter((n) => n !== last) : ready;
     const pick = choices[Math.floor(Math.random() * choices.length)];
     this.last.set(name, pick);
-    const { buffer, onset } = this.buffers.get(pick);
+    return pick;
+  }
+
+  _source(buffer, output, start, onset, gain, rate) {
     const { context } = this;
     const source = context.createBufferSource();
     source.buffer = buffer;
@@ -913,8 +1064,10 @@ export class Audio {
     const level = context.createGain();
     level.gain.value = Math.max(0, gain);
     source.connect(level).connect(output);
-    source.start(Math.max(start, context.currentTime), onset);
-    return true;
+    // A start already past is played from as far into it as it should be.
+    const late = Math.max(0, context.currentTime - start) * rate;
+    source.start(Math.max(start, context.currentTime), onset + late);
+    return source;
   }
 
   /**
@@ -992,6 +1145,22 @@ function onsetOf(buffer) {
   const threshold = peak * 0.03;
   for (let i = 0; i < samples.length; i += 1) {
     if (Math.abs(samples[i]) > threshold) return Math.max(0, i / buffer.sampleRate - 0.001);
+  }
+  return 0;
+}
+
+/**
+ * The last moment a recording comes within 3 dB of its loudest, in seconds:
+ * for a reload's parts, the clack the hands end on - a magazine seating,
+ * the bolt slamming home - which is what is lined up with them.
+ */
+function lastLoudOf(buffer) {
+  const samples = buffer.getChannelData(0);
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) peak = Math.max(peak, Math.abs(samples[i]));
+  const near = peak * 0.708;
+  for (let i = samples.length - 1; i >= 0; i -= 1) {
+    if (Math.abs(samples[i]) >= near) return i / buffer.sampleRate;
   }
   return 0;
 }

@@ -230,16 +230,23 @@ function scopeParts({ base, height, front, rear, profile, rings = [0.3, 0.7], tu
   dark.push(turned(ring(rear - 0.03, rear + 0.005, last), { y: height, segments: 32 }));
   if (prism) {
     // A prism sight's body is a box under the tube, not rings, clamped to
-    // the rail with a thumb nut on the left.
-    metal.push(block(-0.1, base, front + length * 0.18, 0.1, height - 0.02, front + length * 0.82));
-    dark.push(pin(front + length * 0.5, base + 0.05, 0.035, 0.06, { x: -0.13, segments: 12 }));
+    // the rail with a thumb nut on the left. Its top stops at the tube's
+    // inside wall: higher, it filled the bottom of the view through it.
+    const [from, to] = [0.18, 0.82];
+    const under = Math.min(...profile.filter(([f]) => f >= from && f <= to).map(([, rr]) => rr));
+    metal.push(block(-0.075, base, front + length * from, 0.075, height - under * WALL, front + length * to));
+    dark.push(pin(front + length * 0.5, base + 0.05, 0.035, 0.06, { x: -0.105, segments: 12 }));
   } else {
     for (const at of rings) {
       const z = front + at * length;
       const r = profile.reduce((best, [f, rr]) => (Math.abs(f - at) < Math.abs(best[0] - at) ? [f, rr] : best))[1];
-      metal.push(turned([[z - 0.05, 0], [z - 0.05, r * 1.2], [z + 0.05, r * 1.2], [z + 0.05, 0]], { y: height, segments: 24 }));
+      // A ring round the tube, not a disc through it: turned from the axis,
+      // it closed the tube in the middle, and looking through the red dot
+      // was looking at the face of its own mount, with the dot behind it.
+      metal.push(turned([[z - 0.05, r * 0.98], [z - 0.05, r * 1.2], [z + 0.05, r * 1.2], [z + 0.05, r * 0.98], [z - 0.05, r * 0.98]], { y: height, segments: 24 }));
       metal.push(block(-0.07, base, z - 0.05, 0.07, height - r, z + 0.05));
-      dark.push(pin(z, height - r * 0.7, 0.025, r * 2.8, { segments: 8 }));
+      // The clamp's cross bolt, through the ring's foot under the tube.
+      dark.push(pin(z, height - r * 1.1, 0.025, r * 2.8, { segments: 8 }));
     }
   }
   if (turrets) {
@@ -268,9 +275,10 @@ function glassFor({ height, front, rear, profile, dot = 0 }) {
     group.add(disc);
   }
   if (dot > 0) {
+    // Lit, not painted: the tone curve would turn an LED's red to brick.
     const red = new THREE.Mesh(
       new THREE.CircleGeometry(dot, 20),
-      new THREE.MeshBasicMaterial({ color: 0xff2a20, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xff2a20, side: THREE.DoubleSide, toneMapped: false }),
     );
     red.position.set(0, height, front + length * 0.05);
     group.add(red);
@@ -283,6 +291,7 @@ function glassFor({ height, front, rear, profile, dot = 0 }) {
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
+        toneMapped: false,
       }),
     );
     halo.position.set(0, height, front + length * 0.051);

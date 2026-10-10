@@ -672,6 +672,50 @@ function sunTexture() {
 
 
 /**
+ * What a round striking a surface sounds like, by the surface's name: steel
+ * rings, timber knocks, and sand, rubber and cardboard swallow it. Anything
+ * else - concrete, brick, plaster, asphalt - cracks, and is what a point no
+ * piece claims is taken to be.
+ */
+const STRUCK = [
+  [/^(steel|barrel_|car_|container_|tank_|silo|roof_metal|cladding|rack_|frame|crate_rust)/, 'metal'],
+  [/^(wood|crate_olive|bark)/, 'wood'],
+  [/^(sandbag|rubber|cardboard)/, 'soft'],
+];
+
+/** Pieces bigger than this, in metres, are not one thing: a map's structure
+ *  is a mesh per surface across the whole map, and its box is the map. */
+const STRUCK_PIECE = 14;
+
+/** How far a struck point may be from a piece's box and be on it, in
+ *  metres: the server's ray stops on the collision, which is the art to a
+ *  quarter of a metre. */
+const STRUCK_PAD = 0.3;
+
+/**
+ * The boxes of a map's separate pieces that a round does not crack on, as
+ * [x0, y0, z0, x1, y1, z1, kind] in world metres - read before the map is
+ * batched, while each piece is still a node of its own. Hidden stand-ins
+ * count: what is drawn over them is the same thing.
+ */
+function struckBoxes(map) {
+  map.updateMatrixWorld(true);
+  const boxes = [];
+  const box = new THREE.Box3();
+  map.traverse((node) => {
+    if (!node.isMesh || node.isInstancedMesh || node.userData?.collision_only) return;
+    const name = [node.material].flat()[0]?.name ?? '';
+    const kind = STRUCK.find(([pattern]) => pattern.test(name))?.[1];
+    if (!kind) return;
+    box.setFromObject(node);
+    const size = box.max.clone().sub(box.min);
+    if (Math.max(size.x, size.y, size.z) > STRUCK_PIECE) return;
+    boxes.push([box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z, kind]);
+  });
+  return boxes;
+}
+
+/**
  * Merge a map's fixed geometry into one mesh per material.
  *
  * A downloaded map is often a thousand small meshes - the yard is - and each
@@ -1214,7 +1258,7 @@ export class World {
     this.sunSprite.scale.setScalar(distance * 0.16);
 
     this.water.position.set(eye.x, this.waterLevel ?? WATER_DEPTH, eye.z);
-    this.arena?.userData.nature?.update(eye);
+    this.arena?.userData.nature?.update();
     this.water.scale.setScalar(range * 3);
 
     // Carry the shadow camera along with the player, keeping the sun's
@@ -1396,6 +1440,7 @@ export class World {
     // Vehicles, drums and crates, drawn properly over their stand-ins, and
     // the rubbish that gathers at the foot of the walls.
     await Promise.all([dressProps(arena), scatterRubbish(mapName, arena)]);
+    arena.userData.struck = struckBoxes(arena);
     batchStatic(arena);
 
     this._maps = this._maps ?? new Map();
@@ -1438,6 +1483,25 @@ export class World {
    *  of every map is. */
   surfaceAt(x, y, z) {
     return this.arena?.userData.nature?.grassAt?.(x, y, z) ? 'grass' : 'concrete';
+  }
+
+  /** What a round striking world `x, y, z` hit, for the sound of it:
+   *  `metal`, `wood`, `soft`, `grass` or `concrete`. The smallest piece
+   *  whose box holds the point, so a drum against a container is the drum;
+   *  else the ground the step would be on. */
+  struckAt(x, y, z) {
+    let kind = null;
+    let smallest = Infinity;
+    for (const b of this.arena?.userData.struck ?? []) {
+      if (x < b[0] - STRUCK_PAD || y < b[1] - STRUCK_PAD || z < b[2] - STRUCK_PAD) continue;
+      if (x > b[3] + STRUCK_PAD || y > b[4] + STRUCK_PAD || z > b[5] + STRUCK_PAD) continue;
+      const volume = (b[3] - b[0]) * (b[4] - b[1]) * (b[5] - b[2]);
+      if (volume < smallest) {
+        smallest = volume;
+        kind = b[6];
+      }
+    }
+    return kind ?? this.surfaceAt(x, y, z);
   }
 
   addRound(round) {

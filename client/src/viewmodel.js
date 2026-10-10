@@ -41,6 +41,8 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { BOLT_IN_RELOAD, BOLT_WORK } from './audio.js';
+import { FINGER_RADIUS, PALM_DEPTH, applyCurls, closeOn, fingerChains, gripScore, handFrame, notePosed, placeHand, surfaceNear } from './fingers.js';
 import { UNIT, buildGun } from './guns.js';
 import { HAND, holdMatrix, palms } from './grip.js';
 import { OPTICS, SIM, wrapAngle } from './sim.js';
@@ -274,12 +276,50 @@ const PUT_AWAY = 0.4;
 /** How far down and tipped a gun goes, out of sight, while guns change. */
 const LOWERED = { drop: 0.34, tip: 0.85 };
 
-/** A bolt action worked by hand, in seconds from when it starts: lifted,
- *  back, home, and turned down. */
-const BOLT_WORK = { lifted: 0.08, back: 0.2, home: 0.32, done: 0.4 };
-
 /** Seconds a trigger stays pulled for a shot, and takes to come back. */
 const TRIGGER_PULL = 0.05;
+
+/** How far from the palm a hand can reach, in metres: what of the gun a
+ *  finger could touch (`_fitHands`). */
+const HAND_REACH = 0.2;
+
+/** How far out a hand starts, in metres, to be brought in onto the gun. */
+const HAND_APPROACH = 0.06;
+
+/**
+ * A right hand on a pistol grip raked back by `rake` degrees: the palm
+ * against its right side, the knuckles running up the grip.
+ */
+function onGrip(rake) {
+  const r = (rake * Math.PI) / 180;
+  return {
+    palm: new THREE.Vector3(-1, 0, -0.15),
+    across: new THREE.Vector3(0, Math.cos(r), -Math.sin(r)),
+    // Metres down the grip (up, negative) to try the hand at.
+    slide: [-0.01, -0.005, 0, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035],
+  };
+}
+
+/** A left hand palm up under a handguard, rolled a little to the gun's
+ *  right so the fingers wrap its far side and the thumb lies along the near
+ *  one, the fingers angled a little forward. */
+const UNDER = { palm: new THREE.Vector3(0.45, 1, 0), across: new THREE.Vector3(-0.34, 0, -0.94) };
+
+/**
+ * How each gun is held, in its own frame (+X its right, +Y up, the muzzle
+ * down -Z): which way each palm faces and which way its knuckles run, from
+ * the little finger to the index (`fingers.placeHand`). The right hand
+ * along each grip's own rake - the M700's is the wrist of a sporting
+ * stock, nearly level; the left palm up under the handguard. The pistol's
+ * left hand cups the right and is not fitted to the gun.
+ */
+const HOLDS = {
+  rifle: { right: onGrip(20), left: UNDER },
+  lmg: { right: onGrip(20), left: UNDER },
+  smg: { right: onGrip(14), left: UNDER },
+  sniper: { right: onGrip(52), left: UNDER },
+  pistol: { right: onGrip(20), left: null },
+};
 
 /** How far out on the gun's right the hand goes to work the action, in
  *  metres from the part's own pivot. */
@@ -292,6 +332,7 @@ const _shift = new THREE.Vector3();
 const _hand = new THREE.Vector3();
 const _support = new THREE.Vector3();
 const _shiftMatrix = new THREE.Matrix4();
+const _slide = new THREE.Matrix4();
 
 /** Every moving part of a gun back where it rests. */
 function restParts(model) {
@@ -669,8 +710,10 @@ export class Viewmodel {
     this.loadout = { primary: loadout?.primary ?? 'rifle', optic: loadout?.optic ?? 'red_dot' };
     this.switching = null;
     this.ejections.length = 0;
-    this._rig('pistol', 'irons');
+    const sidearm = this._rig('pistol', 'irons');
     this._useRig(this._rig(this.loadout.primary, this.loadout.optic));
+    // The pistol's hands now too, not at the first change to it mid-fight.
+    this._fit(sidearm);
   }
 
   /** The rig for a slot of the current loadout. */
@@ -741,14 +784,15 @@ export class Viewmodel {
    * nothing of the shoulders ever seen.
    */
   /** The sleeves in skin `skin` (`skins.js`): the player's own arms are
-   *  dressed as everybody else sees the rest of them. */
+   *  dressed as everybody else sees the rest of them - and lit as the gun
+   *  in their hands is, not by the map's baked light (`dressed`). */
   setSkin(skin) {
     this.skin = skin;
     this.body?.traverse((node) => {
       if (!node.isSkinnedMesh) return;
       node.userData.plain ??= node.material;
       const plain = node.userData.plain;
-      node.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
+      node.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL, baked: false });
     });
   }
 
@@ -761,11 +805,16 @@ export class Viewmodel {
     const hands = {};
     for (const [key, name] of Object.entries(HAND)) hands[key] = bones[name];
     if (!hands.handR || !hands.handL || !this.rifle) return;
+    // Each finger open, as the model was made, before the clip curls it.
+    const fingers = { right: fingerChains(hands.handR, 'Right'), left: fingerChains(hands.handL, 'Left') };
 
     const mixer = new THREE.AnimationMixer(body);
     mixer.clipAction(pose).play();
     mixer.update(0);
     body.updateMatrixWorld(true);
+    notePosed(fingers.right);
+    notePosed(fingers.left);
+    const frames = { right: handFrame(fingers.right), left: handFrame(fingers.left) };
 
     // The rifle the posed soldier would be holding, in the soldier's space.
     const right = new THREE.Vector3();
@@ -814,6 +863,8 @@ export class Viewmodel {
         foreAxis: hand.position.clone().normalize(),
         shoulder: new THREE.Vector3(...arms[side].shoulder),
         elbow: new THREE.Vector3(...arms[side].elbow).normalize(),
+        fingers: fingers[side],
+        frame: frames[side],
       });
     }
 
@@ -830,6 +881,7 @@ export class Viewmodel {
     // weapon's sway and kick.
     this.scene.add(body);
     this.body = body;
+    this.setSkin(this.skin ?? 0);
     this._retargetArms();
     this._poseArms();
   }
@@ -845,13 +897,71 @@ export class Viewmodel {
     if (!this.arms) return;
     const { arms } = this.config;
     for (const limb of this.arms) {
-      limb.grip.copy(limb.base);
-      if (limb.palm) {
-        const [x, y, z] = arms.leftPalm;
-        limb.grip.premultiply(new THREE.Matrix4().makeTranslation(x - limb.palm.x, y - limb.palm.y, z - limb.palm.z));
-      }
+      this._clipGrip(limb, this.config, limb.grip);
       limb.shoulder.set(...arms[limb.side].shoulder);
       limb.elbow.set(...arms[limb.side].elbow).normalize();
+    }
+    this._fitHands();
+  }
+
+  /** Where the clip's hand goes on a gun with `config`, into `out`: the
+   *  right on the grip, which is where every gun's is; the left moved onto
+   *  that gun's support. */
+  _clipGrip(limb, config, out) {
+    out.copy(limb.base);
+    if (limb.palm) {
+      const [x, y, z] = config.arms.leftPalm;
+      out.premultiply(new THREE.Matrix4().makeTranslation(x - limb.palm.x, y - limb.palm.y, z - limb.palm.z));
+    }
+    return out;
+  }
+
+  /**
+   * Both hands fitted to the gun in hand (`fingers.js`): turned to its hold
+   * (`HOLDS`), brought in until the palm rests on it, and every finger
+   * closed until it touches. Once per gun, kept on its rig. A hand the hold
+   * leaves out - the pistol's left, cupping the right - keeps the clip's
+   * hand where the gun's `support` puts it.
+   */
+  _fitHands() {
+    const rig = this.rig;
+    if (!rig || !this.arms) return;
+    this._fit(rig);
+    for (const limb of this.arms) {
+      const fit = rig.fitted[limb.side];
+      if (fit) limb.grip.copy(fit.grip);
+      if (limb.fingers?.length) applyCurls(limb.fingers, fit?.curls ?? limb.fingers.map(() => 1));
+    }
+  }
+
+  /** `rig`'s hands, worked out if they have not been (`_fitHands`): a
+   *  tenth of a second or so of arithmetic, done for a match's guns when
+   *  the match hands them over rather than at the first change of gun. */
+  _fit(rig) {
+    if (rig.fitted || !this.arms) return;
+    rig.fitted = {};
+    const scale = rig.config.scale;
+    const hold = HOLDS[rig.weapon] ?? HOLDS.rifle;
+    for (const limb of this.arms) {
+      if (!limb.fingers?.length || !limb.frame) continue;
+      const want = hold[limb.side];
+      if (!want) continue;
+      const clip = this._clipGrip(limb, rig.config, new THREE.Matrix4());
+      const centre = limb.frame.centre.clone().applyMatrix4(clip);
+      const surface = surfaceNear(rig.model, centre, HAND_REACH / scale, (2 * PALM_DEPTH) / scale, PALM_DEPTH / scale);
+      // Up and down the grip, for where the fingers close round it best: a
+      // hand set where the grip's centre was measured can have its fingers
+      // stopped on the trigger guard rather than round the grip.
+      const along = want.across.clone().normalize();
+      let best = null;
+      for (const slide of want.slide ?? [0]) {
+        const start = clip.clone().premultiply(_slide.makeTranslation(along.clone().multiplyScalar(-slide / scale)));
+        const grip = placeHand(start, limb.frame, want.palm, want.across, surface, PALM_DEPTH / scale, HAND_APPROACH / scale);
+        const closed = closeOn(limb.fingers, grip, surface, FINGER_RADIUS / scale);
+        const score = gripScore(closed) - Math.abs(slide) * 4;
+        if (!best || score > best.score) best = { grip, curls: closed.map((f) => f.curl), score };
+      }
+      rig.fitted[limb.side] = best;
     }
   }
 
@@ -933,8 +1043,9 @@ export class Viewmodel {
    * draws it - the rifle tipped over to show the magazine well, a seat of
    * the fresh magazine two thirds of the way through, and back up.
    */
-  setReload(progress) {
+  setReload(progress, seconds = 1) {
     this.reloadProgress = progress;
+    this.reloadSeconds = seconds;
   }
 
   /** A grenade left the player's hand: the rifle drops out of the way and
@@ -1169,7 +1280,10 @@ export class Viewmodel {
     }
     if (action.boltAction) {
       const { after, lift: up, back: stroke } = action.boltAction;
-      const t = since - after;
+      // After a shot, and in a reload once the new magazine is home: a bolt
+      // action chambers its round by hand either way.
+      const reloading = this.reloadProgress !== null && this.reloadProgress !== undefined;
+      const t = reloading ? (this.reloadProgress - BOLT_IN_RELOAD) * this.reloadSeconds : since - after;
       if (t >= 0 && t < BOLT_WORK.done) {
         lift = up * (t < BOLT_WORK.lifted ? smooth(t / BOLT_WORK.lifted)
           : t < BOLT_WORK.home ? 1 : 1 - smooth((t - BOLT_WORK.home) / (BOLT_WORK.done - BOLT_WORK.home)));

@@ -432,8 +432,11 @@ const MAP_FRAGMENT = /* glsl */ `
 #endif
 `;
 
-/** Each base material's skinned copies, by skin. */
+/** Each base material's skinned copies, by skin and lighting. */
 const DRESSED = new WeakMap();
+
+/** Each base material's copy without the map's baked light. */
+const UNBAKED = new WeakMap();
 
 /**
  * `material` (one of the soldier's) dressed in skin `id`: a copy with the
@@ -441,16 +444,29 @@ const DRESSED = new WeakMap();
  * that skin. Skin 0, and anything before the mask is in, is the material
  * itself. `unit` is metres per unit of the soldier's mesh, and `cloth`
  * whether this material is the one with the uniform on it.
+ *
+ * `baked` is whether it takes the map's baked light where it stands, as
+ * everybody in the world does. The player's own arms must not: they are
+ * drawn in the weapon's scene, round its camera at the origin, so the light
+ * they would read is whatever is baked at the middle of the map, with their
+ * facings in the camera's frame rather than the world's - sleeves dark or
+ * off-colour, and not the colour the skin is. They are lit with the gun in
+ * their hands instead (`viewmodel.setLight`).
  */
-export function dressed(material, id, { unit, cloth }) {
+export function dressed(material, id, { unit, cloth, baked = true }) {
   const skin = SKINS[id];
-  if (!skin?.pattern || !mask) return material;
+  if (!skin?.pattern || !mask) {
+    if (baked) return material;
+    if (!UNBAKED.has(material)) UNBAKED.set(material, material.clone());
+    return UNBAKED.get(material);
+  }
   let copies = DRESSED.get(material);
   if (!copies) {
     copies = new Map();
     DRESSED.set(material, copies);
   }
-  if (copies.has(id)) return copies.get(id);
+  const key = baked ? id : `${id}:unbaked`;
+  if (copies.has(key)) return copies.get(key);
   const copy = material.clone();
   const uniforms = {
     skinMask: { value: mask },
@@ -473,7 +489,7 @@ export function dressed(material, id, { unit, cloth }) {
   // One program for every skin: they differ only in their uniforms.
   copy.customProgramCacheKey = () => `solatel-skin-${cloth ? 1 : 0}`;
   // A copy has lost the baked light the soldier's own materials carry.
-  lightMaterial(copy);
-  copies.set(id, copy);
+  if (baked) lightMaterial(copy);
+  copies.set(key, copy);
   return copy;
 }

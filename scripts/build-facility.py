@@ -121,6 +121,11 @@ WATER_LEVEL = -1.6
 # No spawn inside the compound. See the docstring.
 COMPOUND = (-56.0, -56.0, 56.0, 52.0)
 
+# How far the yard's water tower is sunk into the ground. Its legs end 0,
+# 0.6, 0.73 and 1.12 m above its lowest point; this puts the highest of them
+# a hand's breadth under the ground, cut end and all.
+WATER_TOWER_SUNK = 1.3
+
 # The surfaces this map adds to the arena's. Named for what the thing is made
 # of, like the arena's, because `world.js` keys its weathering on the name.
 # Muted on purpose: warning colours are for small accents only.
@@ -1494,7 +1499,10 @@ def village(layout):
                            (-146.0, -103.0, -145.6, -86.0)):
         k.box(x0, 0.0, z0, x1, 1.1, z1, 'brick')
 
-    p.place('water_tower', -98.0, -60.0)
+    # Sunk, as the yard sinks it: its four legs end at different heights,
+    # and stood on its lowest one the other three hung up to 1.1 m in the
+    # air - the floating tank Conrad saw from the road.
+    p.place('water_tower', -98.0, -60.0, y=-WATER_TOWER_SUNK)
     layout.keep_clear(-106.0, -68.0, -90.0, -52.0)
 
     for x, z, yaw, key in ((-132.0, -76.0, 0.1, 'car'), (-104.0, -84.0, 0.0, 'truck_olive'),
