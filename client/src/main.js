@@ -23,6 +23,7 @@ import { Quality } from './quality.js';
 import { Impacts } from './impacts.js';
 import { Blood } from './blood.js';
 import { DEATH_TIME_SCALE, Death } from './death.js';
+import { Debrief } from './debrief.js';
 import { Clips, clipsSupported, clipsWanted, setClipsWanted } from './clips.js';
 import { setNatureDetail } from './nature.js';
 import { Hud, LOW_HEALTH } from './hud.js';
@@ -274,6 +275,8 @@ async function boot() {
   // waits on it.
   audio.preload();
   const death = new Death();
+  // The card a match ends on, over the menu: see debrief.js.
+  const debrief = new Debrief();
   // The last seconds of play, kept for F8. Off unless the player turned it on.
   const clips = new Clips();
   clips.setEnabled(clipsWanted());
@@ -488,7 +491,7 @@ async function boot() {
   if (options.has('debug')) {
     window.solatel = {
       THREE, link, local, input, world, remotes, viewmodel, scene, camera, SIM,
-      renderer, audio, hud, impacts, blood, death, clips,
+      renderer, audio, hud, impacts, blood, death, clips, debrief,
       get composer() {
         return composer;
       },
@@ -942,6 +945,21 @@ async function boot() {
       // rather than being left standing behind it.
       enteredMatch = null;
       menu.show(true);
+      // How it went, before the lobby: at once at the whistle, and after
+      // the death has been played out for anybody killed.
+      if (local.report && !link.parked) {
+        debrief.show(local.report, {
+          you: local.id,
+          map: local.mapName,
+          tier: local.tier,
+          killed: local.eliminated ? death.summary ?? (local.killedBy ? { who: local.killedBy } : null) : null,
+          board: local.finalBoard ?? local.board ?? [],
+          final: Boolean(local.finalBoard),
+          balance: local.balanceMicroUsd,
+        });
+      }
+      local.report = null;
+      death.summary = null;
       document.body.classList.remove('running');
       // Give the mouse back. A player reading a menu wants a cursor, and
       // taking the pointer to a screen full of buttons is how the lobby felt
@@ -1048,6 +1066,7 @@ async function boot() {
     }
     if (!playing) {
       menu.update(local, link);
+      if (debrief.open) debrief.setBalance(local.balanceMicroUsd);
       renderer.clear();
       return;
     }

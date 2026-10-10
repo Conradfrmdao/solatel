@@ -4,6 +4,30 @@ Read this whole file, then `CLAUDE.md` (the authoritative working notes; its
 rules are not negotiable), then `documents/RUNBOOK.md`. Start with *The next
 session's brief* directly below.
 
+## Status, 10 October 2026 (night): the card a match ends on
+
+Conrad: when a match ends "nothing is being shown" - a survivor should be
+told what happened and what they won, with the match's statistics, and
+somebody eliminated should see the elimination and then the statistics,
+before closing it and going to the lobby. Done (protocol 21):
+
+- **The server reports each player's match** (`MatchReport`, with
+  `Eliminated` and `MatchEnded`): place, how many bought in and how many
+  were standing, time alive, their line of the board, and the stake and
+  what came back of it - by the route `settle_stake` took, so the card
+  cannot say anything the ledger was not asked to do.
+- **The card** (`debrief.js`), over the menu: VICTORY for the last one
+  standing, SURVIVED at the whistle, ELIMINATED after the death is played
+  out (who and how, from the death card); won from kills, the stake, the
+  wallet; kills, headshots, accuracy, damage, hits, shots, time alive; the
+  top of the board; Continue, or enter, space or esc.
+- `duel.mjs` checks what a killed player is told over the wire, and
+  `survive.mjs` what survivors are told at the whistle.
+
+Checked in a browser on the real path - a player who stood still until
+the zone took them, the death played out, then the card with their real
+figures - and with a winner's and a survivor's reports, wide and narrow.
+
 ## Status, 10 October 2026 (evening): too big, the pistol, and a voice in the wall
 
 Conrad played the guns above live and sent two photographs: "the weapon is

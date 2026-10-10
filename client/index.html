@@ -884,6 +884,111 @@
       #death-card .dc-skip { font-size: 12px; opacity: 0; margin-top: 18px; transition: opacity 0.4s; letter-spacing: 0.12em; }
       #death-card.dc-skippable .dc-skip { opacity: 0.6; }
 
+      /* ---- the card a match ends on: see debrief.js ---------------------
+         Over the menu, in the matchmaking card's dress: the key art across
+         the top, the outcome in its colour, the money, what they did, the
+         board, and a way on. */
+      #debrief {
+        position: fixed;
+        inset: 0;
+        z-index: 45;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        overflow-y: auto;
+        background: rgba(5, 7, 11, 0.84);
+        backdrop-filter: blur(5px);
+        font-family: var(--read);
+        color: var(--ink);
+        animation: db-in 0.35s ease-out;
+      }
+      @keyframes db-in { from { opacity: 0; } to { opacity: 1; } }
+      .db-card {
+        width: min(100%, 620px);
+        display: grid;
+        gap: 14px;
+        padding: 0 26px 22px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--deck);
+        border: 1px solid var(--rule);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+        text-align: center;
+        animation: db-rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      @keyframes db-rise { from { transform: translateY(18px); } to { transform: none; } }
+      .db-card::before {
+        content: '';
+        height: 96px;
+        margin: 0 -26px -26px;
+        background:
+          linear-gradient(0deg, var(--deck), rgba(15, 20, 28, 0) 75%),
+          url(assets/menu/hero.webp) left 42% / cover no-repeat;
+      }
+      .db-card[data-outcome='victory'] { border-color: rgba(47, 192, 94, 0.7); box-shadow: 0 0 40px rgba(47, 192, 94, 0.18), 0 24px 60px rgba(0, 0, 0, 0.6); }
+      .db-card[data-outcome='survived'] { border-color: rgba(246, 162, 27, 0.7); box-shadow: 0 0 40px rgba(246, 162, 27, 0.15), 0 24px 60px rgba(0, 0, 0, 0.6); }
+      .db-card[data-outcome='eliminated'] { border-color: rgba(255, 107, 94, 0.55); }
+      .db-head { position: relative; display: grid; gap: 4px; }
+      .db-title {
+        font: 800 46px/1 var(--shout);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--chalk);
+      }
+      .db-card[data-outcome='victory'] .db-title { color: var(--go-hot); text-shadow: 0 0 24px rgba(47, 192, 94, 0.45); }
+      .db-card[data-outcome='survived'] .db-title { color: var(--amber-hot); text-shadow: 0 0 22px rgba(246, 162, 27, 0.45); }
+      .db-card[data-outcome='eliminated'] .db-title { color: #ff6b5e; text-shadow: 0 0 22px rgba(232, 70, 60, 0.4); }
+      .db-place { font: 600 19px/1.2 var(--shout); letter-spacing: 0.06em; text-transform: uppercase; color: #d7dde6; }
+      .db-how { font-size: 14px; color: var(--dim); min-height: 1em; }
+      .db-money { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+      .db-cell {
+        flex: 1 1 150px;
+        display: grid;
+        gap: 2px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--well);
+        border: 1px solid var(--rule);
+      }
+      .db-cell b { font: 800 26px/1.1 var(--shout); letter-spacing: 0.02em; color: var(--chalk); font-variant-numeric: tabular-nums; }
+      .db-cell.db-plus b { color: var(--money); }
+      .db-cell small { font-size: 12px; color: var(--dim); }
+      .db-label { font: 600 12px/1 var(--shout); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+      .db-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .db-stat { display: grid; gap: 2px; padding: 8px 6px; border-top: 2px solid var(--rule); }
+      .db-stat b { font: 800 24px/1 var(--shout); color: var(--chalk); font-variant-numeric: tabular-nums; }
+      .db-stat span { font: 600 11px/1 var(--shout); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+      .db-board-head { font: 600 12px/1 var(--shout); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); text-align: left; margin-bottom: -8px; }
+      .db-board-head:empty { display: none; }
+      .db-board { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+      .db-board td { padding: 5px 6px; border-top: 1px solid var(--rule); text-align: right; color: #b5bfcc; }
+      .db-board td.rank { width: 2em; text-align: left; color: var(--dim); }
+      .db-board td.name { text-align: left; color: var(--ink); max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .db-board td.won { color: var(--money); }
+      .db-board td.state { color: var(--dim); font-size: 12px; }
+      .db-board tr.you td { background: rgba(246, 162, 27, 0.1); }
+      .db-board tr.you td.name { color: var(--amber-hot); font-weight: 600; }
+      .db-go {
+        justify-self: center;
+        min-width: 220px;
+        padding: 12px 28px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--amber);
+        color: var(--amber-ink);
+        font: 800 20px/1 var(--shout);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .db-go:hover, .db-go:focus-visible { background: var(--amber-hot); outline: none; }
+      .db-keys { font-size: 11px; color: var(--dim); margin-top: -6px; }
+      @media (max-width: 560px) {
+        .db-title { font-size: 34px; }
+        .db-stats { grid-template-columns: repeat(2, 1fr); }
+        .db-board td.state { display: none; }
+      }
+
       /* ---- the top bar: the wordmark, where to go, who you are, what you
          have ---------------------------------------------------------- */
       .topbar {

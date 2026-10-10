@@ -93,6 +93,8 @@ export class Death {
     this.money = this.card.querySelector('.dc-money');
     this.skip = this.card.querySelector('.dc-skip');
     this.active = null;
+    /** The last death played out: who did it and how, as the card said. */
+    this.summary = null;
     /** Seconds of the sequence per second of the clock. One, always, except
      *  for a test driving a software renderer at a frame every few seconds. */
     this.rate = 1;
@@ -167,6 +169,8 @@ export class Death {
     if (SHOT.has(report.cause) && report.headshot) how.push('headshot');
     if (distance !== null && report.cause !== 'zone' && report.cause !== 'fall') how.push(`${Math.round(distance)} m`);
     this.how.textContent = how.join(' · ');
+    /** Who and how, for the results screen after this (`debrief.js`). */
+    this.summary = { who, how: how.join(' · ') };
     const lines = [];
     if (stake > 0) lines.push(who ? `your ${money(stake)} stake went to ${who}` : `your ${money(stake)} stake is settled`);
     lines.push(winnings > 0 ? `+${money(winnings)} won this life` : 'nothing won this life');

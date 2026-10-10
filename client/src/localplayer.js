@@ -193,6 +193,14 @@ export class LocalPlayer {
     this.eliminated = false;
     /** The final board of the match just finished, if there was one. */
     this.finalBoard = null;
+    /** The server's account of how this player's match went - place, time
+     *  alive, their line of the board, what came back of the stake - from
+     *  `eliminated` or `match_ended`, until the results screen has shown it
+     *  (`debrief.js`). Null otherwise. */
+    this.report = null;
+    /** The match's board as last sent, for the results screen of a player
+     *  who went before the end. */
+    this.board = [];
     /** The table this player is playing for, from `match_started`. */
     this.tier = null;
     /** What this player has won in the match, in micro-USD, from the server.
@@ -600,6 +608,8 @@ export class LocalPlayer {
         this.winningsMicroUsd = 0;
         this.broke = false;
         this.finalBoard = null;
+        this.report = null;
+        this.board = [];
         this.queuedMap = null;
         this.queuedFor = null;
         this.place = 0;
@@ -621,6 +631,7 @@ export class LocalPlayer {
         this.finalBoard = message.entries;
         this.finalBoardAt = performance.now();
         this.winningsMicroUsd = message.winnings_micro_usd ?? this.winningsMicroUsd;
+        this.report = message.report ?? null;
         this.matchId = null;
         this.inMatch = false;
         return false;
@@ -633,11 +644,13 @@ export class LocalPlayer {
         this.inMatch = false;
         this.matchId = null;
         this.winningsMicroUsd = message.winnings_micro_usd ?? 0;
+        this.report = message.report ?? null;
         return true;
 
       case 'scoreboard': {
         // Winnings are the server's count of kills times the reward. The
         // client displays it and never adds to it.
+        this.board = message.entries;
         const mine = message.entries.find((entry) => entry.id === this.id);
         if (mine) {
           this.winningsMicroUsd = mine.winnings_micro_usd ?? 0;

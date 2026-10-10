@@ -2226,6 +2226,25 @@ where the stake went, what the life won. A click skips it after the fall.
 Nothing in it is asked of the server: the match has stopped sending to this
 player, and the killer's position is the last snapshot's.
 
+**A match ends on a card** (`debrief.js`, protocol 21). It used to just
+stop - the whistle, or the zone closing on the last two, and the next frame
+was the menu with a line along its bottom; Conrad asked to be shown what had
+happened and what it was worth. `MatchReport` comes with `Eliminated` and
+with `MatchEnded`: where they finished (first for anybody standing at the
+end, else one more than how many were standing when they went), how many
+bought in and how many were standing, time alive, their own line of the
+board, and the stake and what came back of it. That last is the route
+`settle_stake` sent it by (`Settled`) - all of it at the whistle, the reward
+for a walk-away, nothing for the killed - so the card says what the ledger
+was asked to do, never what the client worked out. It goes up over the menu
+at once at the whistle, and after the death is played out for the killed:
+VICTORY for the last one standing, SURVIVED at the whistle, ELIMINATED (with
+death.js's who and how); won from kills, the stake, the wallet as the server
+last said (it follows the refund in), kills, headshots, accuracy, damage,
+hits, shots, time alive; the top of the board, final or as it stood when
+they went; and Continue (enter, space or esc). `duel.mjs` and `survive.mjs`
+check the report over the wire.
+
 **A hit taken says where it came from.** `Damaged` names the attacker, and
 the HUD holds a red arc round the crosshair on that side - turned as the
 player turns, one per attacker, for 2.2 s - and the view flinches: a roll

@@ -113,7 +113,10 @@ class Client {
         this.eliminated = true;
         break;
       case 'match_ended':
-        if (msg.match_id === this.matchId) this.ended = true;
+        if (msg.match_id === this.matchId) {
+          this.ended = true;
+          this.report = msg.report;
+        }
         break;
       default:
         break;
@@ -307,6 +310,21 @@ for (const [n, client] of clients.entries()) {
     );
   }
 }
+
+// And each was told so, for the card the match ends on: standing at the
+// whistle, first, the whole stake back.
+for (const client of clients) {
+  const report = client.report;
+  if (!report) fail(`${client.name} was not told how the match went`);
+  if (!report.stats?.alive || report.place !== 1) {
+    fail(`${client.name}'s report does not say they survived: ${JSON.stringify(report)}`);
+  }
+  if (report.stake_back_micro_usd !== ENTRY_FEE || report.stake_micro_usd !== ENTRY_FEE) {
+    fail(`${client.name} was told $${(report.stake_back_micro_usd / 1e6).toFixed(2)} of a ` +
+      `$${(report.stake_micro_usd / 1e6).toFixed(2)} stake came back`);
+  }
+}
+console.log('>> every survivor was told they kept their stake');
 
 for (const client of clients) client.ws.close();
 console.log('OK   nobody won the stakes, so everybody kept theirs');

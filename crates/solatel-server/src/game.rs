@@ -62,8 +62,8 @@ use solatel_protocol::{
     ids::{MatchId, PlayerId, ResumeToken, SessionId, WithdrawalId},
     net::{
         DeathCause, GrenadeSnapshot, INTERPOLATION_DELAY_MS, Landing, MAX_INPUTS_PER_MESSAGE,
-        MAX_LAG_COMPENSATION_MS, PlayerSnapshot, SNAPSHOT_HZ, ScoreEntry, ServerMsg, TICK_DT,
-        TICK_HZ, TableStatus, Tier,
+        MAX_LAG_COMPENSATION_MS, MatchReport, PlayerSnapshot, SNAPSHOT_HZ, ScoreEntry, ServerMsg,
+        TICK_DT, TICK_HZ, TableStatus, Tier,
     },
     sim::{
         Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HitRegion, InputCommand, KILL_CREDIT_SECONDS,
@@ -537,6 +537,9 @@ struct Body {
     history: VecDeque<(u32, PlayerState)>,
     /// False once their stake has left escrow, however it left.
     staked: bool,
+    /// When their stake left escrow, and what of it came back to them: for
+    /// the card at the end of their match. See [`MatchReport`].
+    settled: Option<Settled>,
     /// Grenades left this life.
     grenades: u32,
     /// Buttons of the last command consumed, so a throw happens on the
@@ -577,6 +580,7 @@ impl Body {
             guess: None,
             history: VecDeque::with_capacity(HISTORY_TICKS),
             staked: true,
+            settled: None,
             grenades: GRENADES_PER_LIFE,
             previous_buttons: Buttons::empty(),
             last_hurt_at: f32::NEG_INFINITY,
@@ -961,6 +965,15 @@ struct Shot {
     waited: u32,
 }
 
+/// A stake that has left escrow, as its owner's card tells it.
+#[derive(Debug, Clone, Copy)]
+struct Settled {
+    /// Milliseconds of the live match the life had lasted.
+    alive_ms: u32,
+    /// What of the stake went back to its owner, in micro-USD.
+    back_micro_usd: i64,
+}
+
 /// One match: a map, a stake, a clock, and the bodies playing it.
 struct Match {
     /// The ground this match is played on.
@@ -1250,12 +1263,25 @@ impl Lobby {
             return;
         };
         let request = route(entry);
-        if let Some(body) = self
-            .matches
-            .get_mut(&match_id)
-            .and_then(|m| m.bodies.get_mut(&player_id))
-        {
-            body.staked = false;
+        let paid = self.ledger.is_some();
+        let tick = self.tick;
+        if let Some(game) = self.matches.get_mut(&match_id) {
+            // What of it comes back is the route's, by the same rule the
+            // ledger settles it by: all of it to a survivor, the reward to
+            // a walk-away, nothing to the killed.
+            let back = match request {
+                crate::ledger::LedgerRequest::RefundEntry { .. } => game.stakes.entry().micros(),
+                crate::ledger::LedgerRequest::AbandonEntry { .. } => game.stakes.reward().micros(),
+                _ => 0,
+            };
+            let alive_ms = (game.elapsed(tick) * 1000.0) as u32;
+            if let Some(body) = game.bodies.get_mut(&player_id) {
+                body.staked = false;
+                body.settled = Some(Settled {
+                    alive_ms,
+                    back_micro_usd: if paid { back } else { 0 },
+                });
+            }
         }
         self.record_life(match_id, player_id, &request);
         if let Some(ledger) = &self.ledger {
@@ -1584,6 +1610,9 @@ impl Lobby {
             });
         }
 
+        let paid = self.ledger.is_some();
+        let names: HashMap<PlayerId, String> =
+            players.iter().map(|id| (*id, self.name_of(*id))).collect();
         for player_id in players {
             let winnings = self
                 .matches
@@ -1602,10 +1631,16 @@ impl Lobby {
                 continue;
             }
             connection.at = Whereabouts::Idle;
+            let Some(report) =
+                report_of(&self.matches, self.tick, match_id, player_id, paid, &names)
+            else {
+                continue;
+            };
             connection.send(ServerMsg::MatchEnded {
                 match_id,
                 entries: entries.clone(),
                 winnings_micro_usd: winnings,
+                report,
             });
         }
         // The recording goes to be written. It is serialised there rather
@@ -1638,13 +1673,25 @@ impl Lobby {
             .and_then(|m| m.bodies.get(&player_id))
             .map(|b| b.winnings_micro_usd)
             .unwrap_or(0);
+        let names = HashMap::from([(player_id, self.name_of(player_id))]);
+        let report = report_of(
+            &self.matches,
+            self.tick,
+            match_id,
+            player_id,
+            self.ledger.is_some(),
+            &names,
+        );
         if let Some(connection) = self.connections.get_mut(&player_id) {
             if connection.at == Whereabouts::Playing(match_id) {
                 connection.at = Whereabouts::Idle;
             }
-            connection.send(ServerMsg::Eliminated {
-                winnings_micro_usd: winnings,
-            });
+            if let Some(report) = report {
+                connection.send(ServerMsg::Eliminated {
+                    winnings_micro_usd: winnings,
+                    report,
+                });
+            }
         }
         self.send_lobby(player_id);
     }
@@ -3180,19 +3227,7 @@ impl Lobby {
         let mut entries: Vec<ScoreEntry> = game
             .bodies
             .iter()
-            .map(|(id, body)| ScoreEntry {
-                id: *id,
-                name: self.name_of(*id),
-                kills: body.stats.kills,
-                deaths: body.stats.deaths,
-                shots_fired: body.stats.shots_fired,
-                shots_hit: body.stats.shots_hit,
-                headshots: body.stats.headshots,
-                damage_dealt: body.stats.damage_dealt,
-                alive: body.state.is_alive(),
-                winnings_micro_usd: body.winnings_micro_usd,
-                skin: body.skin,
-            })
+            .map(|(id, body)| score_entry(*id, self.name_of(*id), body))
             .collect();
         entries.sort_by(|a, b| {
             b.kills
@@ -3314,6 +3349,55 @@ impl Lobby {
             });
         }
     }
+}
+
+/// One body's line of its match's board.
+fn score_entry(id: PlayerId, name: String, body: &Body) -> ScoreEntry {
+    ScoreEntry {
+        id,
+        name,
+        kills: body.stats.kills,
+        deaths: body.stats.deaths,
+        shots_fired: body.stats.shots_fired,
+        shots_hit: body.stats.shots_hit,
+        headshots: body.stats.headshots,
+        damage_dealt: body.stats.damage_dealt,
+        alive: body.state.is_alive(),
+        winnings_micro_usd: body.winnings_micro_usd,
+        skin: body.skin,
+    }
+}
+
+/// How one player's match went, for the card that ends it: on elimination,
+/// with them already down, or at the whistle, with every survivor's stake
+/// already settled. `None` for anybody not in that match.
+fn report_of(
+    matches: &HashMap<MatchId, Match>,
+    tick: u32,
+    match_id: MatchId,
+    player_id: PlayerId,
+    paid: bool,
+    names: &HashMap<PlayerId, String>,
+) -> Option<MatchReport> {
+    let game = matches.get(&match_id)?;
+    let body = game.bodies.get(&player_id)?;
+    let standing = game.bodies.values().filter(|b| b.state.is_alive()).count() as u32;
+    let alive = body.state.is_alive();
+    let settled = body.settled;
+    let name = names.get(&player_id).cloned().unwrap_or_default();
+    Some(MatchReport {
+        place: if alive { 1 } else { standing + 1 },
+        players: game.bodies.len() as u32,
+        standing,
+        alive_ms: settled.map_or((game.elapsed(tick) * 1000.0) as u32, |s| s.alive_ms),
+        stats: score_entry(player_id, name, body),
+        stake_micro_usd: if paid {
+            game.stakes.entry().micros()
+        } else {
+            0
+        },
+        stake_back_micro_usd: settled.map_or(0, |s| s.back_micro_usd),
+    })
 }
 
 /// The wire shape of one table.

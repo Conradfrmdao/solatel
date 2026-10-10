@@ -1901,6 +1901,109 @@ fn surviving_to_the_whistle_gets_the_stake_back() {
     }
 }
 
+/// The report a player was sent when their match ended for them, from
+/// `eliminated` or `match_ended`.
+fn report_in(messages: Vec<ServerMsg>) -> Option<MatchReport> {
+    messages.into_iter().find_map(|m| match m {
+        ServerMsg::Eliminated { report, .. } | ServerMsg::MatchEnded { report, .. } => Some(report),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_killed_player_is_told_where_they_finished_and_that_their_stake_went() {
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let stake = duel.lobby.matches[&duel.match_id].stakes.entry().micros();
+    let _ = drain(&mut duel.victim_rx);
+    duel.kill_the_victim();
+
+    let report = report_in(drain(&mut duel.victim_rx))
+        .expect("the victim was not told how their match went");
+    // Three bought in, two still standing: third.
+    assert_eq!((report.place, report.players, report.standing), (3, 3, 2));
+    assert_eq!(report.stats.id, duel.victim);
+    assert!(!report.stats.alive);
+    assert!(
+        report.alive_ms > 0,
+        "a life that lasted ticks reported none"
+    );
+    assert_eq!(report.stake_micro_usd, stake);
+    assert_eq!(
+        report.stake_back_micro_usd, 0,
+        "a killed player's stake went to their killer, and the card must not say otherwise"
+    );
+}
+
+#[test]
+fn a_survivor_is_told_they_kept_their_stake_and_what_they_did() {
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let stakes = duel.lobby.matches[&duel.match_id].stakes;
+    duel.kill_the_victim();
+    let _ = drain(&mut duel.shooter_rx);
+
+    duel.lobby.end_match(duel.match_id);
+
+    let report =
+        report_in(drain(&mut duel.shooter_rx)).expect("a survivor was not told how the match went");
+    // Two standing at the whistle, the shooter among them: first, shared.
+    assert_eq!((report.place, report.players, report.standing), (1, 3, 2));
+    assert!(report.stats.alive);
+    assert_eq!(report.stats.kills, 1);
+    assert_eq!(report.stats.shots_fired, Duel::shots_to_kill());
+    assert_eq!(report.stats.winnings_micro_usd, stakes.reward().micros());
+    assert_eq!(report.stake_micro_usd, stakes.entry().micros());
+    assert_eq!(
+        report.stake_back_micro_usd,
+        stakes.entry().micros(),
+        "standing at the whistle hands the whole stake back"
+    );
+}
+
+#[test]
+fn a_fall_nobody_is_credited_with_is_told_the_reward_came_back() {
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let stakes = duel.lobby.matches[&duel.match_id].stakes;
+    let _ = drain(&mut duel.victim_rx);
+
+    // Below the floor of the world, where there is nobody to credit.
+    duel.lobby
+        .matches
+        .get_mut(&duel.match_id)
+        .unwrap()
+        .bodies
+        .get_mut(&duel.victim)
+        .unwrap()
+        .state
+        .position
+        .y = -60.0;
+    duel.lobby.step();
+
+    let report =
+        report_in(drain(&mut duel.victim_rx)).expect("a fall was not told how the match went");
+    assert!(!report.stats.alive);
+    assert_eq!(
+        report.stake_back_micro_usd,
+        stakes.reward().micros(),
+        "an abandon hands back the stake less the rake, and the card says what the ledger does"
+    );
+}
+
+#[test]
+fn free_play_reports_no_stake_at_all() {
+    let mut duel = Duel::new();
+    duel.kill_the_victim();
+
+    let report = report_in(drain(&mut duel.victim_rx)).expect("no report in free play");
+    assert_eq!(
+        (report.stake_micro_usd, report.stake_back_micro_usd),
+        (0, 0),
+        "nothing is charged in free play, so there is no stake to report"
+    );
+}
+
 #[test]
 fn a_player_killed_before_the_whistle_is_not_also_refunded() {
     let mut duel = Duel::new();
