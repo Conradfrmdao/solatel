@@ -1121,6 +1121,15 @@ def build(parts):
     parts.solid(-13.00, 24.03, -11.50, 27.28, 4.85 - SKIN, walls=('z1', 'x0'))
     parts.drawn.box(-13.00, 4.85 - SKIN - DECK, 23.99, -11.50, 4.85 - SKIN,
                     24.03, RAMP)
+    # The original up2 switchback faced the south approach with a 2.2 m
+    # vertical landing. Replace it with a direct climb from the reported
+    # position (-13.6, 15), rather than asking players to find its hidden
+    # entrance behind the landing. The crossing planks are retired below:
+    # they otherwise intersect a standing player's head on the new slope.
+    parts.ramp('z', 16.75, 25.50, -17.75, 4.85 - SKIN,
+               width=4.5, walls=(False, False), into=0.5)
+    parts.solid(-17.75, 25.50, -11.50, 28.20, 4.85 - SKIN, walls=())
+    parts.log.append('  west original switchback: direct south approach to 4.85 m')
     east_district(parts)
     west_district(parts)
 
@@ -1362,6 +1371,11 @@ def main():
     repointed += room
     print(f'  took down {removed} triangles of room_0: its own floor, '
           f'z-fighting with the ground inside the building')
+    for name in ('up2_0', 'Cube.003_0', 'Cube.008_0', 'Cube.009_0'):
+        blob, retired, removed = retire_triangles(
+            js, blob, name, lambda centres: np.ones(len(centres), dtype=bool), scale)
+        repointed += retired
+        print(f'  retired {removed} triangles of {name} for the direct west ramp')
 
     parts = Parts()
     parts.drawn = Parts()

@@ -1,5 +1,26 @@
 # Working notes for Solatel
 
+## October 14: reported west approach and scope transition
+
+The user's screenshot at (-13.6, 0.9, 15), facing +Z, identified the ORIGINAL
+`up2_0` switchback, not one of the thirteen extension ramps. Its south face
+was a 2.53 m vertical landing. Retired that mesh and the three crossing
+planks, adding a direct ramp and connected upper landing. The regression
+`the_reported_west_approach_walks_onto_the_upper_landing` walks from the
+reported approach and two nearby clear approaches without jumping.
+MAP_VERSION is 31. 277 ordinary Rust tests and clippy pass; Arena lighting
+was rebaked and the browser capture confirms the new ramp from that view.
+
+The scope HUD begins at opacity >0.001, but the gun remained visible until
+0.999. Both directions of the transition showed the gun/second optic in the
+lens. Viewmodel visibility now uses the HUD's threshold; intermediate ADS
+captures confirm a clear scope view. Windows light baking now initializes
+spawn workers with pass data because Windows has no multiprocessing fork.
+
+User approved the combined indoor Yard concept and all four distinct
+operator designs; see `documents/ART-DIRECTION.md`. Those are new work,
+not completed by this bug-fix release.
+
 ## October 14, 2026: material, pistol and grenade pass
 
 Soldier cloth/gloves use dielectric, rough materials instead of the source

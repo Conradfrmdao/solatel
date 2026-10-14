@@ -1378,7 +1378,10 @@ export class Viewmodel {
 
     // Through a magnified optic the picture is the scope's own (`scope`):
     // the gun and the arms holding it are not in it.
-    const hidden = this.scope >= 0.999;
+    // The HUD starts drawing the optic at this same threshold. Leaving the
+    // model visible until the overlay is fully opaque draws a second scope
+    // and the receiver inside the lens during both aim transitions.
+    const hidden = this.scope > 0.001;
     this.root.visible = !hidden;
     if (this.body) this.body.visible = !hidden;
 

@@ -674,6 +674,8 @@ def classify(meshes):
     """
     props, structure = [], []
     for name, verts, faces in meshes:
+        if not len(faces):
+            continue  # retired geometry retains its source accessor for rebuilds
         low, high = verts.min(0), verts.max(0)
         volume = float(np.prod(np.maximum(high - low, 1e-6)))
         if (

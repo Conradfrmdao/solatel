@@ -357,6 +357,12 @@ def sky_radiance(data, panorama, solid, rays):
 G = {}
 
 
+def init_trace_worker(state):
+    """Spawned Windows workers need the same pass data fork inherits."""
+    G.clear()
+    G.update(state)
+
+
 def _scene():
     if 'scene' not in G:
         G['scene'] = rtcs.EmbreeScene()
@@ -590,7 +596,12 @@ def trace(name, triangles, normals, albedo, sky_rays, sun, sun_rays, dims, origi
             links = np.zeros((count, 3), bool)
         # Forked after the globals are set, so every worker reads them as
         # they are now - the last pass's light included.
-        with multiprocessing.get_context('fork').Pool(os.cpu_count()) as pool:
+        method = 'fork' if 'fork' in multiprocessing.get_all_start_methods() else 'spawn'
+        workers = os.cpu_count() if method == 'fork' else min(4, os.cpu_count() or 1)
+        options = {} if method == 'fork' else {
+            'initializer': init_trace_worker, 'initargs': (G,),
+        }
+        with multiprocessing.get_context(method).Pool(workers, **options) as pool:
             for done, (start, stop, out) in enumerate(pool.imap_unordered(
                     _trace, [(s, e, first) for s, e in blocks], chunksize=1)):
                 a_sun[start:stop], b_sun[start:stop] = out['sun']
