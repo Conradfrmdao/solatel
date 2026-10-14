@@ -73,7 +73,7 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL = os.path.join(ROOT, 'assets', 'maps', 'facility.glb')
-YARD = os.path.join(ROOT, 'assets', 'maps', 'yard.glb')
+YARD = os.path.join(ROOT, 'scripts', 'source', 'legacy-yard.glb')
 
 
 def load(name, filename):

@@ -1101,7 +1101,7 @@ export async function growNature(map) {
 
   const grass = extras.ground && textures.grass ? new Grass(extras.ground, group, textures) : null;
   const smoke = Array.isArray(extras.smoke) && extras.smoke.length ? new Smoke(group, extras.smoke) : null;
-  const birds = trees.length ? new Birds(group) : null;
+  const birds = trees.length && !extras.indoor ? new Birds(group) : null;
   const foot = new THREE.Vector3();
   let last = wind.value;
   return {

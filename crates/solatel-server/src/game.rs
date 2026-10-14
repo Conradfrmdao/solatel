@@ -218,7 +218,7 @@ pub const LOAD_WAIT: f32 = 30.0;
 /// spawn (`disperse_if_live`), so where they wandered meanwhile buys nothing.
 const GATHERINGS: [(&str, f32, f32); 3] = [
     ("arena", -10.2, 13.0),
-    ("yard", -35.0, -114.5),
+    ("yard", 0.0, -62.0),
     ("facility", -89.2, 17.2),
 ];
 

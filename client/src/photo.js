@@ -38,6 +38,9 @@ import { PHOTO_SETS } from './photo-sets.js';
  * and the ribs of a sheet out of line where two patches meet.
  */
 export const PHOTO = {
+  terminal_floor: ['concrete_floor', 2.0, 0.85, 0.12, 1],
+  terminal_wall: ['concrete_wall', 4.0, 0.9, 0.35, 1],
+  terminal_stone: ['concrete_wall', 3.0, 0.85, 0.45, 1],
   concrete: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_light: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_grey: ['concrete_wall', 3.0, 0.75, 1.0, 1],

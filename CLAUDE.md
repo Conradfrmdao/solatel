@@ -1,5 +1,37 @@
 # Working notes for Solatel
 
+## October 14: indoor Yard art draft (not deployed)
+
+`codex/indoor-yard-reference` contains the local draft; live main remains at
+09b6747 (Arena west ramp and scope transition fix). The user rejected the
+first art approximation and wants the reference images matched. See
+`documents/ART-DIRECTION.md` for the approved images, actual captures and
+the remaining fidelity gap. Do not claim the art or outfits are complete.
+
+`scripts/build-yard.py` authors a new indoor Yard in metres. Regenerate
+collision with `python scripts/derive-maps.py yard`; MAP_VERSION is 32.
+All twelve stair approach cases pass, as does gathering all thirty players
+at the updated warm-up centre (0, -62). The full Rust pass initially caught
+the stale outdoor gathering coordinate; that was corrected and its failing
+test rerun successfully. The other 277 ordinary tests passed, as did clippy
+and the WASM/client builds. No new on-chain wallet test was performed.
+
+The original Yard is preserved at `scripts/source/legacy-yard.glb` because
+Facility's generator imports its props. Do not run `restyle-yard.py` on the
+new authored Yard. `build-facility.py` now reads the preserved source.
+
+Indoor metadata prevents outdoor rubbish and birds. Terminal paint uses
+clean procedural materials rather than the old rusty photo sets. Glass has
+no depth writes or cast shadows. Map extras carry authored sign positions.
+The light bake completed after the architectural revision; a later cosmetic
+cargo chamfer pass changed surfaces by a few centimetres within existing
+collision envelopes. Re-bake before releasing the finished art.
+
+The procedural operator prototype was removed after reference comparison.
+Existing skins and soldier remain. A user-approved external Ranger geometry
+test is local under ignored `.artifacts/`; no generated character was added
+to runtime or claimed as production-ready.
+
 ## October 14: reported west approach and scope transition
 
 The user's screenshot at (-13.6, 0.9, 15), facing +Z, identified the ORIGINAL

@@ -177,6 +177,12 @@ const PLASTER = { kind: WEATHERED, blotch: 0.16, streak: 0.3, foot: 0.25, plinth
 const PAINTED = { kind: WEATHERED, blotch: 0.12, streak: 0.15, foot: 0.2, chips: 0.3 };
 const TIMBER = { kind: WEATHERED, blotch: 0.12, foot: 0.2, planks: 0.2 };
 const SURFACES = {
+  terminal_floor: { kind: WEATHERED, blotch: 0.02, foot: 0 },
+  terminal_wall: { ...CONCRETE, blotch: 0.04, streak: 0.04, foot: 0.08, seams: [4, 3] },
+  terminal_stone: { ...CONCRETE, blotch: 0.04, streak: 0.03, foot: 0.05 },
+  terminal_teal: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
+  terminal_amber: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
+  terminal_frame: { ...PAINTED, blotch: 0.02, chips: 0.03, foot: 0.04 },
   concrete: { ...CONCRETE, seams: [3.0, 3.066] },
   concrete_dark: { ...CONCRETE, wet: 0.8 },
   concrete_light: { ...CONCRETE, streak: 0.3 },
@@ -628,7 +634,7 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
  */
 const SKIES = {
   facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5, wet: 0.5 },
-  yard: { file: 'overcast', sun: 1.35, sunColour: 0xe3e7ec, sky: 1.25, wet: 0.9 },
+  yard: { file: 'partly', sun: 4.5, sunColour: 0xffebcf, sky: 1.5, wet: 0.0 },
   arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
 
@@ -1414,6 +1420,16 @@ export class World {
         // flat colour - so shading it flat is both truer to the art and what
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
+        if (/^terminal_(teal|amber|frame|alloy)$/.test(material.name)) {
+          material.metalness = material.name === 'terminal_alloy' ? 0.75 : 0.25;
+          material.roughness = material.name === 'terminal_alloy' ? 0.3 : 0.42;
+        }
+        if (material.name === 'glass' && material.transparent) {
+          node.castShadow = false;
+          material.depthWrite = false;
+          material.roughness = 0.14;
+          continue;
+        }
         // Two surfaces are not paint. A lamp's lens gives light of its own,
         // and chain-link is a wire mesh you see through: drawn as a diamond
         // pattern cut out of its panel, in world metres, since the map has
@@ -1440,7 +1456,7 @@ export class World {
     arena.userData.nature = await growNature(arena);
     // Vehicles, drums and crates, drawn properly over their stand-ins, and
     // the rubbish that gathers at the foot of the walls.
-    await Promise.all([dressProps(arena), scatterRubbish(mapName, arena)]);
+    await Promise.all([dressProps(arena), arena.userData.indoor ? 0 : scatterRubbish(mapName, arena)]);
     arena.userData.struck = struckBoxes(arena);
     addWayfinding(arena, mapName);
     batchStatic(arena);

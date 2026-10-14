@@ -15,12 +15,12 @@ const LABELS = {
     ['06', 'EAST GATE', 'FACILITY PERIMETER', '#7fa4ad'],
   ],
   yard: [
-    ['01', 'NORTH YARD', 'SOLATEL FREIGHT TERMINAL', '#d3a55f'],
+    ['01', 'FREIGHT', 'DAYBREAK TERMINAL', '#d3a55f'],
     ['02', 'RECEIVING', 'KEEP ACCESS CLEAR', '#7fa4ad'],
-    ['03', 'TRANSFER', 'SOLATEL FREIGHT TERMINAL', '#d3a55f'],
-    ['04', 'STORAGE', 'AUTHORIZED PERSONNEL', '#7fa4ad'],
-    ['05', 'DISPATCH', 'KEEP ACCESS CLEAR', '#d3a55f'],
-    ['06', 'SOUTH YARD', 'SOLATEL FREIGHT TERMINAL', '#7fa4ad'],
+    ['03', 'GLASSWORKS', 'PROCESSING HALL', '#d3a55f'],
+    ['04', 'ASSEMBLY', 'TECHNICAL SERVICES', '#7fa4ad'],
+    ['05', 'ATRIUM', 'RESEARCH GARDEN', '#d3a55f'],
+    ['06', 'RESEARCH', 'DAYBREAK TERMINAL', '#7fa4ad'],
   ],
   arena: [
     ['A', 'TRAINING', 'SOLATEL / LIVE FIRE RANGE', '#d3a55f'],
@@ -77,6 +77,10 @@ function atlas(labels) {
 }
 
 export function addWayfinding(map, name) {
+  if (map.userData.terminal_signs) {
+    addAuthoredSigns(map);
+    return;
+  }
   const labels = LABELS[name];
   if (!labels) return;
   map.updateMatrixWorld(true);
@@ -150,4 +154,37 @@ export function addWayfinding(map, name) {
   map.add(mesh);
   map.userData.wayfinding = views;
   for (const geometry of panels) geometry.dispose();
+}
+
+function addAuthoredSigns(map) {
+  const signs = map.userData.terminal_signs;
+  const labels = signs.map((s) => [s.code, s.name, s.subtitle, s.accent ?? '#c6974b']);
+  const geometries = [];
+  const views = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const [i, sign] of signs.entries()) {
+    const normal = new THREE.Vector3(...sign.normal);
+    const across = new THREE.Vector3().crossVectors(up, normal).normalize();
+    const geometry = new THREE.PlaneGeometry(sign.width, sign.width / 4);
+    const uv = geometry.attributes.uv;
+    for (let n = 0; n < uv.count; n += 1) {
+      uv.setXY(n, (i % 2 + uv.getX(n)) / 2,
+        1 - (Math.floor(i / 2) + 1 - uv.getY(n)) / 4);
+    }
+    const pose = new THREE.Matrix4().makeBasis(across, up, normal);
+    pose.setPosition(new THREE.Vector3(...sign.at));
+    geometry.applyMatrix4(pose);
+    geometries.push(geometry);
+    views.push({ at: sign.at, normal: sign.normal, label: sign.name });
+  }
+  const material = lightMaterial(new THREE.MeshStandardMaterial({
+    map: atlas(labels), roughness: 0.75, metalness: 0.12,
+  }));
+  const mesh = new THREE.Mesh(mergeGeometries(geometries), material);
+  mesh.name = 'terminal-identification';
+  mesh.userData.scenery = true;
+  mesh.receiveShadow = true;
+  map.add(mesh);
+  map.userData.wayfinding = views;
+  for (const geometry of geometries) geometry.dispose();
 }

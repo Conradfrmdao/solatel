@@ -28,6 +28,8 @@ const args = process.argv.slice(2);
 const at = args.indexOf('--url');
 const base = at >= 0 ? args[at + 1] : 'http://localhost:8080';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const outAt = args.indexOf('--out');
+const output = outAt >= 0 ? args[outAt + 1] : join(root, 'assets', 'menu');
 
 const CHROME = [
   process.env.CHROME_PATH,
@@ -46,7 +48,9 @@ if (!executablePath) {
 const browser = await puppeteer.launch({
   executablePath,
   headless: 'new',
-  args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+  args: ['--no-sandbox', '--ignore-gpu-blocklist', ...(args.includes('--gpu') ? [] : [
+    '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+  ])],
   protocolTimeout: 900_000,
 });
 try {
@@ -57,7 +61,7 @@ try {
   const drawn = await page.evaluate(() => window.solatelPortraits);
   const write = async (folder, name, url) => {
     if (!url?.startsWith('data:image/webp;base64,')) throw new Error(`${folder}/${name} was not drawn as WebP`);
-    const path = join(root, 'assets', 'menu', folder, `${name}.webp`);
+    const path = join(output, folder, `${name}.webp`);
     await mkdir(dirname(path), { recursive: true });
     const bytes = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
     await writeFile(path, bytes);

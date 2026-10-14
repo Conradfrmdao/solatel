@@ -52,7 +52,7 @@ const BOARD_STALE_MS = 20_000;
  *  lines here still shows. */
 const MAP_BLURB = {
   arena: ['Close quarters. Fast action.', 'No place to hide.'],
-  yard: ['Open spaces. Tactical fights.', 'Control the yard.'],
+  yard: ['Daylight. Three indoor zones.', 'Freight, glassworks and atrium.'],
   facility: ['High ground. Tight angles.', 'One mistake ends it.'],
 };
 
@@ -1467,8 +1467,9 @@ const TEMPLATE = `
           licensed under <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY-4.0</a>.
           Changed by Solatel: repainted, two walls taken down, and extended with
           buildings, stairs and walls of our own.</li>
-        <li>The yard, and the vehicles and props dressing the facility, are from
-          a low-poly map pack by ResoForge, repainted by Solatel.</li>
+        <li>Daybreak Terminal (Yard) is original Solatel geometry. The vehicles
+          and props dressing the facility are from a low-poly map pack by
+          ResoForge, repainted by Solatel.</li>
         <li>Soldier and animations from <a href="https://www.mixamo.com" target="_blank" rel="noopener">Adobe Mixamo</a>.</li>
         <li>The AK-47, MP5, M700 and M1911 from Stein Games'
           <a href="https://stein-indie.itch.io/classic-weapons-pack" target="_blank" rel="noopener">Free Classic Weapons Pack</a>,
