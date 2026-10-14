@@ -279,10 +279,10 @@ export const PISTOL = variant(RIFLE, {
   name: 'pistol',
   boreHeight: 0.066,
   muzzleFace: -0.27,
-  hip: { position: [0.05, -0.095, -0.44], rotation: [-0.08, 0.06, 0] },
+  hip: { position: [0.085, -0.11, -0.40], rotation: [-0.045, 0.12, -0.025] },
   // Out at arm's length with the sights up, where a pistol is held: closer,
   // the forearms coming back to it filled the bottom of the picture.
-  ads: { eyeRelief: 0.6, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
+  ads: { eyeRelief: 0.52, duration: 0.14, swayScale: 0.35, bobScale: 0.25, recoilScale: 0.7 },
   sway: { position: 0.03, rotation: 0.4, recovery: 11 },
   idle: { position: 0.0025, rotation: 0.006, rate: 0.26 },
   bob: { amount: 0.012, roll: 0.016, rotation: 0.01 },

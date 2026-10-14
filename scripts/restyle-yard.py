@@ -79,7 +79,7 @@ RULES = {
     # kind: {colour index: surface, or a tuple to pick from per object}
     'PLANE': {0: 'asphalt'},
     'Cube': {1: 'concrete_grey', 2: 'concrete_light', 3: 'steel', 5: 'crate_rust', 6: 'wood',
-             7: 'steel', 8: 'brick', 9: 'concrete_grey', None: 'concrete_grey'},
+             7: 'steel', 8: 'concrete_dark', 9: 'concrete_grey', None: 'concrete_grey'},
     'Cylinder': {2: 'steel', 3: 'rubber', 7: 'rubber', 4: BARREL_BODY, 5: BARREL_BODY,
                  8: BARREL_BODY},
     'barricade': {9: 'concrete_grey', 5: 'steel'},

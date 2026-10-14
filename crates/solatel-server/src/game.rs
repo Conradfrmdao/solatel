@@ -2599,7 +2599,7 @@ impl Lobby {
             return;
         }
         body.grenades -= 1;
-        let flight = grenade::Flight::thrown_by(&from);
+        let flight = grenade::Flight::thrown_by(&from, game.map);
         game.next_grenade = game.next_grenade.wrapping_add(1);
         let id = game.next_grenade;
         game.grenades.push(LiveGrenade {

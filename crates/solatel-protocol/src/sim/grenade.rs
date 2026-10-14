@@ -30,10 +30,20 @@ pub struct Flight {
 impl Flight {
     /// Thrown from a player: out of their eyes, along their aim, with a
     /// little lift and whatever velocity they already had.
-    pub fn thrown_by(state: &PlayerState) -> Self {
+    pub fn thrown_by(state: &PlayerState, map: &Map) -> Self {
         let aim = look_direction(state.yaw, state.pitch);
+        // Advance from the eye without placing the grenade inside or beyond
+        // close cover. Each sample is shorter than the grenade's diameter.
+        let mut position = state.eye_position();
+        for i in 1..=8 {
+            let next = state.eye_position() + aim * (i as f32 * 0.05);
+            if collide::overlaps_any(next, HALF, map) {
+                break;
+            }
+            position = next;
+        }
         Self {
-            position: state.eye_position() + aim * 0.4,
+            position,
             velocity: aim * GRENADE_THROW_SPEED + Vec3::Y * GRENADE_LIFT + state.velocity,
         }
     }
@@ -44,19 +54,26 @@ impl Flight {
     /// to a stop rather than skating across the floor forever.
     pub fn step(&mut self, map: &Map, dt: f32) {
         self.velocity.y -= GRAVITY * dt;
-        let delta = self.velocity * dt;
-        for axis in 0..3 {
-            let mut moved = self.position;
-            moved[axis] += delta[axis];
-            if collide::overlaps_any(moved, HALF, map) {
-                self.velocity[axis] = -self.velocity[axis] * BOUNCE;
-                for other in 0..3 {
-                    if other != axis {
-                        self.velocity[other] *= SCRUB;
+        // A whole tick can cross a thin wall. Keep each displacement below
+        // half the collision box's width, including inherited sprint speed.
+        let steps = ((self.velocity * dt).abs().max_element() / HALF.x)
+            .ceil()
+            .max(1.0) as usize;
+        let sub_dt = dt / steps as f32;
+        for _ in 0..steps {
+            for axis in 0..3 {
+                let mut moved = self.position;
+                moved[axis] += self.velocity[axis] * sub_dt;
+                if collide::overlaps_any(moved, HALF, map) {
+                    self.velocity[axis] = -self.velocity[axis] * BOUNCE;
+                    for other in 0..3 {
+                        if other != axis {
+                            self.velocity[other] *= SCRUB;
+                        }
                     }
+                } else {
+                    self.position = moved;
                 }
-            } else {
-                self.position = moved;
             }
         }
     }
@@ -135,7 +152,7 @@ mod tests {
         let map = map();
         let mut thrower = standing(0.0);
         thrower.yaw = std::f32::consts::FRAC_PI_2; // facing -X, away from the wall
-        let mut flight = Flight::thrown_by(&thrower);
+        let mut flight = Flight::thrown_by(&thrower, map);
         for _ in 0..(64 * 4) {
             flight.step(map, TICK_DT);
         }
@@ -160,7 +177,7 @@ mod tests {
         let map = map();
         let mut thrower = standing(0.0);
         thrower.yaw = -std::f32::consts::FRAC_PI_2; // facing +X, at the wall
-        let mut flight = Flight::thrown_by(&thrower);
+        let mut flight = Flight::thrown_by(&thrower, map);
         for _ in 0..(64 * 3) {
             flight.step(map, TICK_DT);
             assert!(
@@ -169,6 +186,62 @@ mod tests {
                 flight.position
             );
         }
+    }
+
+    #[test]
+    fn throwing_against_cover_never_starts_inside_it() {
+        let mut thrower = standing(4.65);
+        thrower.yaw = -std::f32::consts::FRAC_PI_2;
+        let mut flight = Flight::thrown_by(&thrower, map());
+        assert!(flight.position.x > thrower.eye_position().x);
+        assert!(flight.position.x + HALF.x < 5.0);
+        for _ in 0..10 {
+            flight.step(map(), TICK_DT);
+            assert!(flight.position.x + HALF.x < 5.0);
+            assert!(!collide::overlaps_any(flight.position, HALF, map()));
+        }
+    }
+
+    #[test]
+    fn a_fast_grenade_cannot_skip_a_thin_wall() {
+        static THIN: Map = Map::fixture(
+            &[Brush::new(
+                Vec3::new(0.2, -10.0, -10.0),
+                Vec3::new(0.21, 10.0, 10.0),
+            )],
+            SPAWNS,
+        );
+        let mut flight = Flight {
+            position: Vec3::ZERO,
+            velocity: Vec3::new(40.0, 0.0, 0.0),
+        };
+        flight.step(&THIN, TICK_DT);
+        assert!(flight.position.x + HALF.x < 0.2);
+        assert!(flight.velocity.x < 0.0);
+    }
+
+    #[test]
+    fn a_grenade_passes_through_a_clear_window() {
+        static WINDOW: Map = Map::fixture(
+            &[
+                Brush::new(Vec3::new(0.2, -10.0, -10.0), Vec3::new(0.3, 1.0, 10.0)),
+                Brush::new(Vec3::new(0.2, 2.5, -10.0), Vec3::new(0.3, 10.0, 10.0)),
+            ],
+            SPAWNS,
+        );
+        let mut thrower = standing(-0.15);
+        thrower.yaw = -std::f32::consts::FRAC_PI_2;
+        let mut flight = Flight::thrown_by(&thrower, &WINDOW);
+        assert!(
+            flight.position.x > 0.2,
+            "the opening must not shorten the throw"
+        );
+        for _ in 0..10 {
+            flight.step(&WINDOW, TICK_DT);
+            assert!(!collide::overlaps_any(flight.position, HALF, &WINDOW));
+        }
+        assert!(flight.position.x > 2.0);
+        assert!(flight.velocity.x > 0.0);
     }
 
     #[test]

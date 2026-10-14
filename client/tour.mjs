@@ -140,6 +140,11 @@ try {
     });
   }
   const { hx, hz } = plan;
+  const signs = await page.evaluate(() => window.solatel.world.arena.userData.wayfinding ?? []);
+  console.log(`>> ${signs.length} wall-mounted signs: ${signs.map((s) => s.label).join(', ')}`);
+  if (args.includes('--signs')) signs.forEach(({ at: [x, y, z], normal: [nx, ny, nz], label }, i) => {
+    shots.push({ name: `sign-${i + 1}`, at: { x: x + nx * 9, y: y + 0.2, z: z + nz * 9, tx: x, ty: y, tz: z } });
+  });
   shots.push({
     name: 'above',
     at: { x: -hx * 0.75, y: Math.max(hx, hz) * 0.55, z: -hz * 0.75, tx: hx * 0.1, ty: 0, tz: hz * 0.1 },
@@ -167,6 +172,17 @@ try {
   await frames(3);
   await page.screenshot({ path: `${out}/${mapName}-player.png` });
   console.log(`>> ${out}/${mapName}-player.png`);
+  if (args.includes('--hands')) {
+    await page.keyboard.press('Digit2');
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await frames(3);
+    await page.screenshot({ path: `${out}/${mapName}-pistol.png` });
+    await page.mouse.down({ button: 'right' });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await frames(3);
+    await page.screenshot({ path: `${out}/${mapName}-pistol-aim.png` });
+    await page.mouse.up({ button: 'right' });
+  }
 } catch (error) {
   await page.screenshot({ path: `${out}/${mapName}-failure.png` }).catch(() => {});
   console.error(await page.evaluate(() => document.body.innerText).catch(() => 'page unavailable'));

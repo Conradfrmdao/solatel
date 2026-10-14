@@ -24,6 +24,7 @@ import { SIM } from './sim.js';
 import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
 import { scatterRubbish } from './scatter.js';
+import { addWayfinding } from './wayfinding.js';
 import { Blasts } from './blast.js';
 import { Rounds } from './rounds.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -1441,6 +1442,7 @@ export class World {
     // the rubbish that gathers at the foot of the walls.
     await Promise.all([dressProps(arena), scatterRubbish(mapName, arena)]);
     arena.userData.struck = struckBoxes(arena);
+    addWayfinding(arena, mapName);
     batchStatic(arena);
 
     this._maps = this._maps ?? new Map();

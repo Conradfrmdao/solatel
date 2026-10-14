@@ -859,6 +859,10 @@ export class Viewmodel {
 
   setArms(template, pose) {
     const body = cloneSkinned(template);
+    // A close-up rig needs its own proportions. The world soldier's bulky
+    // gloves overwhelmed the pistol grip. Scale before measuring the bones
+    // and fitting the fingers, so the entire solve uses the same dimensions.
+    body.scale.multiplyScalar(0.86);
     const bones = {};
     body.traverse((node) => {
       if (node.isBone) bones[node.name] = node;

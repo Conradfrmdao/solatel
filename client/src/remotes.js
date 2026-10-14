@@ -458,7 +458,17 @@ export class Remotes {
         }
         detailed(node.geometry);
         // Lit by the map's light, so a soldier in a dark room is in the dark.
-        for (const material of [node.material].flat()) lightMaterial(material);
+        for (const material of [node.material].flat()) {
+          // The source is a Phong FBX conversion, not authored PBR. Its
+          // inferred metallic/roughness texture made fabric and gloves look
+          // like polished metal. Cloth, leather and painted armor are
+          // dielectrics; keep their color/normal detail without that gloss.
+          material.metalness = 0;
+          material.roughnessMap = null;
+          material.roughness = 0.88;
+          material.normalScale?.setScalar(0.7);
+          lightMaterial(material);
+        }
       }
     });
     // A gun in somebody else's hands is lit by the map as they are. The one
