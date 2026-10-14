@@ -1523,6 +1523,11 @@ const TEMPLATE = `
           <span>turn off if aim sticks after switching windows</span>
         </label>
         <label class="check">
+          toggle sprint
+          <input id="sprint-toggle" type="checkbox" />
+          <span>press Shift to sprint; aiming, firing or stopping ends it</span>
+        </label>
+        <label class="check">
           clips
           <input id="clips" type="checkbox" />
           <span id="clips-note">F8 saves the last 20 seconds as a video</span>
@@ -1552,6 +1557,7 @@ const TEMPLATE = `
         <span><kbd>left click</kbd> shoot</span>
         <span><kbd>right click</kbd> aim</span>
         <span><kbd>space</kbd> jump</span>
+        <span><kbd>Shift</kbd> sprint forward</span>
         <span><kbd>C</kbd> crouch</span>
         <span><kbd>R</kbd> reload</span>
         <span><kbd>Q</kbd> or <kbd>wheel</kbd> swap gun</span>

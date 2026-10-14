@@ -443,6 +443,8 @@ export class Viewmodel {
     this.sway = { x: 0, y: 0, pitch: 0, yaw: 0 };
     this.bobPhase = 0;
     this.bobWeight = 0;
+    this.sprinting = false;
+    this.sprintBlend = 0;
     /** How fast the player is going sideways, -1 to 1 of a run, eased. */
     this.strafe = 0;
     this.airLift = 0;
@@ -1225,6 +1227,7 @@ export class Viewmodel {
    * behind, which lives in the world.
    */
   update(dt, yaw, pitch, speed, onGround, eye) {
+    this.sprintBlend = damp(this.sprintBlend, this.sprinting ? 1 : 0, 12, dt);
     const c = this.config;
     this.time += dt;
 
@@ -1341,7 +1344,7 @@ export class Viewmodel {
       hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX - lag * c.move.shift,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
-        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop,
+        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop - this.sprintBlend * 0.065,
       hip.z + (ads.z - hip.z) * a + r.back + reload * c.reloadPose.back,
     );
     const hr = this.hipRotation;
@@ -1351,7 +1354,7 @@ export class Viewmodel {
     // must not, or they would leave the middle.
     this.root.rotation.set(
       hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch + bobPitch
-        + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.7 - lowered * LOWERED.tip,
+        + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.7 - lowered * LOWERED.tip - this.sprintBlend * 0.22,
       hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + bobYaw + reload * c.reloadPose.yaw,
       hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + lag * c.move.roll + reload * c.reloadPose.roll + seat * 0.06
         - lowered * LOWERED.roll,

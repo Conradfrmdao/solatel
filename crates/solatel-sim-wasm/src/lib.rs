@@ -33,8 +33,8 @@ use solatel_protocol::{
     net::{INTERPOLATION_DELAY_MS, PROTOCOL_VERSION, SNAPSHOT_HZ, TICK_DT, TICK_HZ},
     sim::{
         Buttons, CROUCH_DROP, EYE_OFFSET, GRENADE_FUSE, GRENADE_RADIUS, GRENADES_PER_LIFE,
-        InputCommand, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState, REGEN_DELAY,
-        REGEN_SECONDS, ZONE_FINAL_RADIUS, hitscan,
+        InputCommand, MAX_GROUND_SPEED, MAX_HEALTH, MAX_PITCH, PLAYER_HALF_EXTENTS, PlayerState,
+        REGEN_DELAY, REGEN_SECONDS, SPRINT_SPEED, ZONE_FINAL_RADIUS, hitscan,
         map::{self, MAP_VERSION},
         step_tick,
         weapon::{BULLET_GRAVITY, Optic, Round, Weapon},
@@ -263,6 +263,8 @@ pub fn constants() -> Vec<f32> {
         map::active().half_z,
         ZONE_FINAL_RADIUS,
         BULLET_GRAVITY,
+        MAX_GROUND_SPEED,
+        SPRINT_SPEED,
     ]
 }
 
@@ -294,6 +296,8 @@ pub fn constant_names() -> Vec<String> {
         "arenaHalfZ",
         "zoneFinalRadius",
         "bulletGravity",
+        "runSpeed",
+        "sprintSpeed",
     ]
     .iter()
     .map(|s| (*s).to_string())

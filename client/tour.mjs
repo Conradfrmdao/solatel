@@ -38,12 +38,14 @@ const views = Number(flag('--views', '5'));
 
 await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({
-  executablePath: process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium',
+  executablePath: process.env.CHROME_PATH ?? (process.platform === 'win32'
+    ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/opt/pw-browsers/chromium'),
   headless: 'new',
   args: [
     '--no-sandbox',
-    '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader',
+    ...(args.includes('--gpu') ? [] : [
+      '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+    ]),
     '--ignore-gpu-blocklist',
     `--window-size=${width},${height}`,
   ],
@@ -69,6 +71,7 @@ const frames = (n) =>
   );
 
 try {
+  console.log(`>> opening ${base}, map ${mapName}`);
   await page.goto(`${base}/?debug=1&nolock=1&quality=${quality}`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector(`#menu-maps .map[data-map="${mapName}"]`, { timeout: 120000 });
   await page.click(`#menu-maps .map[data-map="${mapName}"]`);
@@ -164,6 +167,10 @@ try {
   await frames(3);
   await page.screenshot({ path: `${out}/${mapName}-player.png` });
   console.log(`>> ${out}/${mapName}-player.png`);
+} catch (error) {
+  await page.screenshot({ path: `${out}/${mapName}-failure.png` }).catch(() => {});
+  console.error(await page.evaluate(() => document.body.innerText).catch(() => 'page unavailable'));
+  throw error;
 } finally {
   await browser.close();
 }

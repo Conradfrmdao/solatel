@@ -711,7 +711,11 @@ impl Body {
             Hold::Gathered => {
                 command.buttons = Buttons(
                     command.buttons.0
-                        & (Buttons::JUMP | Buttons::CROUCH | Buttons::AIM | Buttons::SIDEARM),
+                        & (Buttons::JUMP
+                            | Buttons::CROUCH
+                            | Buttons::AIM
+                            | Buttons::SIDEARM
+                            | Buttons::SPRINT),
                 );
             }
             Hold::Still => {
@@ -778,6 +782,10 @@ impl Body {
         carried.buttons.set(Buttons::CROUCH, held.crouch());
         carried.buttons.set(Buttons::AIM, held.aim());
         carried.buttons.set(Buttons::SIDEARM, held.sidearm());
+        // Do not start sprinting on a guess if the last command was firing.
+        carried
+            .buttons
+            .set(Buttons::SPRINT, self.last_input.sprinting());
         if guess.ticks > MAX_CARRY_FORWARD_TICKS {
             carried.forward = 0.0;
             carried.right = 0.0;

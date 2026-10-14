@@ -11,3 +11,6 @@ __pycache__/
 # Client build inputs and outputs.
 client/node_modules/
 client/generated/
+
+# Local screenshots, audit reports and temporary verification dependencies.
+.artifacts/

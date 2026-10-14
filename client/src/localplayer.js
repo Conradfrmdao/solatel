@@ -25,6 +25,7 @@ import {
   BUTTON_JUMP,
   BUTTON_RELOAD,
   BUTTON_SIDEARM,
+  BUTTON_SPRINT,
   BUTTON_THROW,
 } from './net.js';
 import { Predictor, SIM, WEAPONS } from './sim.js';
@@ -328,6 +329,7 @@ export class LocalPlayer {
     if (intent.crouch) buttons |= BUTTON_CROUCH;
     if (intent.reload) buttons |= BUTTON_RELOAD;
     if (intent.throw) buttons |= BUTTON_THROW;
+    if (intent.sprint) buttons |= BUTTON_SPRINT;
     // Raised to aim, so everybody else sees the rifle come up.
     if (this.input.aiming) buttons |= BUTTON_AIM;
     // Which gun is a posture, held for as long as the pistol is wanted.

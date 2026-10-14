@@ -35,6 +35,9 @@ use map::Map;
 /// Top speed under normal running, in metres per second.
 pub const MAX_GROUND_SPEED: f32 = 8.0;
 
+/// Forward sprint. Shared by the server and the browser's prediction.
+pub const SPRINT_SPEED: f32 = 10.8;
+
 /// Top speed the air-acceleration step will add towards. Deliberately lower
 /// than ground speed: it caps how much a player can steer mid-jump without
 /// preventing them from keeping speed they already had.
@@ -438,6 +441,7 @@ impl Buttons {
     /// pistol, and the server changes weapon - taking the time the gun takes
     /// to draw - whenever it differs from what is in hand.
     pub const SIDEARM: u8 = 1 << 6;
+    pub const SPRINT: u8 = 1 << 7;
 
     pub const fn empty() -> Self {
         Self(0)
@@ -482,6 +486,10 @@ impl Buttons {
     pub const fn sidearm(self) -> bool {
         self.contains(Self::SIDEARM)
     }
+
+    pub const fn sprint(self) -> bool {
+        self.contains(Self::SPRINT)
+    }
 }
 
 /// One tick of player intent.
@@ -504,6 +512,17 @@ pub struct InputCommand {
 }
 
 impl InputCommand {
+    /// Combat and crouching take priority over sprint, including for modified
+    /// clients sending contradictory buttons. Reloading may continue on a run.
+    pub fn sprinting(&self) -> bool {
+        self.buttons.sprint()
+            && self.forward > 0.0
+            && !self.buttons.crouch()
+            && !self.buttons.aim()
+            && !self.buttons.fire()
+            && !self.buttons.throw()
+    }
+
     /// Clamps a command into the range the simulation is defined over.
     ///
     /// The server calls this on everything it receives. A client is free to
@@ -573,6 +592,8 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
         apply_friction(state, dt);
         let top = if state.crouched {
             CROUCH_SPEED
+        } else if input.sprinting() {
+            SPRINT_SPEED
         } else {
             MAX_GROUND_SPEED
         };
@@ -782,6 +803,56 @@ mod tests {
             diagonal_speed <= straight_speed + 0.01,
             "diagonal {diagonal_speed} outran straight {straight_speed}"
         );
+    }
+
+    #[test]
+    fn sprint_is_bounded_and_diagonals_do_not_add_speed() {
+        for right in [0.0, 1.0] {
+            let mut state = grounded_player();
+            let command = InputCommand {
+                forward: 1.0,
+                right,
+                buttons: Buttons(Buttons::SPRINT),
+                ..idle()
+            };
+            for _ in 0..100 {
+                step_tick(&mut state, &command, &FLAT_MAP);
+            }
+            let speed = Vec2::new(state.velocity.x, state.velocity.z).length();
+            assert!((speed - SPRINT_SPEED).abs() < 0.01, "speed {speed}");
+            // Returning to normal movement must shed the sprint speed.
+            for _ in 0..40 {
+                step_tick(&mut state, &running_forward(), &FLAT_MAP);
+            }
+            assert!(state.velocity.length() <= MAX_GROUND_SPEED + 0.01);
+        }
+    }
+
+    #[test]
+    fn sprint_cannot_override_combat_crouch_or_direction() {
+        for other in [Buttons::AIM, Buttons::FIRE, Buttons::THROW, Buttons::CROUCH] {
+            let command = InputCommand {
+                buttons: Buttons(Buttons::SPRINT | other),
+                ..running_forward()
+            };
+            assert!(!command.sprinting());
+            let mut state = grounded_player();
+            for _ in 0..80 {
+                step_tick(&mut state, &command, &FLAT_MAP);
+            }
+            assert!(state.velocity.length() <= MAX_GROUND_SPEED + 0.01);
+        }
+        for forward in [-1.0, 0.0] {
+            assert!(
+                !InputCommand {
+                    forward,
+                    right: 1.0,
+                    buttons: Buttons(Buttons::SPRINT),
+                    ..idle()
+                }
+                .sprinting()
+            );
+        }
     }
 
     #[test]

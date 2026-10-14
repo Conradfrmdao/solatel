@@ -106,6 +106,9 @@ export class Hud {
 
   /** Wires the sensitivity slider to the input module. */
   bindSensitivity(input) {
+    const sprintToggle = document.querySelector('#sprint-toggle');
+    sprintToggle.checked = input.sprintToggle;
+    sprintToggle.addEventListener('change', () => input.setSprintToggle(sprintToggle.checked));
     this.sensitivity.value = String(input.sensitivity * 10000);
     this.sensitivityValue.textContent = input.sensitivity.toFixed(4);
     this.sensitivity.addEventListener('input', () => {

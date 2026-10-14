@@ -1035,6 +1035,8 @@ async function boot() {
     }
     // No sights while the rifle is on its side for a reload.
     viewmodel.setAiming(playing && input.aiming && local.health > 0 && local.reloadMs === 0);
+    viewmodel.sprinting = playing && input.sprinting && local.health > 0 && local.onGround
+      && local.speed > SIM.runSpeed && local.reloadMs === 0;
     viewmodel.setReload(
       local.reloadMs > 0 ? 1 - local.reloadMs / (local.gun.reloadSeconds * 1000) : null,
       local.gun.reloadSeconds,

@@ -74,6 +74,8 @@ export class Input {
     /** Crouching is a toggle on C: holding a key down for a whole fight is
      *  a cramp, and Ctrl, the other habit, is Ctrl+W in a browser. */
     this._crouch = false;
+    this.sprintToggle = readStoredFlag('solatel.sprintToggle', false);
+    this._sprintLatched = false;
     /** The pistol rather than the primary: 2 for it, 1 for the primary, Q
      *  or the mouse wheel to swap - what every shooter has taught a hand. */
     this._sidearm = false;
@@ -160,6 +162,9 @@ export class Input {
         if (event.code === 'Digit1') this._sidearm = false;
         if (event.code === 'Digit2') this._sidearm = true;
         if (event.code === 'KeyQ') this._sidearm = !this._sidearm;
+        if ((event.code === 'ShiftLeft' || event.code === 'ShiftRight') && this.sprintToggle) {
+          this._sprintLatched = !this._sprintLatched;
+        }
         // Jumping from a crouch stands up and jumps, in the one command:
         // the simulation will not jump a crouched body, and a jump key
         // that did nothing while crouched read as a jump key that was
@@ -179,6 +184,7 @@ export class Input {
     // Losing focus must release every key, or a player who alt-tabs while
     // running comes back still running.
     window.addEventListener('blur', () => {
+      this._sprintLatched = false;
       this._keys.clear();
       this._tapped.clear();
       this._fire = false;
@@ -215,6 +221,7 @@ export class Input {
       if (this.locked && !locked) this.lockLosses += 1;
       this.locked = locked;
       if (!locked) {
+        this._sprintLatched = false;
         // Drop anything accumulated while unlocked, so re-capturing does not
         // apply a backlog of movement in one jump.
         this._dx = 0;
@@ -345,6 +352,19 @@ export class Input {
     }
   }
 
+  setSprintToggle(on) {
+    this.sprintToggle = on;
+    this._sprintLatched = false;
+    try { window.localStorage.setItem('solatel.sprintToggle', on ? '1' : '0'); } catch { /* private browsing */ }
+  }
+
+  get sprinting() {
+    if (this.requireLock && !this.locked) return false;
+    return this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
+      && !this._aim && !this._fire && !this._keys.has('KeyG')
+      && (this.sprintToggle ? this._sprintLatched : this._keys.has('ShiftLeft') || this._keys.has('ShiftRight'));
+  }
+
   /**
    * Applies this frame's mouse movement to the look angles.
    *
@@ -384,6 +404,7 @@ export class Input {
     if (this._keys.has('KeyD')) right += 1;
     if (this._keys.has('KeyA')) right -= 1;
     const held = (code) => this._keys.has(code) || this._tapped.has(code);
+    if (forward <= 0 || this._crouch || this._aim || this._fire || held('KeyG')) this._sprintLatched = false;
     const intent = {
       forward,
       right,
@@ -392,6 +413,7 @@ export class Input {
       crouch: this._crouch,
       reload: held('KeyR'),
       throw: held('KeyG'),
+      sprint: this.sprinting && !held('KeyG'),
     };
     this._tapped.clear();
     return intent;
@@ -401,6 +423,7 @@ export class Input {
    *  beginning on its knees. */
   resetCrouch() {
     this._crouch = false;
+    this._sprintLatched = false;
   }
 
   /** Whether the pistol is wanted in hand rather than the primary. A

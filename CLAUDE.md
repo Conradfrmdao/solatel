@@ -1,5 +1,33 @@
 # Working notes for Solatel
 
+## October 14, 2026: sprint and verification pass
+
+Protocol 22 adds `Buttons::SPRINT` (bit 7). Shift requests a forward sprint
+at 10.8 m/s; ordinary movement remains 8 m/s. The shared Rust simulation
+rejects the sprint boost while aiming, firing, throwing or crouching, and
+normalizes diagonal movement. Jumping retains momentum; air acceleration
+is unchanged. Reloading can continue while running. The server carries a
+valid sprint across short packet gaps and stops carrying movement after its
+existing timeout. Gathered warm-up permits sprint; stationary warm-up does not.
+
+Settings offers hold (default) or toggle sprint. Toggle ends on combat,
+stopping, focus loss, pointer unlock or a new life. First-person weapons
+ease into a lowered running pose; aiming and reload presentation take priority.
+The input regression suite is `node --test client/input.test.mjs`.
+
+Verified locally: 273 ordinary Rust tests, 9 database-backed tests, clippy,
+the WebAssembly/client build, the keyboard regression and all ledger
+invariants. This verifies local accounting, not a real on-chain deposit or
+withdrawal. On October 14, `https://solatelgame.com/health` reported a
+reconciling ledger and `wallet: null`; production remains in test mode.
+The site deploys from GitHub main through `deploy/update.sh` on the OVH VPS.
+
+Visual audit is ongoing. `client/tour.mjs --gpu` uses the machine's GPU;
+without that flag it deliberately uses software rendering. Software-rendered
+timings must not be reported as the game's GPU performance. The capture tool
+now supports Windows by default and saves a failure screenshot on errors.
+Local screenshots and audit dependencies belong under ignored `.artifacts/`.
+
 Conventions and gotchas that are not obvious from reading the code. See
 `README.md` for what the project is and `documents/` for the PRD.
 
@@ -1162,7 +1190,7 @@ real stakes a player should always see it.
 **None of it changes where a shot goes.** Recoil kicks the weapon and rolls
 the camera around its own axis; a roll leaves the middle of the screen where
 it was aimed. A recoil pattern that actually walks the aim, bullet spread
-that differs between hip and sights, and sprinting are all *not built*, on
+that differs between hip and sights are *not built*, on
 purpose: each changes who wins a fight, so each has to be enforced by the
 server, and a client-only version would be a lie a cheater removes in one
 line. They are Conrad's decision and server work first. Magazines, reloading,
