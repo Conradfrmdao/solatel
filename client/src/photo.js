@@ -38,9 +38,12 @@ import { PHOTO_SETS } from './photo-sets.js';
  * and the ribs of a sheet out of line where two patches meet.
  */
 export const PHOTO = {
-  terminal_floor: ['concrete_floor', 2.0, 0.85, 0.12, 1],
-  terminal_wall: ['concrete_wall', 4.0, 0.9, 0.35, 1],
-  terminal_stone: ['concrete_wall', 3.0, 0.85, 0.45, 1],
+  terminal_floor: ['concrete_floor', 5.0, 0.8, 0.03, 0, 0.45],
+  terminal_wall: ['concrete_wall', 4.0, 0.85, 0.12, 0, 0.38],
+  terminal_stone: ['concrete_wall', 3.0, 0.8, 0.12, 0, 0.38],
+  terminal_brick: ['brick', 2.4, 0.35, 0.6, 0],
+  terminal_teal: ['metal_plate', 1.5, 1.0, 0.1, 0, 0.12],
+  terminal_amber: ['metal_plate', 1.5, 1.0, 0.1, 0, 0.12],
   concrete: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_light: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_grey: ['concrete_wall', 3.0, 0.75, 1.0, 1],
@@ -182,9 +185,9 @@ export async function loadPhotos(surfaceNames) {
     [...new Set(surfaceNames)]
       .filter((name) => PHOTO[name])
       .map(async (name) => {
-        const [set, scale, tint, bump, vary] = PHOTO[name];
+        const [set, scale, tint, bump, vary, contrast = 1] = PHOTO[name];
         try {
-          out[name] = { ...(await photoSet(set)), scale, tint, bump, vary };
+          out[name] = { ...(await photoSet(set)), scale, tint, bump, vary, contrast };
         } catch (err) {
           // A missing photograph leaves the surface flat-coloured, as it was.
           console.warn(`photo set ${set} unavailable:`, err);
@@ -228,6 +231,7 @@ export function photoUniforms(photo, base) {
     photoScale: { value: photo.scale },
     photoTint: { value: tint },
     photoBump: { value: photo.bump },
+    photoContrast: { value: photo.contrast ?? 1 },
     photoVary: { value: photo.vary },
     photoRoughMean: { value: photo.roughness },
     // The photograph's own mean, in the space it is sampled in: the GPU
@@ -243,6 +247,7 @@ export const PHOTO_DECLARATIONS = `
   uniform float photoScale;
   uniform vec3 photoTint;
   uniform float photoBump;
+  uniform float photoContrast;
   uniform float photoVary;
   uniform float photoRoughMean;
   uniform vec3 photoMean;
@@ -399,7 +404,7 @@ export const PHOTO_DECLARATIONS = `
     vec3 far = textureGrad(photoAlbedo, uvFar, dxFar, dyFar).rgb;
     float macro = dot(far, vec3(0.3, 0.59, 0.11)) / max(dot(colour, vec3(0.3, 0.59, 0.11)), 0.05);
 
-    photoColourOut = colour * mix(1.0, clamp(macro, 0.6, 1.5), 0.35) * photoTint;
+    photoColourOut = mix(photoMean, colour * mix(1.0, clamp(macro, 0.6, 1.5), 0.35), photoContrast) * photoTint;
     photoNormalOut = normalize(normal);
     photoRoughOut = rough;
   }
@@ -446,7 +451,7 @@ export const PHOTO_NORMAL = `
     vec3 dx = dFdx(P);
     vec3 dy = dFdy(P);
     // Gone by six metres, and wherever a grain is finer than a pixel.
-    float grit = photoVary * (1.0 - smoothstep(1.5, 6.0, distanceToEye))
+    float grit = min(photoBump, 1.0) * photoVary * (1.0 - smoothstep(1.5, 6.0, distanceToEye))
                * (1.0 - smoothstep(0.35, 0.9, fwidth(q.x) + fwidth(q.y)));
     if (grit > 0.0) {
       // The height's change across a pixel over the metres the pixel

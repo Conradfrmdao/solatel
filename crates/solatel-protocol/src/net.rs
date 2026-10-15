@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 22;
+pub const PROTOCOL_VERSION: u16 = 23;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -256,6 +256,9 @@ pub struct Landing {
 pub struct GrenadeSnapshot {
     pub id: u32,
     pub position: Vec3,
+    pub thrower: PlayerId,
+    /// Still held during the throw animation; zero in flight.
+    pub releases_in_ms: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -903,6 +906,8 @@ mod tests {
             live_grenades: vec![GrenadeSnapshot {
                 id: 1,
                 position: Vec3::new(1.0, 0.1, 2.0),
+                thrower: PlayerId::new(),
+                releases_in_ms: 140,
             }],
             starts_in_ms: 15_000,
             loading: 3,

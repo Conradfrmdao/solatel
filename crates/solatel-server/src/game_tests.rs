@@ -16,7 +16,7 @@
 use super::*;
 use solatel_protocol::glam::Vec3;
 use solatel_protocol::sim::{
-    Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH,
+    Buttons, GRENADE_FUSE, GRENADE_WINDUP, GRENADES_PER_LIFE, HEAD_BOTTOM, LEGS_TOP, MAX_HEALTH,
     PLAYER_HALF_EXTENTS, REGEN_DELAY, REGEN_SECONDS, look_direction,
     weapon::{Loadout, Optic, Round, Slot, Weapon},
 };
@@ -2944,9 +2944,10 @@ fn a_grenade_kill_pays_the_thrower() {
     duel.press(Buttons::THROW, victim_at - Vec3::new(0.0, 0.6, 0.0));
     assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
     // Holding the button is still one throw.
-    duel.press(Buttons::THROW, victim_at);
+    duel.press(Buttons::THROW, victim_at - Vec3::new(0.0, 0.6, 0.0));
     assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
     duel.body_mut(duel.victim).state.health = 20;
+    duel.steps(seconds(GRENADE_WINDUP + TICK_DT));
     // The shooter steps well back so only the victim is caught.
     let away = (victim_at - duel.position(duel.shooter)).normalize() * 12.0;
     let shooter = duel.shooter;
@@ -2963,6 +2964,32 @@ fn a_grenade_kill_pays_the_thrower() {
         },
         killer: duel.shooter,
     }));
+}
+
+#[test]
+fn a_grenade_stays_in_hand_until_the_release_and_cannot_be_primed_twice() {
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let target = duel.position(duel.victim);
+    duel.press(Buttons::THROW, target);
+    assert!(!duel.lobby.matches[&duel.match_id].grenades[0].launched);
+    duel.press(0, target);
+    duel.press(Buttons::THROW, target);
+    assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
+    assert_eq!(duel.lobby.matches[&duel.match_id].grenades.len(), 1);
+    duel.steps(seconds(GRENADE_WINDUP + TICK_DT));
+    assert!(duel.lobby.matches[&duel.match_id].grenades[0].launched);
+}
+
+#[test]
+fn dying_before_release_cancels_the_unthrown_grenade() {
+    let mut duel = Duel::new();
+    let _ledger = charge(&mut duel);
+    let target = duel.position(duel.victim);
+    duel.press(Buttons::THROW, target);
+    duel.body_mut(duel.shooter).state.health = 0;
+    duel.steps(seconds(GRENADE_WINDUP + TICK_DT));
+    assert!(duel.lobby.matches[&duel.match_id].grenades.is_empty());
 }
 
 // --- Waiting for everybody's map ------------------------------------------

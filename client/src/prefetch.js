@@ -64,7 +64,9 @@ class Prefetch {
     const urls = [
       ...skyFiles(mapName),
       ...lightFiles(mapName),
-      ...scatterFiles(mapName),
+      ...(extras.indoor ? [] : scatterFiles(mapName)),
+      ...[...new Set((extras.terminal_props ?? []).map(p => p.model))].map(name => asset(`assets/props/${name}.glb`)),
+      ...(extras.indoor ? [asset('assets/props/smooth_concrete_floor.glb')] : []),
       ...photoFiles(materials),
       ...PROP_SETS.flatMap((set) => photoFiles([], [set])),
       ...photoFiles([], ['concrete_wall', 'brick']),

@@ -1487,7 +1487,7 @@ const TEMPLATE = `
           <a href="https://github.com/Omnibus-Type/Saira" target="_blank" rel="noopener">Saira Condensed</a>; the
           wordmark is drawn from <a href="https://github.com/theleagueof/orbitron" target="_blank" rel="noopener">Orbitron</a>
           (all <a href="https://openfontlicense.org" target="_blank" rel="noopener">SIL Open Font License</a>).</li>
-        <li>Photographed surfaces, leaves, grass and sky from
+        <li>Photographed surfaces, terminal props, plants and sky from
           <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a> (CC0).
           Drawn with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> (MIT).
           Payment codes by <a href="https://github.com/kazuhikoarase/qrcode-generator" target="_blank" rel="noopener">qrcode-generator</a>,

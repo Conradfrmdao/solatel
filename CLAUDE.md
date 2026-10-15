@@ -1,36 +1,62 @@
 # Working notes for Solatel
 
-## October 14: indoor Yard art draft (not deployed)
+## October 16: Daybreak Yard and combat presentation release
 
-`codex/indoor-yard-reference` contains the local draft; live main remains at
-09b6747 (Arena west ramp and scope transition fix). The user rejected the
-first art approximation and wants the reference images matched. See
-`documents/ART-DIRECTION.md` for the approved images, actual captures and
-the remaining fidelity gap. Do not claim the art or outfits are complete.
+The indoor Yard replaces the old outdoor map. It is now 72 x 108 m, with
+six stair routes, two cross-hall bridges, side galleries, enterable upper
+warehouse bays, framed columns, deep concrete roof cassettes and skylights.
+Staggered freight and machinery block long ground sightlines; solid polished
+metal screens are cover (environment reflections, not true player mirrors).
+The warm daylight is dry and uses a freshly baked light volume. CC0 Poly
+Haven props and a scanned concrete floor are packed locally; see
+`assets/props/TERMINAL.md`. No download service is called during gameplay.
 
-`scripts/build-yard.py` authors a new indoor Yard in metres. Regenerate
-collision with `python scripts/derive-maps.py yard`; MAP_VERSION is 32.
-All twelve stair approach cases pass, as does gathering all thirty players
-at the updated warm-up centre (0, -62). The full Rust pass initially caught
-the stale outdoor gathering coordinate; that was corrected and its failing
-test rerun successfully. The other 277 ordinary tests passed, as did clippy
-and the WASM/client builds. No new on-chain wallet test was performed.
+Build with `python scripts/build-yard.py`, derive collision with
+`python scripts/derive-maps.py yard`, then bake using `scripts/bake-light.py`.
+MAP_VERSION is 32. The generated map has 5,218 brushes, 42 spawn points and
+30 seats. Eighteen stair approach cases (three per flight, without jumping),
+all-spawn connectivity and thirty-player warm-up gathering pass. The warm-up
+centre is (0, -46.5). Full Rust verification: 281 ordinary tests passed,
+9 database tests ignored, clippy and WASM build passed. Money logic is
+unchanged; this does not verify live on-chain transactions.
+
+Protocol 23 carries the grenade thrower and remaining 280 ms wind-up.
+The grenade launches from the current authoritative position and aim at
+release; death before release cancels it, and repeated presses cannot prime
+two grenades simultaneously. The first-person pose lasts 520 ms, with a
+separate wrist/elbow solve and modeled segmented frag body. Explosion art
+uses a brief flash, grit and dust, without the old glowing ground ring.
+Magnified optics now have minimal reticles with a clear central aim point.
+
+Five original voiced reward lines are packaged MP3s generated locally with
+Apache-licensed Kokoro. They play on confirmed local kills through the master
+mix, with cooldown, repeat suppression and death/mute cancellation.
+`node --test client/reward-audio.test.mjs client/input.test.mjs` checks the
+audio guards and keyboard behavior. `scripts/build-reward-voices.py` records
+the generation process; model files remain ignored under `.artifacts/`.
+
+Operator IDs 5/6/7/8 are Ranger/Breacher/Engineer/Ghost, with different cap,
+helmet, hood, armor and utility equipment attached to the existing rig.
+Their original head equipment is filtered at every LOD, and small new kit
+is hidden with distance. These are improvements to the existing soldier,
+not exact new character sculpts: faces, garment cuts and reference-level
+texture fidelity remain unfinished. Do not claim exact image reproduction.
 
 The original Yard is preserved at `scripts/source/legacy-yard.glb` because
 Facility's generator imports its props. Do not run `restyle-yard.py` on the
-new authored Yard. `build-facility.py` now reads the preserved source.
+new authored Yard. `build-facility.py` reads the preserved source.
+The earlier user-approved Hunyuan Ranger experiment remains untextured,
+unrigged, ignored and unused by the game.
 
-Indoor metadata prevents outdoor rubbish and birds. Terminal paint uses
-clean procedural materials rather than the old rusty photo sets. Glass has
-no depth writes or cast shadows. Map extras carry authored sign positions.
-The light bake completed after the architectural revision; a later cosmetic
-cargo chamfer pass changed surfaces by a few centimetres within existing
-collision envelopes. Re-bake before releasing the finished art.
-
-The procedural operator prototype was removed after reference comparison.
-Existing skins and soldier remain. A user-approved external Ranger geometry
-test is local under ignored `.artifacts/`; no generated character was added
-to runtime or claimed as production-ready.
+Browser QA checks all five voice files decode, overlap/mute behavior, the
+grenade hand pose and explosion stages. Delayed remote throw snapshots use
+the server's remaining wind-up and hide the held prop when flight begins.
+Operator kit geometry is 56-67% smaller after reducing tiny hardware detail.
+Prop pieces sharing a material are merged; plants/cases are grouped into
+24 m cells for culling. The eight-player hardware check on Intel Iris Xe
+renders the four kits without JavaScript errors, but high/ultra remain
+expensive. These measurements do not establish a 60 FPS target; further
+geometry/shadow optimization remains needed on integrated graphics.
 
 ## October 14: reported west approach and scope transition
 

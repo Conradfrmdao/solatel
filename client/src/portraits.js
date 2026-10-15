@@ -17,6 +17,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { buildGun } from './guns.js';
 import { CLOTH_MATERIAL, dressed } from './skins.js';
+import { dressOperator, operatorGeometry } from './operators.js';
 
 const WIDTH = 480;
 const HEIGHT = 170;
@@ -143,13 +144,15 @@ export async function soldierPortraits(template, pose, skins, { scale = 1, type 
     body.traverse((node) => {
       if (node.isSkinnedMesh) {
         node.frustumCulled = false;
-        meshes.push([node, node.material]);
+        meshes.push([node, node.material, node.geometry]);
       }
     });
     for (const skin of skins) {
-      for (const [mesh, plain] of meshes) {
+      for (const [mesh, plain, geometry] of meshes) {
         mesh.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
+        mesh.geometry=operatorGeometry(geometry,plain.name,skin);
       }
+      dressOperator(body,skin);
       renderer.clear();
       renderer.render(scene, camera);
       out.set(skin, canvas.toDataURL(type, quality));

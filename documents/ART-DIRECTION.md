@@ -19,16 +19,22 @@ rejected the first in-engine approximation and requested the same visual
 quality and clothing as those images. Naming a recolored soldier Ranger,
 Breacher, Ghost or Engineer does not fulfill that request.
 
-Current work is on `codex/indoor-yard-reference`, separate from live main.
-The draft includes a 96 x 144 m indoor Yard, four stairs and side galleries,
-freight cases, service modules, machined equipment, glass roof, indoor tree
-islands, authored signs and dry daylight. Captures in `art-review/` show the
-actual game, not image-generated substitutes. The layout and materials are
-closer to the references, but environment detail and shading still fall
-short of the approved concept fidelity. Do not describe this as finished.
+The implemented Yard now measures 72 x 108 m, with six stairs, two bridges,
+side galleries, upper warehouse rooms, detailed structural columns and
+concrete roof bands separated by skylights. Freight stacks, machinery,
+polished metal screens, planters and work stations interrupt sightlines.
+Warm daylight, locally packed PBR props and a scanned floor replace the
+sparse early draft. Captures in `art-review/` are from the actual game.
+The layout follows the combined direction, but it is not an exact recreation
+of the concept image's geometry, reflections or photorealistic detail.
 
-Procedural operator equipment was tried, rendered, rejected as too crude
-and removed from the runtime. The existing skins are still in place.
+The first rejected equipment prototype was removed. The later revision
+uses curved caps/helmets/hoods and fitted pouches, armor and tools tied to the
+existing animated bones. Ranger, Breacher, Ghost and Engineer have distinct
+kit silhouettes, but still share the source character's face and garment
+sculpt. The four menu images show the actual implementation. Exact concept
+faces, sleeve cuts, clothing folds and texture fidelity remain unfinished.
+
 With the user's explicit permission to upload the generated Ranger image
 to Tencent's public Hunyuan3D Hugging Face demo, a raw geometry test succeeded
 (381,556 triangles). Textured generation was refused by the demo's GPU
@@ -44,7 +50,10 @@ here that completes all those steps or guarantees exact image fidelity.
 The public demo's license also needs consideration before any output is
 distributed: https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE.
 
-Immediate bug reports: aim transition overlays the optic while the gun model
-still occupies its lens; Arena screenshot at (-13.6, 0.9, 15) faces +Z toward
-the old up2 switchback's vertical landing. Reproduce that exact approach,
-without jumping, rather than relying only on tests of other ramps.
+Fixed regressions to preserve: the aim transition now hides the gun when
+the scope overlay becomes visible. The Arena screenshot at (-13.6, 0.9, 15)
+faces +Z toward the retired up2 switchback's vertical landing. Its replacement
+and connected landing have a regression test from that exact approach and
+two nearby approaches, without jumping. Yard's six stair routes have eighteen
+walk-up approach cases. Performance still needs further work on integrated
+graphics; the detailed map is not a verified 60 FPS experience at high/ultra.

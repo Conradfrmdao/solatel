@@ -13,7 +13,7 @@
 // browser never delivering it?
 
 import { LinkState } from './net.js';
-import { SIM, WEAPONS, roundPath } from './sim.js';
+import { SIM, WEAPONS } from './sim.js';
 
 export class Hud {
   constructor(root) {
@@ -980,83 +980,24 @@ const CAUSE_NAMES = {
  *  stronger optic has a smaller exit pupil and is a smaller circle. */
 const EYEPIECE = { x2: 0.44, x3: 0.4, x4: 0.37 };
 
-/** Ranges the holdover marks are drawn for, in metres. */
-const HOLDOVER = [200, 300, 400];
-
-/**
- * How far below the middle of the screen, in pixels, a round from `weapon`
- * lands at `distance` metres, with the view `fov` degrees tall and `height`
- * pixels: its drop under the line of sight, from the shared flight with
- * the sights' zero, turned into an angle and that angle into pixels.
- */
-function holdover(weapon, distance, fov, height) {
-  const gun = WEAPONS[weapon] ?? WEAPONS.rifle;
-  const speed = gun.muzzleVelocity;
-  const up = gun.zeroAngle;
-  // Level, from nowhere near anything: drop is a property of the round.
-  const path = roundPath(weapon, [0, 1000, 0], [0, Math.sin(up) * speed, -Math.cos(up) * speed], 2);
-  for (let i = 3; i < path.length; i += 3) {
-    const run = -path[i + 2];
-    if (run >= distance) {
-      const before = -path[i - 1];
-      const f = (distance - before) / Math.max(1e-6, run - before);
-      const y = path[i - 2] + (path[i + 1] - path[i - 2]) * f - 1000;
-      const angle = Math.atan2(-y, distance);
-      return (Math.tan(angle) / Math.tan(((fov / 2) * Math.PI) / 180)) * (height / 2);
-    }
-  }
-  return null;
-}
-
-/** The reticle of `rig`'s optic, as SVG drawn about the middle of the
- *  screen, for an eyepiece `radius` pixels across. */
-function reticle(rig, radius, height, fov) {
-  const ink = '#0b0c0d';
-  const glow = 'rgba(255, 70, 40, 0.95)';
-  const r = radius;
+/** Clear centre, restrained fine lines and no numbered ballistic ladder. */
+function reticle(rig, radius) {
+  const ink = 'rgba(15,19,20,0.82)';
+  const red = 'rgba(237,91,65,0.9)';
   const parts = [];
-  const line = (x1, y1, x2, y2, w = 2, colour = ink) =>
-    parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colour}" stroke-width="${w}" />`);
-  const marks = () => {
-    for (const range of HOLDOVER) {
-      const y = holdover(rig.weapon, range, fov, height);
-      if (y === null || y > r * 0.9) continue;
-      const w = Math.max(6, r * (0.05 + range / 4000));
-      line(-w, y, w, y, 2);
-      parts.push(`<text x="${w + 6}" y="${y + 4}" font-size="12" font-family="Barlow, sans-serif" fill="${ink}">${range / 100}</text>`);
-    }
-  };
-  if (rig.weapon === 'sniper') {
-    // A duplex crosshair: heavy posts from the edge, fine lines across the
-    // middle, and the holdover marks down the vertical.
-    line(-r, 0, -r * 0.35, 0, 6);
-    line(r * 0.35, 0, r, 0, 6);
-    line(0, r * 0.35, 0, r, 6);
-    line(0, -r, 0, -r * 0.35, 6);
-    line(-r * 0.35, 0, r * 0.35, 0, 1.4);
-    line(0, -r * 0.35, 0, r * 0.35, 1.4);
-    marks();
-  } else if (rig.optic === 'x2') {
-    // A lit ring and dot, quick to put on somebody close.
-    parts.push(`<circle cx="0" cy="0" r="${Math.max(10, r * 0.09)}" fill="none" stroke="${glow}" stroke-width="2" />`);
-    parts.push(`<circle cx="0" cy="0" r="2.4" fill="${glow}" />`);
-  } else if (rig.optic === 'x3') {
-    // A lit horseshoe round the point of aim, a dot, and the holdover
-    // marks under it.
-    const h = Math.max(12, r * 0.1);
-    parts.push(`<path d="M ${-h} ${h * 0.4} A ${h} ${h} 0 1 1 ${h} ${h * 0.4}" fill="none" stroke="${glow}" stroke-width="2.2" />`);
-    parts.push(`<circle cx="0" cy="0" r="2.2" fill="${glow}" />`);
-    line(0, h * 1.2, 0, r * 0.75, 1.4);
-    marks();
+  const line = (x1,y1,x2,y2,w=1) => parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink}" stroke-width="${w}" />`);
+  const dot = () => parts.push(`<circle cx="0" cy="0" r="1.65" fill="${red}" />`);
+  if (rig.optic === 'x2' && rig.weapon !== 'sniper') {
+    parts.push(`<circle cx="0" cy="0" r="10" fill="none" stroke="${red}" stroke-width="1.1" />`);
+    dot();
+  } else if (rig.optic === 'x3' && rig.weapon !== 'sniper') {
+    parts.push(`<path d="M -10 5 A 11 11 0 1 1 10 5" fill="none" stroke="${red}" stroke-width="1.2" />`);
+    dot();
   } else {
-    // A lit chevron whose tip is the point of aim, and the holdover marks
-    // down the post under it.
-    const c = Math.max(10, r * 0.07);
-    parts.push(`<path d="M ${-c} ${c * 1.1} L 0 0 L ${c} ${c * 1.1}" fill="none" stroke="${glow}" stroke-width="2.6" stroke-linejoin="miter" />`);
-    line(0, c * 1.3, 0, r * 0.75, 1.6);
-    line(-r, 0, -r * 0.4, 0, 1.6);
-    line(r * 0.4, 0, r, 0, 1.6);
-    marks();
+    const reach = Math.min(radius * .3, rig.weapon === 'sniper' ? 72 : 36);
+    line(-reach,0,-4,0); line(4,0,reach,0);
+    line(0,-reach,0,-4); line(0,4,0,reach);
+    dot();
   }
   return parts.join('');
 }

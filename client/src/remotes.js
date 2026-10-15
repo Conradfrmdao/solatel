@@ -76,6 +76,8 @@ import { RIFLE as WEAPON } from './weapons.js';
 import { lightMaterial } from './light.js';
 import { SnapshotClock } from './snapclock.js';
 import { CLOTH_MATERIAL, dressed } from './skins.js';
+import { dressOperator, operatorGeometry } from './operators.js';
+import { makeGrenade } from './grenade-model.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -162,11 +164,9 @@ const RIFLE = {
 const RELOAD_CANT = 0.65;
 const RELOAD_DIP = 0.4;
 
-/** A throw as the body shows it, and how long it takes. Nobody is told who
- *  threw a grenade; one appearing at a player's hand says it. */
+/** A throw as the body shows it; the snapshot names who is winding up. */
 const THROW_SECONDS = 0.7;
 const THROW_DIP = 0.95;
-const THROW_REACH = 3;
 
 /** How far the legs turn toward the way a player is moving, and how fast. */
 const LEG_TURN_LIMIT = 1.22;
@@ -412,7 +412,7 @@ export class Remotes {
     this.clock = new SnapshotClock(SIM.interpolationDelayMs);
     /** Grenades in the last snapshot, to tell a new one from one in flight. */
     this._grenades = null;
-    /** Who has just thrown one, by id, waiting to be posed. */
+    /** New throws waiting to be posed, with their observed release progress. */
     this.throws = new Map();
     /** Where reloads started this frame, for the sound. */
     this.reloads = [];
@@ -570,14 +570,36 @@ export class Remotes {
     if (this.clock.note(snapshot.server_time_ms, nowMs)) this.history.length = 0;
     const at = snapshot.server_time_ms;
     this.history.push({ at, players: snapshot.players });
-    // A grenade that was not there last time has just left somebody's hand,
-    // and the nearest pair of eyes is whose.
+    // Start at the phase the server observed, not at the beginning of a new
+    // windup. A delayed first snapshot may already show it in flight.
     const live = snapshot.live_grenades ?? [];
     if (this._grenades) {
       for (const grenade of live) {
-        if (this._grenades.has(grenade.id)) continue;
-        const thrower = nearestThrower(snapshot.players, grenade.position, this.selfId);
-        if (thrower) this.throws.set(thrower, nowMs);
+        const thrower = grenade.thrower;
+        if (!thrower || thrower === this.selfId) continue;
+        const remaining = Math.max(0, Math.min(SIM.grenadeWindup, grenade.releases_in_ms / 1000));
+        if (!this._grenades.has(grenade.id)) {
+          this.throws.set(thrower, {
+            id: grenade.id,
+            startedAt: nowMs - (SIM.grenadeWindup - remaining) * 1000,
+            released: remaining === 0,
+          });
+        }
+        if (remaining === 0) {
+          const queued = this.throws.get(thrower);
+          if (queued?.id === grenade.id) {
+            queued.startedAt = Math.min(queued.startedAt, nowMs - SIM.grenadeWindup * 1000);
+            queued.released = true;
+          }
+          const player = this.players.get(thrower);
+          if (player?.throwGrenadeId === grenade.id && player.throwAt !== undefined) {
+            // World grenades are drawn from this same snapshot. Never leave
+            // a duplicate in the hand while the airborne one is visible.
+            player.throwAt = Math.min(player.throwAt, player.age - SIM.grenadeWindup);
+            player.throwReleased = true;
+            player.grenade.visible = false;
+          }
+        }
       }
     }
     this._grenades = new Set(live.map((g) => g.id));
@@ -634,7 +656,7 @@ export class Remotes {
       // The dead are drawn by `kill`, not by the snapshot, which still names
       // them for the interpolation delay after the server stopped.
       if (player.diedAt !== null) continue;
-      this._pose(player, entry, dt, eye);
+      this._pose(player, entry, dt, eye, nowMs);
     }
 
     for (const [id, player] of this.players) {
@@ -662,6 +684,7 @@ export class Remotes {
     }
     actions.death.reset().setEffectiveTimeScale(headshot ? 1.2 : 1).fadeIn(0.08).play();
     player.rifle.visible = false;
+    player.grenade.visible = false;
     player.flashSprite.visible = false;
     player.body.rotation.set(0, 0, 0);
     root.rotation.set(0, root.rotation.y, 0);
@@ -762,6 +785,13 @@ export class Remotes {
       const plain = node.userData.plain;
       node.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
     });
+    for(const detail of player.details) {
+      if(!detail.mesh.isSkinnedMesh)continue;
+      detail.originalLevels??=detail.levels;
+      detail.levels=detail.originalLevels.map(g=>operatorGeometry(g,detail.mesh.userData.plain?.name,skin));
+      detail.mesh.geometry=detail.levels[player.level];
+    }
+    dressOperator(player.body,skin);
   }
 
   /** Footfalls since this was last asked: `{ at: [x, y, z], gait }`, where
@@ -855,6 +885,9 @@ export class Remotes {
     const muzzle = new THREE.Object3D();
     muzzle.position.copy(RIFLE.muzzle);
     rifle.add(muzzle);
+    const grenade = makeGrenade({ held: true });
+    grenade.visible = false;
+    root.add(grenade);
     const flashSprite = new THREE.Sprite(this.flashMaterial.clone());
     flashSprite.scale.setScalar(0.35 / RIFLE.scale);
     flashSprite.visible = false;
@@ -873,7 +906,7 @@ export class Remotes {
       .map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
     return {
-      id, root, body, mixer, actions, bones, rifle, muzzle, flashSprite, hipsScale, clean, details,
+      id, root, body, mixer, actions, bones, rifle, grenade, muzzle, flashSprite, hipsScale, clean, details,
       gun: null,
       gunKey: null,
       weapon: 'rifle',
@@ -911,7 +944,7 @@ export class Remotes {
     };
   }
 
-  _pose(player, entry, dt, eye) {
+  _pose(player, entry, dt, eye, nowMs) {
     player.age += dt;
     const { root, body, actions } = player;
     root.position.set(entry.x, entry.y - SIM.halfExtentY, entry.z);
@@ -961,11 +994,19 @@ export class Remotes {
     }
     player.reloading = entry.reloading;
     if (this.throws.has(player.id)) {
+      const pending = this.throws.get(player.id);
       this.throws.delete(player.id);
-      player.throwAt = player.age;
+      const elapsed = Math.max(0, (nowMs - pending.startedAt) / 1000);
+      player.throwAt = player.age - elapsed;
+      player.throwGrenadeId = pending.id;
+      player.throwReleased = pending.released || elapsed >= SIM.grenadeWindup;
     }
 
     const distance = eye ? root.position.distanceTo(eye) : 0;
+    for(const part of player.body.userData.operatorParts??[]) {
+      part.visible=distance<part.userData.operatorDistance;
+      part.castShadow=distance<18;
+    }
 
     // Fewer triangles further away (see `DETAIL`).
     const level = detailFor(distance, player.level);
@@ -1147,6 +1188,7 @@ export class Remotes {
    * right hand, and the left arm solved onto where it has to be.
    */
   _act(player, entry, aim, dir) {
+    player.grenade.visible = false;
     const reload = player.reloading ? (player.age - player.reloadAt) / this._reloadSeconds(player) : null;
     const points = POINTS[player.weapon] ?? POINTS.rifle;
     const thrown = player.throwAt === undefined ? null : (player.age - player.throwAt) / THROW_SECONDS;
@@ -1168,17 +1210,25 @@ export class Remotes {
       const release = _goal.copy(_shoulder).addScaledVector(_fwd, 0.55).addScaledVector(_up, 0.22);
       let weight;
       let target;
-      if (thrown < 0.4) {
-        weight = ease(thrown / 0.2);
+      const releaseAt = SIM.grenadeWindup / THROW_SECONDS;
+      if (thrown < releaseAt * .65) {
+        weight = ease(thrown / (releaseAt * .65));
         target = windup;
-      } else if (thrown < 0.58) {
+      } else if (thrown < releaseAt) {
         weight = 1;
-        target = windup.lerp(release, ease((thrown - 0.4) / 0.18));
+        target = windup.lerp(release, ease((thrown - releaseAt * .65) / (releaseAt * .35)));
       } else {
-        weight = 1 - ease((thrown - 0.58) / 0.42);
+        weight = 1 - ease((thrown - releaseAt) / (1 - releaseAt));
         target = release;
       }
       this._reachLeft(player, target, weight);
+      if (!player.throwReleased && thrown < releaseAt && bones.handR && bones.handL) {
+        palms(bones, _a, _b);
+        player.grenade.position.copy(_b);
+        player.root.worldToLocal(player.grenade.position);
+        player.grenade.rotation.set(.2, 0, -.15);
+        player.grenade.visible = true;
+      }
       return;
     }
 
@@ -1398,28 +1448,6 @@ function fallOf(template, clip) {
   mixer.uncacheRoot(body);
   const fall = new THREE.Vector3(end.x - start.x, 0, end.z - start.z);
   return fall.lengthSq() > 1e-4 ? fall.normalize() : null;
-}
-
-/**
- * Whose hand a grenade that has just appeared left: the living player, not
- * this one, whose eyes are nearest it and within `THROW_REACH`. The server
- * does not say, and does not need to - the grenade starts at the thrower's
- * eye, and at twenty snapshots a second it is still beside them.
- */
-function nearestThrower(players, at, selfId) {
-  let best = null;
-  let bestDistance = THROW_REACH;
-  for (const player of players ?? []) {
-    if (player.id === selfId || player.state.health <= 0) continue;
-    const p = player.state.position;
-    const eye = p[1] + (player.state.crouched ? SIM.eyeOffset - SIM.crouchDrop : SIM.eyeOffset);
-    const distance = Math.hypot(at[0] - p[0], at[1] - eye, at[2] - p[2]);
-    if (distance < bestDistance) {
-      best = player.id;
-      bestDistance = distance;
-    }
-  }
-  return best;
 }
 
 /** The unit vector a player with this yaw and pitch is looking along - the

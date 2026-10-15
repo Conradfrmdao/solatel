@@ -66,9 +66,9 @@ use solatel_protocol::{
         TICK_DT, TICK_HZ, TableStatus, Tier,
     },
     sim::{
-        Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HitRegion, InputCommand, KILL_CREDIT_SECONDS,
-        MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS, Zone, grenade,
-        hitscan, map,
+        Buttons, GRENADE_FUSE, GRENADE_WINDUP, GRENADES_PER_LIFE, HitRegion, InputCommand,
+        KILL_CREDIT_SECONDS, MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS,
+        Zone, grenade, hitscan, map,
         weapon::{Loadout, Round, Slot, Weapon},
         zone_at, zone_damage_per_second,
     },
@@ -218,7 +218,7 @@ pub const LOAD_WAIT: f32 = 30.0;
 /// spawn (`disperse_if_live`), so where they wandered meanwhile buys nothing.
 const GATHERINGS: [(&str, f32, f32); 3] = [
     ("arena", -10.2, 13.0),
-    ("yard", 0.0, -62.0),
+    ("yard", 0.0, -46.5),
     ("facility", -89.2, 17.2),
 ];
 
@@ -1039,6 +1039,8 @@ struct LiveGrenade {
     id: u32,
     thrower: PlayerId,
     flight: grenade::Flight,
+    releases_at: f32,
+    launched: bool,
     goes_off_at: f32,
 }
 
@@ -2592,6 +2594,13 @@ impl Lobby {
         let Some(game) = self.matches.get_mut(&match_id) else {
             return;
         };
+        if game
+            .grenades
+            .iter()
+            .any(|g| g.thrower == thrower && !g.launched)
+        {
+            return;
+        }
         let Some(body) = game.bodies.get_mut(&thrower) else {
             return;
         };
@@ -2606,7 +2615,9 @@ impl Lobby {
             id,
             thrower,
             flight,
-            goes_off_at: now + GRENADE_FUSE,
+            releases_at: now + GRENADE_WINDUP,
+            launched: false,
+            goes_off_at: now + GRENADE_WINDUP + GRENADE_FUSE,
         });
     }
 
@@ -2617,7 +2628,23 @@ impl Lobby {
         };
         let ground = game.map;
         let mut blasts = Vec::new();
+        let bodies = &game.bodies;
         game.grenades.retain_mut(|live| {
+            if !live.launched {
+                let Some(body) = bodies.get(&live.thrower) else {
+                    return false;
+                };
+                if !body.state.is_alive() {
+                    return false;
+                }
+                if now < live.releases_at {
+                    live.flight.position = body.state.eye_position();
+                    return true;
+                }
+                live.flight = grenade::Flight::thrown_by(&body.state, ground);
+                live.launched = true;
+                live.goes_off_at = now + GRENADE_FUSE;
+            }
             live.flight.step(ground, TICK_DT);
             if now >= live.goes_off_at {
                 blasts.push((live.thrower, live.flight.position));
@@ -3312,6 +3339,14 @@ impl Lobby {
             .map(|g| GrenadeSnapshot {
                 id: g.id,
                 position: g.flight.position,
+                thrower: g.thrower,
+                releases_in_ms: if g.launched {
+                    0
+                } else {
+                    ((g.releases_at - self.tick as f32 * TICK_DT) * 1000.0)
+                        .ceil()
+                        .max(1.0) as u16
+                },
             })
             .collect();
 

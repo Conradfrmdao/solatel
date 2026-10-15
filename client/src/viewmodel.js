@@ -49,6 +49,7 @@ import { HAND, holdMatrix, palms } from './grip.js';
 import { OPTICS, SIM, wrapAngle } from './sim.js';
 import { RIFLE, feelFor } from './weapons.js';
 import { CLOTH_MATERIAL, dressed } from './skins.js';
+import { makeGrenade } from './grenade-model.js';
 
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
 const KEY_LIGHT = 2.4;
@@ -291,7 +292,7 @@ const WRIST_STEP = 0.1;
 const SLEEVE = 0.07;
 
 /** How long the rifle is out of the way for a throw. */
-const THROW_SECONDS = 0.65;
+const THROW_SECONDS = 0.52;
 
 /** Metres a second at which the bob, and the lag of a gun carried sideways,
  *  are at their fullest: a run. */
@@ -413,6 +414,12 @@ export class Viewmodel {
     /** Cases still to come out of a bolt action: when, from this scene. */
     this.ejections = [];
     this.scene = new THREE.Scene();
+    this.throwMesh = makeGrenade({ held: true });
+    this.throwMesh.visible = false;
+    this.scene.add(this.throwMesh);
+    this.throwWrist = new THREE.Vector3();
+    this.throwGrip = new THREE.Quaternion();
+    this.throwStart = new THREE.Vector3();
     // Angle and aspect are set from the world camera's hip angle, so the
     // weapon sits in the same perspective as everything else. With the
     // sights up it narrows by its own factor, `ads.weaponZoom`: the sights
@@ -1092,6 +1099,26 @@ export class Viewmodel {
         _target.multiplyMatrices(rifle, limb.grip);
       }
       _target.decompose(_wrist, _grip, _scaleOut);
+      const sinceThrow = this.throwAt === undefined ? Infinity : this.time - this.throwAt;
+      if (limb.side === 'left' && sinceThrow < THROW_SECONDS) {
+        const release = SIM.grenadeWindup;
+        if (sinceThrow < release * .5) {
+          const p = smooth(sinceThrow / (release * .5));
+          this.throwWrist.copy(this.throwStart).lerp(_hang.set(-.24,-.10,-.36),p);
+        } else if (sinceThrow < release) {
+          const p = smooth((sinceThrow - release * .5) / (release * .5));
+          this.throwWrist.set(-.24 + .11 * p,-.10 + .115 * p,-.36 - .15 * p);
+        } else {
+          const p = smooth(Math.min(1, (sinceThrow - release) / .08));
+          this.throwWrist.set(-.13 + .04 * p,.015 - .19 * p,-.51 - .05 * p);
+        }
+        const recover = smooth(Math.max(0, (sinceThrow - release - .08) / (THROW_SECONDS - release - .08)));
+        _wrist.lerp(this.throwWrist, 1 - recover);
+        // The wrist stays independent of the rifle rotating down beneath it.
+        _grip.slerp(this.throwGrip, 1 - recover);
+        if (limb.fingers?.length) applyCurls(limb.fingers,
+          limb.fingers.map(f => sinceThrow < release ? (f.finger==='Thumb' ? 1.12 : 1.24) : .12 + .75 * recover));
+      }
 
       // From the wrist to the elbow: in line with the hand, turned towards
       // where the elbow hangs by `WRIST_BEND` - and on towards it, a step at
@@ -1119,6 +1146,18 @@ export class Viewmodel {
         if (turn >= most || (!seen(_elbow) && _elbow.y <= _wrist.y)) break;
         turn = Math.min(most, turn + WRIST_STEP);
       }
+      if(limb.side==='left' && sinceThrow<THROW_SECONDS) {
+        const release=SIM.grenadeWindup;
+        const recover=smooth(Math.max(0,(sinceThrow-release-.08)/(THROW_SECONDS-release-.08)));
+        const enter=smooth(Math.min(1,sinceThrow/.08));
+        _reach.set(-.18,-.90,.5).normalize();
+        _lower.lerp(_reach,enter*(1-recover)).normalize();
+        _elbow.copy(_wrist).addScaledVector(_lower,limb.lowerLength);
+        // A neutral wrist aligned with the forearm; keep the elbow below
+        // the view rather than exposing a folded upper sleeve to the camera.
+        _q.setFromUnitVectors(_upper,_lower);
+        _grip.premultiply(_q);
+      }
       // The upper arm from the elbow towards the shoulder, at its length.
       _upper.subVectors(limb.shoulder, _elbow).normalize();
       _shoulder.copy(_elbow).addScaledVector(_upper, limb.upperLength);
@@ -1144,13 +1183,19 @@ export class Viewmodel {
       setWorldRotation(arm, _armTurn);
       setWorldRotation(fore, _foreTurn);
       setWorldRotation(hand, _grip);
+      if (limb.side === 'left' && sinceThrow < SIM.grenadeWindup) {
+        hand.updateWorldMatrix(true, false);
+        this.throwMesh.position.copy(limb.frame.centre).applyMatrix4(hand.matrixWorld);
+        this.throwMesh.rotation.set(.2, .15, -.15);
+        this.throwMesh.visible = true;
+      }
     }
   }
 
   /** The player is holding the aim button, or has let go. Never while
    *  guns are being changed. */
   setAiming(on) {
-    this.aiming = on && !this.switching;
+    this.aiming = on && !this.switching && !this.throwing;
   }
 
   /**
@@ -1164,11 +1209,21 @@ export class Viewmodel {
     this.reloadSeconds = seconds;
   }
 
-  /** A grenade left the player's hand: the rifle drops out of the way and
-   *  comes back. */
+  /** Begin the throw: the left hand winds up and releases on the shared
+   *  server timer while the right hand lowers and recovers the weapon. */
   onThrow() {
+    const left=this.arms?.find(limb=>limb.side==='left');
+    if (left) {
+      left.hand.getWorldQuaternion(this.throwGrip);
+      left.hand.getWorldPosition(this.throwStart);
+    }
     this.throwAt = this.time;
+    this.aimProgress = 0;
+    this.aim = 0;
+    this.aiming = false;
   }
+
+  get throwing() { return this.throwAt !== undefined && this.time - this.throwAt < THROW_SECONDS; }
 
   /** The eye's height over the feet, which crouching changes. Casings land
    *  on the floor under the player, and this is how far down it is. */
@@ -1231,9 +1286,14 @@ export class Viewmodel {
    * behind, which lives in the world.
    */
   update(dt, yaw, pitch, speed, onGround, eye) {
+    this.throwMesh.visible = false;
     this.sprintBlend = damp(this.sprintBlend, this.sprinting ? 1 : 0, 12, dt);
     const c = this.config;
     this.time += dt;
+    if (this.throwAt !== undefined && !this.throwing) {
+      this.throwAt = undefined;
+      this._retargetArms();
+    }
 
     if (eye) {
       if (this.hasEye && dt > 0) {

@@ -5,8 +5,7 @@
 // lighting a bonfire. What a frag does, in the order the eye takes it in:
 //
 // - a white flash, and the light of it on everything round;
-// - a fireball that rolls out and goes from white to orange to nothing in
-//   under half a second;
+// - a compact hot burst that fades within 180 ms;
 // - sparks and grit thrown out hard, falling as they go;
 // - a ring of dust shoved along the ground, and the shock of it;
 // - then smoke, pale and lit by the fire for a moment and grey after, that
@@ -28,10 +27,10 @@ const LIFE = 4.2;
  *  pool is reused oldest first, so this is plenty. */
 const POOL = 4;
 
-const FIRE = 9;
-const SMOKE = 16;
+const FIRE = 5;
+const SMOKE = 12;
 const DUST = 12;
-const SPARKS = 44;
+const SPARKS = 28;
 const CHUNKS = 14;
 
 /** The light of the flash, in three's units for a point light. */
@@ -247,11 +246,11 @@ class Blast {
     };
 
     for (const f of this.fire) {
-      outward(f.velocity, 1, 0.05).multiplyScalar(3 + random() * 6);
+      outward(f.velocity, 1, 0.05).multiplyScalar(2 + random() * 3);
       f.sprite.position.set(0, 0.2, 0);
       f.spin = (random() - 0.5) * 3;
       f.sprite.material.rotation = random() * Math.PI * 2;
-      f.size = 1.6 + random() * 1.6;
+      f.size = .55 + random() * .65;
       f.sprite.visible = true;
     }
     for (const s of this.smoke) {
@@ -262,14 +261,14 @@ class Blast {
       s.sprite.position.set((random() - 0.5) * 0.6, 0.3 + random() * 0.5, (random() - 0.5) * 0.6);
       s.spin = (random() - 0.5) * 0.5;
       s.sprite.material.rotation = random() * Math.PI * 2;
-      s.size = 3.4 + random() * 2.6;
-      s.life = LIFE * (0.65 + random() * 0.35);
+      s.size = 1.6 + random() * 1.8;
+      s.life = LIFE * (0.5 + random() * 0.3);
       s.delay = random() * 0.08;
       s.sprite.visible = false;
     }
     for (const d of this.dust) {
       const a = random() * Math.PI * 2;
-      const speed = 7 + random() * 5;
+      const speed = 5 + random() * 4;
       d.velocity.set(Math.cos(a) * speed, 0.4 + random() * 0.8, Math.sin(a) * speed);
       d.sprite.position.set(0, (ground ?? -0.2) + 0.35, 0);
       d.size = 1.8 + random() * 1.6;
@@ -285,11 +284,11 @@ class Blast {
       chunk.position.set(0, 0.15, 0);
       chunk.spin.set(random() * 20 - 10, random() * 20 - 10, random() * 20 - 10);
       chunk.rotation.set(random() * 6, random() * 6, random() * 6);
-      chunk.size = 0.04 + random() * 0.09;
+      chunk.size = 0.015 + random() * 0.045;
       chunk.resting = false;
     }
     this.ring.position.set(0, (ground ?? 0) + 0.06, 0);
-    this.ring.visible = ground !== null;
+    this.ring.visible = false; // Ground shock reads as dust, not a luminous circle.
   }
 
   /** Steps it on; the light's strength from this blast, for whoever owns
@@ -304,19 +303,19 @@ class Blast {
     }
 
     // The flash: a tenth of a second, very bright, so the bloom takes it.
-    const flash = Math.max(0, 1 - t / 0.11);
+    const flash = Math.max(0, 1 - t / 0.065);
     this.flash.visible = flash > 0;
     if (flash > 0) {
-      this.flash.scale.setScalar(3 + (1 - flash) * 4);
+      this.flash.scale.setScalar(1.2 + (1 - flash) * 1.8);
       this.flash.material.color.setScalar(5 * flash * flash);
       this.flash.material.opacity = 1;
     }
 
-    // The fireball: rolls out, slows, cools from white through orange to
+    // The brief hot burst: expands, slows, cools from white through orange to
     // nothing. Colour carries the fade - black adds nothing.
     for (const f of this.fire) {
       if (!f.sprite.visible) continue;
-      if (t > 0.5) {
+      if (t > 0.18) {
         f.sprite.visible = false;
         continue;
       }
@@ -325,11 +324,11 @@ class Blast {
       f.sprite.position.addScaledVector(f.velocity, dt);
       f.sprite.material.rotation += f.spin * dt;
       const grow = 1 - Math.exp(-t / 0.08);
-      f.sprite.scale.setScalar(0.5 + f.size * grow);
-      const heat = Math.max(0, 1 - t / 0.5);
+      f.sprite.scale.setScalar(0.2 + f.size * grow);
+      const heat = Math.max(0, 1 - t / 0.18);
       const c = f.sprite.material.color;
-      if (t < 0.12) c.setRGB(3.2, 2.6, 1.6);
-      else if (t < 0.28) c.setRGB(2.4, 1.1, 0.35);
+      if (t < 0.045) c.setRGB(3.2, 2.9, 2.3);
+      else if (t < 0.10) c.setRGB(2.4, 1.6, 0.8);
       else c.setRGB(1.2, 0.4, 0.1);
       c.multiplyScalar(heat * heat);
       f.sprite.material.opacity = 1;
@@ -356,7 +355,7 @@ class Blast {
       const c = s.sprite.material.color;
       c.copy(this._smokeLit).lerp(WARM, warm * 0.8);
       const life = own / s.life;
-      s.sprite.material.opacity = Math.min(1, own / 0.06) * 0.62 * (1 - life ** 1.6);
+      s.sprite.material.opacity = Math.min(1, own / 0.06) * 0.46 * (1 - life ** 1.6);
     }
 
     // Dust shoved out along the ground.
@@ -424,7 +423,7 @@ class Blast {
     this.chunkMesh.instanceMatrix.needsUpdate = true;
 
     // The light: the flash, and the fireball's glow after it.
-    return FLASH_LIGHT * Math.exp(-t / 0.05) + 110 * Math.max(0, 1 - t / 0.45);
+    return FLASH_LIGHT * Math.exp(-t / 0.05) + 55 * Math.max(0, 1 - t / 0.18);
   }
 }
 

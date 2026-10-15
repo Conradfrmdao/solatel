@@ -77,23 +77,23 @@ export const SKINS = [
     scale: 3.6, gear: '#4b5244',
   },
   {
-    id: 5, name: 'Monsoon', blurb: 'Olive and wet stone, broken into splinters by the rain.',
-    pattern: SPLINTER, colours: ['#5d6545', '#757870', '#37432f', '#8a8463'],
+    id: 5, name: 'Ranger', blurb: 'Olive field uniform, patrol cap, headset and light carrier.',
+    pattern: BLOTS, colours: ['#5d604c', '#616350', '#565b47', '#5a5d49'],
     scale: 3.2, gear: '#4a4f3a',
   },
   {
-    id: 6, name: 'Ironclad', blurb: 'Gunmetal, mottled like forged plate.',
-    pattern: MOTTLE, colours: ['#565d64', '#6d747b', '#454b51', '#5f666d'],
+    id: 6, name: 'Breacher', blurb: 'Graphite assault armor, reinforced helmet and limb guards.',
+    pattern: MOTTLE, colours: ['#484d50', '#53595c', '#454b51', '#4d5358'],
     scale: 3.0, gear: '#2b2e33',
   },
   {
-    id: 7, name: 'Savanna', blurb: 'Dry grass with the shadows of the trees in it.',
-    pattern: STRIPES, colours: ['#a09670', '#8a7954', '#4f3c29', '#6d6244'],
+    id: 7, name: 'Engineer', blurb: 'Tan utility uniform, tool rig, cable roll and field pack.',
+    pattern: BLOTS, colours: ['#9a896a', '#928164', '#88775b', '#958568'],
     scale: 2.6, gear: '#76644a',
   },
   {
-    id: 8, name: 'Nightfall', blurb: 'Dusk violet and ink, in squares.',
-    pattern: PIXELS, colours: ['#5b5468', '#706077', '#3a3d4e', '#7a7586'],
+    id: 8, name: 'Ghost', blurb: 'Slate hood, goggles and a compact reconnaissance carrier.',
+    pattern: BLOTS, colours: ['#55565a', '#606165', '#4b4d52', '#56585d'],
     scale: 3.4, gear: '#2c2a33',
   },
   {

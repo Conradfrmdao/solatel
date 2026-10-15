@@ -1543,6 +1543,20 @@ def choose_spawns(brushes, low, high, origin, shape, standing, reachable,
     # The yard reported a hundred and twenty two regions for the same
     # reason. Anything whose underside is clear of a standing player on the
     # highest floor a spawn may sit on is not an obstacle, it is a ceiling.
+    # A ceiling is relative to the floor directly below it, not the highest
+    # floor allowed anywhere on the map. The latter split the new Yard into
+    # four regions at perfectly walkable 4.25 m crossing galleries.
+    ground_top = np.zeros(shape)
+    for bx0, _by0, bz0, bx1, by1, bz1 in brushes:
+        if by1 <= 0.0 or by1 > SPAWN_GROUND_CEILING:
+            continue
+        i0 = max(int(np.floor((bx0 - origin[0]) / CELL)), 0)
+        i1 = min(int(np.ceil((bx1 - origin[0]) / CELL)), shape[0])
+        j0 = max(int(np.floor((bz0 - origin[2]) / CELL)), 0)
+        j1 = min(int(np.ceil((bz1 - origin[2]) / CELL)), shape[1])
+        if i1 > i0 and j1 > j0:
+            np.maximum(ground_top[i0:i1, j0:j1], by1,
+                       out=ground_top[i0:i1, j0:j1])
     overhead = SPAWN_GROUND_CEILING + PLAYER_BAND
     obstructing = np.zeros(shape, bool)
     for bx0, by0, bz0, bx1, by1, bz1 in brushes:
@@ -1552,24 +1566,13 @@ def choose_spawns(brushes, low, high, origin, shape, standing, reachable,
         i1 = min(int(np.ceil((bx1 - origin[0]) / CELL)), shape[0])
         j0 = max(int(np.floor((bz0 - origin[2]) / CELL)), 0)
         j1 = min(int(np.ceil((bz1 - origin[2]) / CELL)), shape[1])
-        obstructing[i0:i1, j0:j1] = True
+        obstructing[i0:i1, j0:j1] |= by0 < ground_top[i0:i1, j0:j1] + PLAYER_BAND
 
     passable = ~grow_square(obstructing, 1)
     edge = int(np.ceil(SPAWN_EDGE_MARGIN / CELL))
     passable[:edge, :] = passable[-edge:, :] = False
     passable[:, :edge] = passable[:, -edge:] = False
 
-    ground_top = np.zeros(shape)
-    for bx0, _by0, bz0, bx1, by1, bz1 in brushes:
-        if by1 <= 0.0 or by1 > SPAWN_GROUND_CEILING:
-            continue  # the floor slab, or a roof rather than a floor
-        i0 = max(int(np.floor((bx0 - origin[0]) / CELL)), 0)
-        i1 = min(int(np.ceil((bx1 - origin[0]) / CELL)), shape[0])
-        j0 = max(int(np.floor((bz0 - origin[2]) / CELL)), 0)
-        j1 = min(int(np.ceil((bz1 - origin[2]) / CELL)), shape[1])
-        if i1 > i0 and j1 > j0:
-            np.maximum(ground_top[i0:i1, j0:j1], by1,
-                       out=ground_top[i0:i1, j0:j1])
     label, sizes = walkable_regions(passable, ground_top)
     main = int(np.argmax(sizes))
     share = 100.0 * sizes[main] / max(int(passable.sum()), 1)

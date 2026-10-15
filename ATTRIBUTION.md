@@ -265,3 +265,18 @@ credits, and they carry the arena's CC-BY-4.0 notice as it is given above,
 with its links, and what Solatel changed. The same list credits the yard's
 pack, Mixamo, Poly Haven, three.js and the fonts, none of which requires it. A new CC-BY asset is not cleared to ship until its notice is in
 that list too.
+
+## Daybreak Terminal additions — October 14, 2026
+
+The new indoor Yard architecture, freight layout and operator equipment are
+original Solatel geometry. PBR crates, lamps, tool chests, plants and the
+concrete floor scan are CC0 Poly Haven assets; individual sources and the
+packing procedure are listed in [assets/props/TERMINAL.md](assets/props/TERMINAL.md).
+
+`assets/sounds/rewards/*.mp3` contains original Solatel dialogue generated
+locally with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), the
+Apache-2.0 model, using its `am_fenrir` synthetic voice. The generation helper
+is [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), MIT licensed.
+The model and tools are build-time dependencies and are not distributed
+with the game. Reproduce with `scripts/build-reward-voices.py`. These are
+synthetic game voice lines, not recordings of a hired performer.

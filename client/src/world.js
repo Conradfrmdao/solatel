@@ -25,6 +25,8 @@ import { blow, growNature } from './nature.js';
 import { dressProps } from './props.js';
 import { scatterRubbish } from './scatter.js';
 import { addWayfinding } from './wayfinding.js';
+import { makeGrenade } from './grenade-model.js';
+import { dressTerminal, terminalFloor } from './terminal-props.js';
 import { Blasts } from './blast.js';
 import { Rounds } from './rounds.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -177,12 +179,13 @@ const PLASTER = { kind: WEATHERED, blotch: 0.16, streak: 0.3, foot: 0.25, plinth
 const PAINTED = { kind: WEATHERED, blotch: 0.12, streak: 0.15, foot: 0.2, chips: 0.3 };
 const TIMBER = { kind: WEATHERED, blotch: 0.12, foot: 0.2, planks: 0.2 };
 const SURFACES = {
-  terminal_floor: { kind: WEATHERED, blotch: 0.02, foot: 0 },
+  terminal_floor: { kind: WEATHERED, blotch: 0.02, foot: 0, seams: [6, 6] },
   terminal_wall: { ...CONCRETE, blotch: 0.04, streak: 0.04, foot: 0.08, seams: [4, 3] },
   terminal_stone: { ...CONCRETE, blotch: 0.04, streak: 0.03, foot: 0.05 },
   terminal_teal: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
   terminal_amber: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
   terminal_frame: { ...PAINTED, blotch: 0.02, chips: 0.03, foot: 0.04 },
+  terminal_mirror: { kind: WEATHERED, blotch: 0, foot: 0 },
   concrete: { ...CONCRETE, seams: [3.0, 3.066] },
   concrete_dark: { ...CONCRETE, wet: 0.8 },
   concrete_light: { ...CONCRETE, streak: 0.3 },
@@ -288,7 +291,7 @@ function addSurfaceDetail(material, photo = null) {
       shader.uniforms.surfaceBlotch = { value: surface.blotch ?? 0 };
       shader.uniforms.surfaceStreak = { value: surface.streak ?? 0 };
       shader.uniforms.surfaceFoot = { value: surface.foot ?? 0 };
-      shader.uniforms.surfaceSeams = { value: new THREE.Vector2(...(photo ? [0, 0] : surface.seams ?? [0, 0])) };
+      shader.uniforms.surfaceSeams = { value: new THREE.Vector2(...(photo && material.name !== 'terminal_floor' ? [0, 0] : surface.seams ?? [0, 0])) };
       shader.uniforms.surfacePlinth = { value: new THREE.Vector2(...(surface.plinth ?? [0, 0])) };
       shader.uniforms.surfaceRust = { value: surface.rust ?? 0 };
       // A photograph already has its joints, ribs, boards and knocks; the
@@ -452,6 +455,9 @@ function addSurfaceDetail(material, photo = null) {
           float blotch = surfaceNoise(face / 3.1 + 17.0) * 0.65
                        + surfaceNoise(face / 0.9 + 5.0) * 0.35;
           colour *= 1.0 + (blotch - 0.5) * surfaceBlotch * 2.0;
+          if (level && surfaceSeams.x > 0.0) {
+            colour *= 1.0 - 0.2 * max(surfaceLines(P.x, surfaceSeams.x, 0.008), surfaceLines(P.z, surfaceSeams.y, 0.008));
+          }
 
           float low = 1.0 - smoothstep(0.0, 1.4, P.y);
           float stain = 0.0;
@@ -634,7 +640,7 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
  */
 const SKIES = {
   facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5, wet: 0.5 },
-  yard: { file: 'partly', sun: 4.5, sunColour: 0xffebcf, sky: 1.5, wet: 0.0 },
+  yard: { file: 'partly', sun: 5.2, sunColour: 0xffd5a0, sky: 1.2, wet: 0.0 },
   arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
 
@@ -737,7 +743,7 @@ function batchStatic(map) {
   const groups = new Map();
   const merged = [];
   map.traverse((node) => {
-    if (!node.isMesh || node.isInstancedMesh || node.isSkinnedMesh) return;
+    if (!node.isMesh || node.isInstancedMesh || node.isSkinnedMesh || node.userData.keepUV) return;
     let visible = true;
     for (let n = node; n && n !== map; n = n.parent) {
       if (!n.visible || n.userData?.collision_only) visible = false;
@@ -757,6 +763,9 @@ function batchStatic(map) {
     const indexed = parts.every((g) => g.index);
     const geometry = mergeGeometries(indexed ? parts : parts.map((g) => (g.index ? g.toNonIndexed() : g)));
     if (!geometry) continue;
+    // Shadow normal bias runs in the vertex shader, even for flat-shaded
+    // materials. Missing normals leave diagonal self-shadow patterns.
+    geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
@@ -933,6 +942,9 @@ export class World {
    */
   async useSky(mapName) {
     const spec = SKIES[mapName] ?? SKIES[DEFAULT_SKY];
+    // Expose the sunlit terminal for its interior, keeping covered routes
+    // legible while the skylights retain their bright daylight contrast.
+    if(this.renderer)this.renderer.toneMappingExposure=mapName==='yard'?1.2:.9;
     this._skies = this._skies ?? new Map();
     if (!this._skies.has(spec.file)) this._skies.set(spec.file, this._loadSky(spec.file));
     // Only the latest request goes up: the sky read at startup may still be
@@ -1381,6 +1393,7 @@ export class World {
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(url);
     arena = gltf.scene;
+    const floor = arena.userData.indoor ? await terminalFloor() : null;
     const names = [];
     arena.traverse((node) => {
       if (!node.isMesh) return;
@@ -1402,6 +1415,19 @@ export class World {
       if (!node.isMesh) return;
       node.castShadow = true;
       node.receiveShadow = true;
+      if(!node.geometry.attributes.normal)node.geometry.computeVertexNormals();
+      if (floor && node.material.name === 'terminal_floor') {
+        const position=node.geometry.attributes.position;
+        const uv=new Float32Array(position.count*2);
+        for(let i=0;i<position.count;i++) {
+          uv[i*2]=position.getX(i)*.75/3;
+          uv[i*2+1]=position.getZ(i)*.75/3;
+        }
+        node.geometry.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+        node.material=floor;
+        node.userData.keepUV=true;
+        return;
+      }
       // The map ships with flat colour materials and no texture at all, so
       // how it reads is almost entirely down to how it takes light.
       const materials = Array.isArray(node.material) ? node.material : [node.material];
@@ -1423,6 +1449,10 @@ export class World {
         if (/^terminal_(teal|amber|frame|alloy)$/.test(material.name)) {
           material.metalness = material.name === 'terminal_alloy' ? 0.75 : 0.25;
           material.roughness = material.name === 'terminal_alloy' ? 0.3 : 0.42;
+        }
+        if (material.name === 'terminal_mirror') {
+          material.metalness = 1;
+          material.roughness = .12;
         }
         if (material.name === 'glass' && material.transparent) {
           node.castShadow = false;
@@ -1460,6 +1490,9 @@ export class World {
     arena.userData.struck = struckBoxes(arena);
     addWayfinding(arena, mapName);
     batchStatic(arena);
+    // Preserve the props' authored UVs, normals and PBR maps; the structural
+    // batch above intentionally drops UVs from the procedural hall.
+    await dressTerminal(arena);
 
     this._maps = this._maps ?? new Map();
     this._maps.set(url, arena);
@@ -1556,6 +1589,7 @@ export class World {
         this._grenades.set(g.id, entry);
       }
       entry.target.set(g.position[0], g.position[1], g.position[2]);
+      entry.mesh.visible = !(g.releases_in_ms > 0);
     }
     for (const [id, entry] of this._grenades) {
       if (seen.has(id)) continue;
@@ -1599,23 +1633,5 @@ export class World {
     // Past the shadow map's reach from here, the baked sun takes over.
     SHADOW_CENTRE.value.copy(target);
   }
-}
-
-
-function makeGrenade() {
-  const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.06, 12, 8),
-    new THREE.MeshStandardMaterial({ color: 0x3d4a2c, roughness: 0.8, metalness: 0.2 }),
-  );
-  body.scale.set(1, 1.25, 1);
-  const cap = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.022, 0.026, 0.05, 8),
-    new THREE.MeshStandardMaterial({ color: 0x8a8d90, roughness: 0.4, metalness: 0.8 }),
-  );
-  cap.position.y = 0.085;
-  group.add(body, cap);
-  group.castShadow = true;
-  return group;
 }
 

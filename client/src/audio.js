@@ -48,6 +48,7 @@ import { SOUND_SETS } from './sound-sets.js';
 
 /** How loud, before the player's own setting. */
 const MASTER_GAIN = 0.35;
+const REWARD_LINES = ['money-in-the-bag', 'got-him', 'in-the-bag', 'paid', 'yee-haw'].map(name => `rewards/${name}`);
 
 /** Metres per second. Used for the arrival delay on distant shots. */
 const SPEED_OF_SOUND = 343;
@@ -230,7 +231,7 @@ export class Audio {
    */
   preload() {
     if (this._fetching) return this._fetching;
-    const names = [...new Set(Object.values(SOUND_SETS).flat())];
+    const names = [...new Set([...Object.values(SOUND_SETS).flat(), ...REWARD_LINES])];
     this._fetching = Promise.all(
       names.map(async (name) => {
         try {
@@ -309,6 +310,9 @@ export class Audio {
    * one slow heartbeat. `recover` opens it all again.
    */
   dying() {
+    this.rewardDead = true;
+    this.rewardVoice?.stop();
+    this.rewardVoice = null;
     if (!this.ready) return;
     const { context } = this;
     const now = context.currentTime;
@@ -332,6 +336,7 @@ export class Audio {
   }
 
   recover() {
+    this.rewardDead = false;
     if (!this.ready || !this.muffle) return;
     const now = this.context.currentTime;
     this.muffle.frequency.cancelScheduledValues(now);
@@ -372,6 +377,10 @@ export class Audio {
 
   setVolume(value) {
     this.volume = Math.min(Math.max(value, 0), 1);
+    if(this.volume===0 && this.rewardVoice) {
+      this.rewardVoice.stop();
+      this.rewardVoice=null;
+    }
     if (this.master) this.master.gain.value = MASTER_GAIN * this.volume;
     try {
       window.localStorage.setItem(VOLUME_KEY, String(this.volume));
@@ -691,6 +700,29 @@ export class Audio {
     if (killed) this.blip(now + 0.075, 1760, 0.45, 0.12);
   }
 
+  /** One short voiced reward, with no queued lines or immediate repeats. */
+  _rewardLine() {
+    if (!this.ready || this.rewardDead || this.volume <= 0) return;
+    const now = this.context.currentTime;
+    if (this.rewardVoice || now < (this.nextRewardAt ?? 0)) return;
+    const choices = REWARD_LINES.filter(name => name !== this.lastReward && this.buffers.has(name));
+    if (!choices.length) return;
+    const name = choices[Math.floor(Math.random() * choices.length)];
+    const voice = this.context.createBufferSource();
+    voice.buffer = this.buffers.get(name).buffer;
+    const level = this.context.createGain();
+    level.gain.value = 1.25;
+    voice.connect(level).connect(this.master);
+    this.rewardVoice = voice;
+    this.lastReward = name;
+    this.nextRewardAt = now + Math.max(3.4, voice.buffer.duration + .6);
+    voice.onended = () => {
+      voice.disconnect(); level.disconnect();
+      if (this.rewardVoice === voice) this.rewardVoice = null;
+    };
+    voice.start(now + .18);
+  }
+
   /**
    * Money. Played when this player's shot kills someone.
    *
@@ -705,6 +737,7 @@ export class Audio {
    */
   paid(streak = 1) {
     if (!this.ready) return;
+    this._rewardLine();
     const { context } = this;
     const now = context.currentTime;
 

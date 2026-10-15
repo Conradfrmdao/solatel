@@ -104,7 +104,10 @@ pub const CROUCH_DROP: f32 = 0.55;
 /// Grenades a player starts a life with.
 pub const GRENADES_PER_LIFE: u32 = 2;
 
-/// Seconds from the throw to the bang.
+/// Seconds spent bringing the grenade up before release.
+pub const GRENADE_WINDUP: f32 = 0.28;
+
+/// Seconds from release to the bang.
 pub const GRENADE_FUSE: f32 = 2.5;
 
 /// How hard a grenade is thrown, in metres per second along the aim, plus a

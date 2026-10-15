@@ -369,8 +369,10 @@ export class LocalPlayer {
     // costs one flash that meant nothing.
     const armed = this.matchId && !this.eliminated && this.health > 0;
     this._predictArms(intent, command);
-    if (intent.throw && !this._throwHeld && armed && this.grenades > 0) {
+    if (intent.throw && !this._throwHeld && armed && this.grenades > 0 &&
+        this.ticks >= (this.throwReadyTick ?? 0)) {
       this.thrown = true;
+      this.throwReadyTick = this.ticks + Math.ceil(SIM.grenadeWindup / SIM.tickDt);
     }
     this._throwHeld = intent.throw;
 

@@ -35,7 +35,7 @@ MAP_RS = os.path.join(ROOT, 'crates', 'solatel-protocol', 'src', 'sim', 'map.rs'
 # playable only blown up, while the yard is already roughly in metres. Both are
 # carried into the table by the generator, so the client cannot pick different
 # ones. The seat count is per map because the ground is: the indoor yard is
-# 96 by 144 metres and seats thirty players, while thirty in the arena would
+# 72 by 108 metres and seats thirty players, while thirty in the arena would
 # be a scrum. There are always more spawn points than seats, so a full match
 # still has spare places to be scattered across and two matches running at
 # once do not line everybody up identically.
