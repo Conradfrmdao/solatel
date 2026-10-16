@@ -31966,7 +31966,14 @@ mod tests {
                     command.forward = 1.0;
                     let mut reached = false;
                     for _ in 0..(4 * crate::net::TICK_HZ as usize) {
+                        let previous_height = state.position.y;
                         crate::sim::step_tick(&mut state, &command, &YARD);
+                        assert!(
+                            state.position.y >= previous_height - 0.025,
+                            "stair descent while climbing: side={side} z={z} offset={offset}, {previous_height} -> {} grounded={}",
+                            state.position.y,
+                            state.on_ground
+                        );
                         if state.position.x.abs() > 27.15 && state.position.y > 5.2 {
                             reached = true;
                             break;

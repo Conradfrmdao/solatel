@@ -939,7 +939,13 @@ export class LocalPlayer {
     if (this.eyeLift === null) this.eyeLift = lift;
     else this.eyeLift += (lift - this.eyeLift) * (1 - Math.exp(-dt / CROUCH_EYE_TIME));
 
-    if (this.feetY === null || !this.onGround || Math.abs(feet - this.feetY) > EYE_SNAP) {
+    // Ground contact can flicker at a tread edge. Keep the stair filter for
+    // that brief near-zero vertical motion; real jumps and falls still track
+    // immediately. Snapping here then filtering the next grounded frame made
+    // the eye alternate between the tread and its smoothed height.
+    const atTreadEdge = !this.onGround && this._lastFall <= 0.1 &&
+      this._lastFall >= -0.8 && Math.abs(feet - this.feetY) <= 0.65;
+    if (this.feetY === null || (!this.onGround && !atTreadEdge) || Math.abs(feet - this.feetY) > EYE_SNAP) {
       // Airborne, just spawned, or moved by something that was not a step.
       // All of those should be seen as they are.
       this.feetY = feet;
