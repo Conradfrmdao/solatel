@@ -7,6 +7,10 @@ callouts include Bagged it and Sweet money. See documents/CURRENT-COMBAT-PASS.md
 for checks and outstanding whole-scene stair-wobble investigation. The user
 explicitly reports both sets of Yard stairs; do not mark that issue fixed on
 the strength of the earlier vertical smoothing patch alone.
+A follow-up critically damped camera filter reduces measured upward tread
+kicks (central browser traces: 12.7 cm to 7.4 cm peak frame change). Local
+and live network climbs showed zero prediction corrections; lateral
+oscillation remains unreproduced. Combat release 00b10c36e637 is live.
 
 # Working notes for Solatel
 

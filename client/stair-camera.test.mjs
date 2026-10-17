@@ -22,3 +22,19 @@ test('jumping and genuine falls bypass stair smoothing',()=>{
     assert.equal(s.feetY,.2);
   }
 });
+test('running up tall treads does not kick the camera on each riser',()=>{
+  for (const fps of [30,60,120]) {
+    const s=cameraState();s.onGround=true;s.previous.y=s.current.y=0;
+    let peakSpeed=0,previous=0;
+    for(let frame=1;frame<=fps;frame++) {
+      // 0.5 m collision risers at a 3 m/s climb, while running forward.
+      s.previous.y=s.current.y=Math.floor(frame/fps*6)*.5;
+      s.previous.x=s.current.x=frame/fps*8;
+      LocalPlayer.prototype.eyePosition.call(s,1,out,1/fps);
+      peakSpeed=Math.max(peakSpeed,(s.feetY-previous)*fps);
+      assert.ok(s.feetY>=previous,'a climb must not reverse the camera');
+      previous=s.feetY;
+    }
+    assert.ok(peakSpeed<5,`camera kick at ${fps} FPS: ${peakSpeed} m/s`);
+  }
+});

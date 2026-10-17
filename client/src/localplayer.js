@@ -60,19 +60,6 @@ const HIT_MARKER_SECONDS = 0.12;
 const EYE_SMOOTH_TIME = 0.09;
 
 /**
- * And as a distance: the eye closes the gap per metre walked as well as per
- * second, so it keeps up with a climb in proportion to how fast it is made.
- *
- * On time alone a steady climb lags by the climb rate times the time
- * constant, and a ramp is a steady climb: up a thirty-degree ramp at full
- * speed that was 0.42 m, the view sitting most of a crouch low the whole
- * way up. With this the lag up the same ramp is 0.12 m, and a single step
- * taken at a run is smoothed over about the third of a metre the body
- * takes to get over it - which is when a head would rise.
- */
-const EYE_SMOOTH_DISTANCE = 0.3;
-
-/**
  * How long the eye takes to go between crouched and standing, as a time
  * constant - smoothed apart from steps, in the air as on the ground, so a
  * jump from a crouch rises out of it rather than snapping up first.
@@ -81,7 +68,7 @@ const CROUCH_EYE_TIME = 0.06;
 
 /** The eye is never allowed further from the feet than this, so that a long
  *  climb cannot bury the camera in the floor. */
-const EYE_MAX_LAG = 0.5;
+const EYE_MAX_LAG = 0.8;
 
 /** A difference bigger than this is not a step - it is a respawn, a fall, or
  *  the server moving the player - and is followed exactly. */
@@ -952,14 +939,20 @@ export class LocalPlayer {
       // Airborne, just spawned, or moved by something that was not a step.
       // All of those should be seen as they are.
       this.feetY = feet;
+      this.feetVelocity = 0;
     } else {
-      // Exponential in time and in distance walked, so framerate-
-      // independent and quicker the faster the climb is being made (see
-      // `EYE_SMOOTH_DISTANCE`).
-      const walked = this._eyeAt.set ? Math.hypot(x - this._eyeAt.x, z - this._eyeAt.z) : 0;
-      const k = 1 - Math.exp(-(dt / EYE_SMOOTH_TIME + walked / EYE_SMOOTH_DISTANCE));
-      this.feetY += (feet - this.feetY) * k;
-      this.feetY = Math.min(Math.max(this.feetY, feet - EYE_MAX_LAG), feet + EYE_MAX_LAG);
+      // Critically damped position AND velocity. The old distance-weighted
+      // exponential caught up so quickly at running speed that each tread
+      // produced a visible upward kick. This keeps velocity continuous.
+      const omega = 2 / EYE_SMOOTH_TIME;
+      const delta = this.feetY - feet;
+      const velocity = this.feetVelocity ?? 0;
+      const decay = Math.exp(-omega * dt);
+      const change = (velocity + omega * delta) * dt;
+      const next = feet + (delta + change) * decay;
+      this.feetVelocity = (velocity - omega * change) * decay;
+      this.feetY = Math.min(Math.max(next, feet - EYE_MAX_LAG), feet + EYE_MAX_LAG);
+      if (this.feetY !== next) this.feetVelocity = 0;
     }
     this._eyeAt.x = x;
     this._eyeAt.z = z;
