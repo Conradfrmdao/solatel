@@ -206,6 +206,11 @@ def main():
             structure.flight('x',side*23,side*36,z-2.5,z+2.5,0,4.5,'terminal_stone')
             for zz in [z-2.6,z+2.6]:
                 beam(detail,(side*23,1.1,zz),(side*36,5.6,zz),.075,'terminal_alloy')
+                # Solid steel infill follows the slope in short visible sections.
+                # Its collision is derived from these exact faces.
+                for t in np.linspace(0,1,79)[:-1]:
+                    a,b=sorted((side*(23+13*t),side*(23+13*(t+1/78))))
+                    structure.box(a,4.5*t+.04,zz-.09,b,4.5*t+1.03,zz+.09,'terminal_frame')
                 for t in np.linspace(0,1,9):
                     xx=side*(23+13*t)
                     beam(detail,(xx,4.5*t+.1,zz),(xx,4.5*t+1.1,zz),.055,'terminal_frame')
@@ -344,6 +349,9 @@ def main():
         structure.flight('z',start,end,xa,xb,0,4.5,'terminal_stone')
         for x in [xa-.1,xb+.1]:
             beam(detail,(x,1.05,start),(x,5.55,end),.075,'terminal_alloy')
+            for t in np.linspace(0,1,103)[:-1]:
+                a,b=sorted((start+(end-start)*t,start+(end-start)*(t+1/102)))
+                structure.box(x-.09,4.5*t+.02,a,x+.09,4.5*t+.98,b,'terminal_frame')
             for t in np.linspace(0,1,13):
                 zz=start+(end-start)*t
                 beam(detail,(x,t*4.5,zz),(x,t*4.5+1.05,zz),.055,'terminal_frame')

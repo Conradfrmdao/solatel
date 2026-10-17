@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 23;
+pub const PROTOCOL_VERSION: u16 = 24;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.

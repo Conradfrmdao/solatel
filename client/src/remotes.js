@@ -78,6 +78,7 @@ import { SnapshotClock } from './snapclock.js';
 import { CLOTH_MATERIAL, dressed } from './skins.js';
 import { dressOperator, operatorGeometry } from './operators.js';
 import { makeGrenade } from './grenade-model.js';
+import { reloadPose } from './reload-timing.js';
 
 /** Clip names as `scripts/build-soldier.mjs` writes them. */
 const CLIP = { idle: 'idle', run: 'run', fire: 'fire', death: 'death' };
@@ -1189,7 +1190,8 @@ export class Remotes {
    */
   _act(player, entry, aim, dir) {
     player.grenade.visible = false;
-    const reload = player.reloading ? (player.age - player.reloadAt) / this._reloadSeconds(player) : null;
+    const seconds = this._reloadSeconds(player);
+    const reload = player.reloading ? reloadPose((player.age - player.reloadAt) / seconds, seconds, player.weapon) : null;
     const points = POINTS[player.weapon] ?? POINTS.rifle;
     const thrown = player.throwAt === undefined ? null : (player.age - player.throwAt) / THROW_SECONDS;
     if (thrown !== null && thrown > 1) player.throwAt = undefined;

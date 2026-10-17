@@ -266,7 +266,7 @@ with its links, and what Solatel changed. The same list credits the yard's
 pack, Mixamo, Poly Haven, three.js and the fonts, none of which requires it. A new CC-BY asset is not cleared to ship until its notice is in
 that list too.
 
-## Daybreak Terminal additions — October 14, 2026
+## Daybreak Terminal additions — October 16, 2026
 
 The new indoor Yard architecture, freight layout and operator equipment are
 original Solatel geometry. PBR crates, lamps, tool chests, plants and the
@@ -274,9 +274,10 @@ concrete floor scan are CC0 Poly Haven assets; individual sources and the
 packing procedure are listed in [assets/props/TERMINAL.md](assets/props/TERMINAL.md).
 
 `assets/sounds/rewards/*.mp3` contains original Solatel dialogue generated
-locally with [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), the
-Apache-2.0 model, using its `am_fenrir` synthetic voice. The generation helper
-is [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), MIT licensed.
-The model and tools are build-time dependencies and are not distributed
-with the game. Reproduce with `scripts/build-reward-voices.py`. These are
-synthetic game voice lines, not recordings of a hired performer.
+with [Qwen3-TTS CustomVoice 1.7B](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice),
+the Apache-2.0 model, using its `Ryan` synthetic voice and explicit shouted
+soldier performance instructions. The model and generation tools are not
+distributed with the game; only the finished MP3s are served. Reproduce
+with `scripts/build-reward-voices.py`. These are synthetic game voice lines,
+not recordings of a hired performer. Generation details are documented in
+[assets/sounds/rewards/README.md](assets/sounds/rewards/README.md).

@@ -158,10 +158,11 @@ export class Rounds {
       round.end = Math.min(round.end, arrivalOn(round.path, goal));
       round.onArrive = onArrive;
       if (landing.hit_player) round.line.material.color.setHex(0xff9a5a);
-      if (round.t >= round.end) this._arrive(round);
+      if (delay <= 0 || round.t >= round.end) this._arrive(round);
       return;
     }
-    this.waiting.push({ at: delay, onArrive });
+    if (delay <= 0) onArrive();
+    else this.waiting.push({ at: delay, onArrive });
   }
 
   /** Whether `round` has just gone past the listener: the nearest point of
@@ -217,6 +218,7 @@ export class Rounds {
     }
     const still = [];
     for (const round of this.live) {
+      if (round.done) continue;
       round.t += dt;
       if (!round.passed) this._listen(round, dt);
       if (round.t >= round.end) {

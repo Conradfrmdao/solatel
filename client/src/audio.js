@@ -44,11 +44,12 @@
 // This module only says how it sounded.
 
 import { asset } from './assets.js';
+import { reloadCue } from './reload-timing.js';
 import { SOUND_SETS } from './sound-sets.js';
 
 /** How loud, before the player's own setting. */
 const MASTER_GAIN = 0.35;
-const REWARD_LINES = ['money-in-the-bag', 'got-him', 'in-the-bag', 'paid', 'yee-haw'].map(name => `rewards/${name}`);
+const REWARD_LINES = ['money-in-the-bag', 'got-him', 'in-the-bag', 'paid', 'yee-haw', 'bagged-it', 'sweet-money'].map(name => `rewards/${name}`);
 
 /** Metres per second. Used for the arrival delay on distant shots. */
 const SPEED_OF_SOUND = 343;
@@ -928,7 +929,7 @@ export class Audio {
   _reloadSounds(output, start, seconds, loudness, weapon, track) {
     const plan = RELOADS[weapon] ?? RELOADS.rifle;
     for (const [set, at] of plan.steps) {
-      const when = at === null ? start + seconds * BOLT_IN_RELOAD + BOLT_WORK.done : start + seconds * at;
+      const when = at === null ? start + seconds * BOLT_IN_RELOAD + BOLT_WORK.done : start + reloadCue(at, seconds, weapon);
       const rate = plan.rate * (0.97 + Math.random() * 0.06);
       if (this._placed(set, output, when, loudness, rate, track)) continue;
       this.burst(output, when, {

@@ -1,3 +1,13 @@
+## October 17 combat pass
+
+Protocol 24/map 33 add shared Space-to-climb, physical Yard stair infill,
+revised grenade arm solve, brisk LMG reload actions synchronized with audio,
+and immediate presentation of confirmed bullet landings. Seven Ryan soldier
+callouts include Bagged it and Sweet money. See documents/CURRENT-COMBAT-PASS.md
+for checks and outstanding whole-scene stair-wobble investigation. The user
+explicitly reports both sets of Yard stairs; do not mark that issue fixed on
+the strength of the earlier vertical smoothing patch alone.
+
 # Working notes for Solatel
 
 ## October 16: Daybreak Yard and combat presentation release
@@ -28,12 +38,15 @@ separate wrist/elbow solve and modeled segmented frag body. Explosion art
 uses a brief flash, grit and dust, without the old glowing ground ring.
 Magnified optics now have minimal reticles with a clear central aim point.
 
-Five original voiced reward lines are packaged MP3s generated locally with
-Apache-licensed Kokoro. They play on confirmed local kills through the master
+Seven original voiced reward lines are packaged MP3s generated with
+Apache-licensed Qwen3-TTS CustomVoice 1.7B, using Ryan and an explicit shouted
+soldier direction. The user rejected the earlier calm Kokoro delivery; a
+volume increase is not a substitute for a shouted performance.
+They play on confirmed local kills through the master
 mix, with cooldown, repeat suppression and death/mute cancellation.
 `node --test client/reward-audio.test.mjs client/input.test.mjs` checks the
 audio guards and keyboard behavior. `scripts/build-reward-voices.py` records
-the generation process; model files remain ignored under `.artifacts/`.
+the generation process; generation work files remain ignored under `.artifacts/`.
 
 Operator IDs 5/6/7/8 are Ranger/Breacher/Engineer/Ghost, with different cap,
 helmet, hood, armor and utility equipment attached to the existing rig.
@@ -57,6 +70,13 @@ Prop pieces sharing a material are merged; plants/cases are grouped into
 renders the four kits without JavaScript errors, but high/ultra remain
 expensive. These measurements do not establish a 60 FPS target; further
 geometry/shadow optimization remains needed on integrated graphics.
+
+The map/combat release reached the live VPS as `4c7566c34743`. A real Yard
+match on solatelgame.com loaded protocol 23, map 32, 5,218 brushes and all
+42 spawns without script or asset errors. A keyboard grenade throw produced
+both the server's held phase and 30 airborne snapshots. The live health check
+reported the database healthy and ledger reconciled. The subsequent voice
+revision replaces the calm dialogue after the user's listening feedback.
 
 ## October 14: reported west approach and scope transition
 

@@ -707,6 +707,9 @@ export class LocalPlayer {
       state.health,
       Boolean(state.crouched),
     );
+    const mantle = state.mantle_target;
+    this.predictor.adopt_mantle(Boolean(mantle), mantle?.[0] ?? 0,
+      mantle?.[1] ?? 0, mantle?.[2] ?? 0, Boolean(state.jump_held));
     for (const command of this.unacked) {
       this.predictor.step(
         command.forward,

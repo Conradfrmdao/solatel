@@ -1483,6 +1483,9 @@ const TEMPLATE = `
           voices from HaelDB's
           <a href="https://opengameart.org/content/male-gruntyelling-sounds" target="_blank" rel="noopener">Male Grunt/Yelling sounds</a>
           (all CC0).</li>
+        <li>Original reward dialogue synthesized with
+          <a href="https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" target="_blank" rel="noopener">Qwen3-TTS</a>
+          (Apache-2.0 model), directed by Solatel.</li>
         <li>Lettering in <a href="https://github.com/jpt/barlow" target="_blank" rel="noopener">Barlow</a> and
           <a href="https://github.com/Omnibus-Type/Saira" target="_blank" rel="noopener">Saira Condensed</a>; the
           wordmark is drawn from <a href="https://github.com/theleagueof/orbitron" target="_blank" rel="noopener">Orbitron</a>
@@ -1557,7 +1560,7 @@ const TEMPLATE = `
         <span><kbd>mouse</kbd> look</span>
         <span><kbd>left click</kbd> shoot</span>
         <span><kbd>right click</kbd> aim</span>
-        <span><kbd>space</kbd> jump</span>
+        <span><kbd>space</kbd> jump / climb</span>
         <span><kbd>Shift</kbd> sprint forward</span>
         <span><kbd>C</kbd> crouch</span>
         <span><kbd>R</kbd> reload</span>

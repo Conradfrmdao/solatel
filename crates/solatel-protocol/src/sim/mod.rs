@@ -21,6 +21,7 @@ pub mod broadphase;
 pub mod collide;
 pub mod grenade;
 pub mod hitscan;
+pub mod mantle;
 pub mod map;
 pub mod weapon;
 
@@ -366,6 +367,10 @@ pub fn zone_damage_per_second(elapsed: f32) -> f32 {
 /// Everything the simulation needs to know about one player.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerState {
+    #[serde(default)]
+    pub mantle_target: Option<Vec3>,
+    #[serde(default)]
+    pub jump_held: bool,
     pub position: Vec3,
     pub velocity: Vec3,
     pub yaw: f32,
@@ -382,6 +387,8 @@ impl PlayerState {
     pub fn spawned_at(spawn: map::Spawn) -> Self {
         Self {
             position: spawn.position,
+            mantle_target: None,
+            jump_held: false,
             velocity: Vec3::ZERO,
             yaw: spawn.yaw,
             pitch: 0.0,
@@ -578,7 +585,10 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
     state.yaw = input.yaw;
     state.pitch = input.pitch;
 
+    let jump_pressed = input.buttons.jump() && !state.jump_held;
+    state.jump_held = input.buttons.jump();
     if !state.is_alive() {
+        state.mantle_target = None;
         // The dead do not move, but they still fall, so a body does not hang in
         // the air where it died.
         state.velocity.x = 0.0;
@@ -590,6 +600,13 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
 
     let wish_direction = wish_direction(input);
     state.crouched = input.buttons.crouch();
+
+    if jump_pressed && state.on_ground && !state.crouched {
+        state.mantle_target = mantle::find_target(state, map);
+    }
+    if state.mantle_target.is_some() && mantle::advance(state, map, dt) {
+        return;
+    }
 
     if state.on_ground {
         apply_friction(state, dt);
@@ -603,7 +620,7 @@ pub fn step(state: &mut PlayerState, input: &InputCommand, map: &Map, dt: f32) {
         accelerate(state, wish_direction, top, GROUND_ACCEL, dt);
 
         // No jumping from a crouch: standing up is the first half of a jump.
-        if input.buttons.jump() && !state.crouched {
+        if jump_pressed && !state.crouched {
             state.velocity.y = JUMP_SPEED;
             state.on_ground = false;
         }

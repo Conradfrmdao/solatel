@@ -32,7 +32,7 @@ import { Audio } from './audio.js';
 import { Link, noteReferral, readAccountKey, writeAccountKey } from './net.js';
 import { LocalPlayer } from './localplayer.js';
 import { Remotes } from './remotes.js';
-import { BRUSHES, PRIMARIES, SIM, SPAWNS, WEAPONS, loadSim, roundPath, selectMap, spawnFacing } from './sim.js';
+import { BRUSHES, PRIMARIES, SIM, SPAWNS, WEAPONS, loadSim, selectMap, spawnFacing } from './sim.js';
 import { portraits, soldierPortraits } from './portraits.js';
 import { loadGuns } from './guns.js';
 import { loadSkins, SKINS } from './skins.js';
@@ -130,25 +130,6 @@ const _from = new THREE.Vector3();
  * coming back never asks for hundreds of ticks at once.
  */
 const CATCH_UP_TICKS = 20;
-
-/**
- * Seconds a round fired from `from` at `velocity` takes to reach `to`, along
- * the shared flight: when to draw where it came down, so the dust rises as
- * the tracer gets there rather than when the message did.
- */
-function flightSeconds(weapon, from, velocity, to) {
-  const gun = WEAPONS[weapon] ?? WEAPONS.rifle;
-  const path = roundPath(weapon, from, velocity, Math.min(4, (gun.range / gun.muzzleVelocity) * 3));
-  const goal = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  for (let i = 3; i < path.length; i += 3) {
-    const d = Math.hypot(path[i] - from[0], path[i + 1] - from[1], path[i + 2] - from[2]);
-    if (d >= goal) {
-      const before = Math.hypot(path[i - 3] - from[0], path[i - 2] - from[1], path[i - 1] - from[2]);
-      return (i / 3 - 1 + (goal - before) / Math.max(1e-6, d - before)) * SIM.tickDt;
-    }
-  }
-  return goal / gun.muzzleVelocity;
-}
 
 async function boot() {
   const canvas = document.getElementById('solatel-canvas');
@@ -704,10 +685,9 @@ async function boot() {
         if (landing) {
           const origin = message.from ?? shotOrigins.get(key) ?? null;
           shotOrigins.delete(key);
-          const delay = message.t === 'shot_fired'
-            ? flightSeconds(message.weapon, message.from, message.velocity, landing.at) - (mine ? link.rttMs / 1000 : 0)
-            : 0;
-          world.landRound(key, landing, Math.max(0, delay), mine, () => {
+          // Both messages describe a landing already resolved by the server.
+          // Replaying travel here adds a second flight after network delivery.
+          world.landRound(key, landing, 0, mine, () => {
             if (landing.struck) impacts.strike(origin ?? landing.at, landing.at, landing.hit_player, camera.position);
             if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward, world.struckAt(...landing.at));
             if (landing.hit_player) {
@@ -730,7 +710,6 @@ async function boot() {
               }
             }
           });
-          if (mine && landing.hit_player) audio.hitConfirmed(false);
         }
       } else if (message.t === 'damaged') {
         audio.hurt();

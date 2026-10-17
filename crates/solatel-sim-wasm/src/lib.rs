@@ -89,6 +89,14 @@ impl Predictor {
         self.state.on_ground = on_ground;
         self.state.health = health;
         self.state.crouched = crouched;
+        self.state.mantle_target = None;
+        self.state.jump_held = false;
+    }
+
+    /// Reconciliation includes the authoritative climb and jump edge state.
+    pub fn adopt_mantle(&mut self, active: bool, x: f32, y: f32, z: f32, jump_held: bool) {
+        self.state.mantle_target = active.then(|| glam_vec(x, y, z));
+        self.state.jump_held = jump_held;
     }
 
     /// Advances one tick over one command.

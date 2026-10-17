@@ -50,6 +50,7 @@ import { OPTICS, SIM, wrapAngle } from './sim.js';
 import { RIFLE, feelFor } from './weapons.js';
 import { CLOTH_MATERIAL, dressed } from './skins.js';
 import { makeGrenade } from './grenade-model.js';
+import { reloadPose } from './reload-timing.js';
 
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
 const KEY_LIGHT = 2.4;
@@ -385,6 +386,7 @@ const HANDLE_REACH = 0.03;
 
 const _turn = new THREE.Quaternion();
 const _xAxis = new THREE.Vector3(1, 0, 0);
+const _yAxis = new THREE.Vector3(0, 1, 0);
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _shift = new THREE.Vector3();
 const _hand = new THREE.Vector3();
@@ -1102,15 +1104,15 @@ export class Viewmodel {
       const sinceThrow = this.throwAt === undefined ? Infinity : this.time - this.throwAt;
       if (limb.side === 'left' && sinceThrow < THROW_SECONDS) {
         const release = SIM.grenadeWindup;
-        if (sinceThrow < release * .5) {
-          const p = smooth(sinceThrow / (release * .5));
-          this.throwWrist.copy(this.throwStart).lerp(_hang.set(-.24,-.10,-.36),p);
+        // Compact overhand toss: bring the hand beside the shoulder, drive
+        // forward, then relax below the sightline. Release is server-timed.
+        const wind = release * .46;
+        if (sinceThrow < wind) {
+          this.throwWrist.copy(this.throwStart).lerp(_hang.set(-.20,-.08,-.34),smooth(sinceThrow/wind));
         } else if (sinceThrow < release) {
-          const p = smooth((sinceThrow - release * .5) / (release * .5));
-          this.throwWrist.set(-.24 + .11 * p,-.10 + .115 * p,-.36 - .15 * p);
+          this.throwWrist.set(-.20,-.08,-.34).lerp(_hang.set(-.15,.005,-.51),smooth((sinceThrow-wind)/(release-wind)));
         } else {
-          const p = smooth(Math.min(1, (sinceThrow - release) / .08));
-          this.throwWrist.set(-.13 + .04 * p,.015 - .19 * p,-.51 - .05 * p);
+          this.throwWrist.set(-.15,.005,-.51).lerp(_hang.set(-.11,-.15,-.54),smooth(Math.min(1,(sinceThrow-release)/.08)));
         }
         const recover = smooth(Math.max(0, (sinceThrow - release - .08) / (THROW_SECONDS - release - .08)));
         _wrist.lerp(this.throwWrist, 1 - recover);
@@ -1146,21 +1148,31 @@ export class Viewmodel {
         if (turn >= most || (!seen(_elbow) && _elbow.y <= _wrist.y)) break;
         turn = Math.min(most, turn + WRIST_STEP);
       }
-      if(limb.side==='left' && sinceThrow<THROW_SECONDS) {
-        const release=SIM.grenadeWindup;
-        const recover=smooth(Math.max(0,(sinceThrow-release-.08)/(THROW_SECONDS-release-.08)));
-        const enter=smooth(Math.min(1,sinceThrow/.08));
-        _reach.set(-.18,-.90,.5).normalize();
-        _lower.lerp(_reach,enter*(1-recover)).normalize();
-        _elbow.copy(_wrist).addScaledVector(_lower,limb.lowerLength);
-        // A neutral wrist aligned with the forearm; keep the elbow below
-        // the view rather than exposing a folded upper sleeve to the camera.
-        _q.setFromUnitVectors(_upper,_lower);
-        _grip.premultiply(_q);
-      }
       // The upper arm from the elbow towards the shoulder, at its length.
       _upper.subVectors(limb.shoulder, _elbow).normalize();
       _shoulder.copy(_elbow).addScaledVector(_upper, limb.upperLength);
+
+      if (limb.side === 'left' && sinceThrow < THROW_SECONDS) {
+        // Solve the actual two-bone arm from a fixed shoulder. Previously
+        // the shoulder moved to compensate for a forced elbow direction.
+        const blend = smooth(Math.min(1,sinceThrow/.06)) *
+          (1-smooth(Math.max(0,(sinceThrow-SIM.grenadeWindup-.08)/(THROW_SECONDS-SIM.grenadeWindup-.08))));
+        _shoulder.lerp(limb.shoulder,blend);
+        _reach.subVectors(_wrist,_shoulder);
+        const length = Math.min(_reach.length(),limb.upperLength+limb.lowerLength-.008);
+        _reach.normalize();
+        _wrist.copy(_shoulder).addScaledVector(_reach,length);
+        const along=(limb.upperLength**2-limb.lowerLength**2+length**2)/(2*length);
+        const height=Math.sqrt(Math.max(0,limb.upperLength**2-along**2));
+        _hang.set(-1,-.8,.25).addScaledVector(_reach,-_hang.dot(_reach)).normalize();
+        _elbow.copy(_shoulder).addScaledVector(_reach,along).addScaledVector(_hang,height);
+        _upper.subVectors(_shoulder,_elbow).normalize();
+        _lower.subVectors(_elbow,_wrist).normalize();
+        // Neutral wrist follows the forearm instead of being folded sideways.
+        _reach.copy(limb.straight).applyQuaternion(_grip);
+        _q.setFromUnitVectors(_reach,_lower);
+        _grip.premultiply(_q);
+      }
 
       // Shoulder to elbow and elbow to wrist, for turning the bones.
       _upper.negate();
@@ -1186,7 +1198,11 @@ export class Viewmodel {
       if (limb.side === 'left' && sinceThrow < SIM.grenadeWindup) {
         hand.updateWorldMatrix(true, false);
         this.throwMesh.position.copy(limb.frame.centre).applyMatrix4(hand.matrixWorld);
-        this.throwMesh.rotation.set(.2, .15, -.15);
+        // The grenade is held in the palm and rotates with the hand.
+        _reach.copy(limb.frame.palm).applyQuaternion(_grip).normalize();
+        this.throwMesh.position.addScaledVector(_reach,.022);
+        _reach.copy(limb.frame.along).applyQuaternion(_grip).normalize();
+        this.throwMesh.quaternion.setFromUnitVectors(_yAxis,_reach);
         this.throwMesh.visible = true;
       }
     }
@@ -1371,7 +1387,7 @@ export class Viewmodel {
     let reload = 0;
     let seat = 0;
     if (this.reloadProgress !== null && this.reloadProgress !== undefined) {
-      const p = this.reloadProgress;
+      const p = this.reloadProgress == null ? this.reloadProgress : reloadPose(this.reloadProgress, this.reloadSeconds, this.rig.weapon);
       reload = smooth(Math.min(1, p / 0.18)) * smooth(Math.min(1, (1 - p) / 0.2));
       seat = Math.max(0, 1 - Math.abs(p - 0.62) / 0.06);
     }
@@ -1408,7 +1424,7 @@ export class Viewmodel {
       hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX - lag * c.move.shift,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
-        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.38 - lowered * LOWERED.drop - this.sprintBlend * 0.065,
+        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.14 - lowered * LOWERED.drop - this.sprintBlend * 0.065,
       hip.z + (ads.z - hip.z) * a + r.back + reload * c.reloadPose.back,
     );
     const hr = this.hipRotation;
@@ -1418,7 +1434,7 @@ export class Viewmodel {
     // must not, or they would leave the middle.
     this.root.rotation.set(
       hr.x + (ar.x - hr.x) * a + r.rise + sway.pitch * swayScale + breathPitch + bobPitch
-        + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.7 - lowered * LOWERED.tip - this.sprintBlend * 0.22,
+        + pitch * 0.05 * (1 - a) + reload * c.reloadPose.pitch - thrown * 0.35 - lowered * LOWERED.tip - this.sprintBlend * 0.22,
       hr.y + (ar.y - hr.y) * a + r.yaw + sway.yaw * swayScale + bobYaw + reload * c.reloadPose.yaw,
       hr.z + (ar.z - hr.z) * a + r.roll + bobRoll + lag * c.move.roll + reload * c.reloadPose.roll + seat * 0.06
         - lowered * LOWERED.roll,
@@ -1513,7 +1529,7 @@ export class Viewmodel {
     }
 
     // A reload, in the fractions of it the server's clock gives.
-    const p = this.reloadProgress;
+    const p = this.reloadProgress == null ? this.reloadProgress : reloadPose(this.reloadProgress, this.reloadSeconds, this.rig.weapon);
     let out = 0;
     let shown = true;
     let carry = 0;

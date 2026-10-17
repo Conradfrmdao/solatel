@@ -247,6 +247,8 @@ class Runner extends Client {
       s.velocity[0], s.velocity[1], s.velocity[2],
       s.yaw, s.pitch, s.on_ground, s.health, Boolean(s.crouched),
     );
+    const mantle=s.mantle_target;
+    this.sim.adopt_mantle(Boolean(mantle),mantle?.[0]??0,mantle?.[1]??0,mantle?.[2]??0,Boolean(s.jump_held));
     for (const c of this.unacked) this.sim.step(c.forward, c.right, c.yaw, c.pitch, c.buttons);
     this.current = { x: this.sim.x, y: this.sim.y, z: this.sim.z };
     if (before && this.running) {
