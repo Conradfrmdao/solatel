@@ -1576,6 +1576,30 @@ export class World {
    * rolls rather than hops. Purely drawn: where it goes off, and whom it
    * hurts, is the server's.
    */
+  predictGrenade(path, thrower, hand) {
+    this._predictedGrenades ??= [];
+    const mesh = makeGrenade();
+    mesh.position.copy(hand);
+    this.scene.add(mesh);
+    this._predictedGrenades.push({ path, mesh, thrower, hand, age: 0, id: null,
+      previousIds: new Set(this._grenades?.keys() ?? []) });
+  }
+
+  setGrenadeAim(path) {
+    if (!this._grenadeAim) {
+      this._grenadeAim = new THREE.Line(new THREE.BufferGeometry(),
+        new THREE.LineDashedMaterial({color: 0xffd789, dashSize: .25, gapSize: .18,
+          transparent: true, opacity: .65}));
+      this.scene.add(this._grenadeAim);
+    }
+    this._grenadeAim.visible = Boolean(path);
+    if (!path) return;
+    this._grenadeAim.geometry.dispose();
+    this._grenadeAim.geometry = new THREE.BufferGeometry();
+    this._grenadeAim.geometry.setAttribute('position',new THREE.Float32BufferAttribute(path,3));
+    this._grenadeAim.computeLineDistances();
+  }
+
   setGrenades(list) {
     this._grenades = this._grenades ?? new Map();
     const seen = new Set();
@@ -1589,8 +1613,17 @@ export class World {
         this._grenades.set(g.id, entry);
       }
       entry.target.set(g.position[0], g.position[1], g.position[2]);
-      entry.mesh.visible = !(g.releases_in_ms > 0);
+      const predicted = this._predictedGrenades?.find(p => p.id === g.id ||
+        (p.id === null && p.thrower === g.thrower && !p.previousIds.has(g.id)));
+      if (predicted) predicted.id = g.id;
+      entry.mesh.visible = !predicted && !(g.releases_in_ms > 0);
     }
+    this._predictedGrenades = (this._predictedGrenades ?? []).filter(p => {
+      const keep = p.age < SIM.grenadeFuse + 2 &&
+        (p.id === null ? p.age < 2 : seen.has(p.id));
+      if (!keep) this.scene.remove(p.mesh);
+      return keep;
+    });
     for (const [id, entry] of this._grenades) {
       if (seen.has(id)) continue;
       this.scene.remove(entry.mesh);
@@ -1613,6 +1646,16 @@ export class World {
         entry.mesh.rotation.x += dt * 6;
         entry.mesh.rotation.z += dt * 4;
       }
+    }
+    for (const p of this._predictedGrenades ?? []) {
+      p.age += dt;
+      const tick = Math.min(p.path.length / 3 - 1, p.age / SIM.tickDt);
+      const a = Math.floor(tick), b = Math.min(a + 1, p.path.length / 3 - 1);
+      for (let axis = 0; axis < 3; axis++) p.mesh.position.setComponent(axis,
+        p.path[a*3+axis] + (p.path[b*3+axis]-p.path[a*3+axis])*(tick-a));
+      if (p.age < .06) p.mesh.position.lerp(p.hand, 1 - p.age / .06);
+      p.mesh.rotation.x += dt * 6;
+      p.mesh.rotation.z += dt * 4;
     }
     this.blasts.update(dt);
     this.rounds.update(dt);

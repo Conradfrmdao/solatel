@@ -1,3 +1,4 @@
+import { pathMayHitPlayer } from './predicted-impact.js';
 // Solatel browser client.
 //
 // The client renders and predicts; it never decides what happened. Every fact
@@ -687,9 +688,9 @@ async function boot() {
           shotOrigins.delete(key);
           // Both messages describe a landing already resolved by the server.
           // Replaying travel here adds a second flight after network delivery.
-          world.landRound(key, landing, 0, mine, () => {
-            if (landing.struck) impacts.strike(origin ?? landing.at, landing.at, landing.hit_player, camera.position);
-            if (landing.struck && !landing.hit_player) audio.impact(landing.at, eye, forward, world.struckAt(...landing.at));
+          world.landRound(key, landing, 0, mine, (alreadyShown) => {
+            if (landing.struck && !alreadyShown) impacts.strike(origin ?? landing.at, landing.at, landing.hit_player, camera.position);
+            if (landing.struck && !landing.hit_player && !alreadyShown) audio.impact(landing.at, eye, forward, world.struckAt(...landing.at));
             if (landing.hit_player) {
               // Into somebody else: blood out of them, the round's blow, a
               // cry in their own voice, and the body jolted by it. Whose body
@@ -832,11 +833,30 @@ async function boot() {
         from: shot.from,
         velocity: shot.velocity,
         own: true,
+        predictWorldImpact: path => {
+          if (pathMayHitPlayer(path, remotes.players.values())) return false;
+          const at=Array.from(path.slice(-3));
+          impacts.strike(shot.from, at, false, camera.position);
+          audio.impact(at, eye, forward, world.struckAt(...at));
+          return true;
+        },
       });
     }
     if (local.takeReloadStart()) audio.reload(local.gun.reloadSeconds, local.weapon);
     else if (local.reloadMs === 0) audio.cancelReload();
-    if (local.takeThrow()) viewmodel.onThrow();
+    viewmodel.setGrenadeHeld(local.grenadeHeld);
+    if (local.grenadeHeld) {
+      if (!world._aimPreviewAt || performance.now() - world._aimPreviewAt > 100) {
+        world.setGrenadeAim(local.predictor.grenade_path().slice(0, 3 * 65));
+        world._aimPreviewAt = performance.now();
+      }
+    } else if (world._grenadeAim?.visible) world.setGrenadeAim(null);
+    const grenadePath = local.takeThrow();
+    if (grenadePath) {
+      viewmodel.onThrow();
+      world.predictGrenade(grenadePath, local.id,
+        viewmodel.throwMesh.position.clone().applyMatrix4(camera.matrixWorld));
+    }
 
     // 4. Render state, interpolated between the last two ticks.
     const alpha = Math.min(1, accumulator / tickDt);

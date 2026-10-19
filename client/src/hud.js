@@ -936,7 +936,7 @@ const TEMPLATE = `
     <div class="gun"><span class="name">Assault rifle</span><span class="spare"></span></div>
     <div class="ammo"><b>30</b> / 30</div>
     <div class="reload hidden"><span class="fill"></span></div>
-    <div class="grenades" title="grenades (G)">●●</div>
+    <div class="grenades" title="Hold G to aim a grenade; release to throw">●●</div>
   </div>
   <div id="zone-warning" class="hidden">OUTSIDE THE ZONE &middot; get back in</div>
   <div id="warmup" class="hidden">

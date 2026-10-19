@@ -1,3 +1,30 @@
+# October 19 follow-up
+
+Protocol 25: hold G to prepare/aim, release to throw. No timed auto-release
+and no server wind-up after release. Focus loss cancels the hold. The held
+hand has an upright grip; the short preview arc and predicted local flight
+use the shared Rust collision/flight simulation. The server still decides
+explosion and damage. Snapshot matching suppresses a duplicate grenade.
+The release command stays present until acknowledgement, and the server
+preserves its edge through long guesses so a stall cannot throw twice.
+
+Local browser test added 250 ms RTT and a 600 ms main-thread stall. Holding
+1.8 seconds consumed no grenade and launched nothing. Release displayed
+locally in 3 ms, then exactly one server grenade appeared; count fell from
+2 to 1. The predicted mesh was removed after the authoritative flight ended.
+No JS errors, including firing after the throw. Screenshot/report are in
+.artifacts/grenade-hold. This is a local verification, not a live release claim.
+
+Predicted static-world bullet impacts now appear at shared ballistic arrival
+instead of waiting for the server. Confirmed duplicate world effects are
+suppressed. No predicted blood, damage or rewards; potentially intercepted
+shots defer to the server. Node tests cover delays of 100/250/500 ms.
+
+The user's whole-scene lateral stair wobble remains unresolved/unreproduced.
+A live keyboard W climb on the central flight measured zero lateral movement,
+zero camera yaw/roll and zero prediction correction at 252–258 ms RTT.
+This does not invalidate the user's report about both sets of stairs.
+
 # Combat pass — October 17, 2026
 
 Combat batch pushed as 00b10c36e637; live at solatelgame.com:

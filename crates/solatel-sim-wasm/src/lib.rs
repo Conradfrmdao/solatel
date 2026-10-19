@@ -120,6 +120,19 @@ impl Predictor {
         step_tick(&mut self.state, &command, map::active());
     }
 
+    /// Cosmetic prediction and aiming preview use the authoritative flight.
+    pub fn grenade_path(&self) -> Vec<f32> {
+        let mut flight =
+            solatel_protocol::sim::grenade::Flight::thrown_by(&self.state, map::active());
+        let mut path = Vec::new();
+        path.extend_from_slice(&flight.position.to_array());
+        for _ in 0..(GRENADE_FUSE / TICK_DT).ceil() as usize {
+            flight.step(map::active(), TICK_DT);
+            path.extend_from_slice(&flight.position.to_array());
+        }
+        path
+    }
+
     #[wasm_bindgen(getter)]
     pub fn x(&self) -> f32 {
         self.state.position.x

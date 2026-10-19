@@ -66,9 +66,9 @@ use solatel_protocol::{
         TICK_DT, TICK_HZ, TableStatus, Tier,
     },
     sim::{
-        Buttons, GRENADE_FUSE, GRENADE_WINDUP, GRENADES_PER_LIFE, HitRegion, InputCommand,
-        KILL_CREDIT_SECONDS, MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS,
-        Zone, grenade, hitscan, map,
+        Buttons, GRENADE_FUSE, GRENADES_PER_LIFE, HitRegion, InputCommand, KILL_CREDIT_SECONDS,
+        MATCH_DURATION, MAX_HEALTH, PlayerState, REGEN_DELAY, REGEN_SECONDS, Zone, grenade,
+        hitscan, map,
         weapon::{Loadout, Round, Slot, Weapon},
         zone_at, zone_damage_per_second,
     },
@@ -752,7 +752,7 @@ impl Body {
                 waited,
             });
         }
-        // A throw is the press, not the holding of it.
+        // The client sends a throw pulse on release; holding only prepares the hand.
         if command.buttons.throw() && !self.previous_buttons.throw() && self.grenades > 0 {
             throws.push((id, self.state));
         }
@@ -792,6 +792,9 @@ impl Body {
         }
         solatel_protocol::sim::step_tick(&mut self.state, &carried, ground);
         self.previous_buttons = carried.buttons;
+        // Guessing never throws. Preserve the release latch even beyond
+        // the rewind window, until an actual command lowers it.
+        self.previous_buttons.set(Buttons::THROW, held.throw());
     }
 
     /// The state this body was in `rewind_ms` ago, as best the server
@@ -2615,9 +2618,9 @@ impl Lobby {
             id,
             thrower,
             flight,
-            releases_at: now + GRENADE_WINDUP,
-            launched: false,
-            goes_off_at: now + GRENADE_WINDUP + GRENADE_FUSE,
+            releases_at: now,
+            launched: true,
+            goes_off_at: now + GRENADE_FUSE,
         });
     }
 

@@ -62,6 +62,22 @@ test('sprint respects hold, toggle, combat and focus transitions', () => {
   assert.equal(input.sample().sprint, true);
   down('KeyS');
   assert.equal(input.sample().sprint, false, 'opposing movement cannot sprint');
+  up('KeyG');
+  input.sample();
+  down('KeyG');
+  for (let tick = 0; tick < 200; tick++) {
+    const held = input.sample();
+    assert.equal(held.grenadeHeld, true);
+    assert.equal(held.throw, false, 'holding must never throw on a timer');
+  }
+  up('KeyG');
+  assert.equal(input.sample().throw, true, 'release throws on the very next tick');
+  assert.equal(input.sample().throw, false, 'release is consumed once');
+  down('KeyG');
+  window.dispatchEvent(new Event('blur'));
+  up('KeyG');
+  assert.equal(input.sample().throw, false, 'tabbing away cancels, never throws');
+  assert.equal(input.debug().fire, false);
   delete globalThis.window;
   delete globalThis.document;
 });

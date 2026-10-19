@@ -179,13 +179,18 @@ export class Input {
       // browser would have, and holding it is still how fullscreen ends.
       if (event.code === 'Escape' && this.locked) document.exitPointerLock();
     });
-    window.addEventListener('keyup', (event) => this._keys.delete(event.code));
+    window.addEventListener('keyup', (event) => {
+      if (event.code === 'KeyG' && this._keys.has('KeyG') &&
+          (this.locked || !this.requireLock)) this._grenadeReleased = true;
+      this._keys.delete(event.code);
+    });
 
     // Losing focus must release every key, or a player who alt-tabs while
     // running comes back still running.
     window.addEventListener('blur', () => {
       this._sprintLatched = false;
       this._keys.clear();
+      this._grenadeReleased = false;
       this._tapped.clear();
       this._fire = false;
       this._aim = false;
@@ -227,6 +232,7 @@ export class Input {
         this._dx = 0;
         this._dy = 0;
         this._keys.clear();
+        this._grenadeReleased = false;
         this._fire = false;
         this._aim = false;
       }
@@ -409,12 +415,14 @@ export class Input {
       forward,
       right,
       jump: this._keys.has('Space'),
-      fire: this._fire,
+      fire: this._fire && !held('KeyG'),
       crouch: this._crouch,
       reload: held('KeyR'),
-      throw: held('KeyG'),
+      throw: Boolean(this._grenadeReleased),
+      grenadeHeld: this._keys.has('KeyG'),
       sprint: this.sprinting && !held('KeyG'),
     };
+    this._grenadeReleased = false;
     this._tapped.clear();
     return intent;
   }

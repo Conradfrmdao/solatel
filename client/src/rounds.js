@@ -16,7 +16,8 @@
 // All of it is drawn and none of it decides anything.
 
 import * as THREE from 'three';
-import { SIM, WEAPONS, roundPath } from './sim.js';
+import { BRUSHES, SIM, WEAPONS, roundPath } from './sim.js';
+import { endpointHitsWorld } from './predicted-impact.js';
 
 /** Streaks in the air at once before the oldest is reused. */
 const POOL = 64;
@@ -111,7 +112,7 @@ export class Rounds {
    * pairs it with its landing; the player's own are `own` and paired in the
    * order they were fired.
    */
-  add({ key, weapon, from, drawnFrom, velocity, own = false, shooter = null }) {
+  add({ key, weapon, from, drawnFrom, velocity, own = false, shooter = null, predictWorldImpact = null }) {
     const path = flightFor(weapon, from, velocity);
     if (path.length < 6) return;
     const line = this.pool[this._next];
@@ -132,6 +133,8 @@ export class Rounds {
       offset,
       length: Math.min(STREAK_MAX, Math.max(STREAK_MIN, speed * STREAK_SECONDS)),
       speed,
+      predictedImpact: false,
+      predictWorldImpact: own && endpointHitsWorld(path, BRUSHES) ? predictWorldImpact : null,
       landing: null,
       onArrive: null,
       line,
@@ -156,7 +159,9 @@ export class Rounds {
       const goal = Math.hypot(at[0] - round.path[0], at[1] - round.path[1], at[2] - round.path[2]);
       round.landing = landing;
       round.end = Math.min(round.end, arrivalOn(round.path, goal));
-      round.onArrive = onArrive;
+      const sameImpact = round.predictedImpact && !landing.hit_player &&
+        Math.hypot(at[0]-round.path.at(-3),at[1]-round.path.at(-2),at[2]-round.path.at(-1))<.1;
+      round.onArrive = () => onArrive(sameImpact);
       if (landing.hit_player) round.line.material.color.setHex(0xff9a5a);
       if (delay <= 0 || round.t >= round.end) this._arrive(round);
       return;
@@ -225,7 +230,11 @@ export class Rounds {
         // Out of flight: landed where the server said, or into a wall, or
         // spent. A landing still to come keeps it waiting a moment, so its
         // dust is not lost.
-        if (round.landing || round.t > round.end + 0.6) {
+        if (!round.landing && round.predictWorldImpact) {
+          round.predictedImpact = Boolean(round.predictWorldImpact(round.path));
+          round.predictWorldImpact = null;
+        }
+        if (round.landing || round.t > round.end + (round.predictedImpact ? 2 : .6)) {
           this._arrive(round);
           continue;
         }

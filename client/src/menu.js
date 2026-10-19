@@ -1566,7 +1566,7 @@ const TEMPLATE = `
         <span><kbd>R</kbd> reload</span>
         <span><kbd>Q</kbd> or <kbd>wheel</kbd> swap gun</span>
         <span><kbd>1</kbd><kbd>2</kbd> primary, pistol</span>
-        <span><kbd>G</kbd> grenade</span>
+        <span><kbd>G</kbd> hold to aim grenade / release to throw</span>
         <span><kbd>tab</kbd> scores</span>
         <span><kbd>esc</kbd> free the mouse</span>
       </div>

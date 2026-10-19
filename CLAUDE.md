@@ -1,3 +1,22 @@
+## October 19 grenade release pass
+
+Protocol 25 changes G to hold-to-prepare, release-to-throw. Input emits the
+throw pulse only on keyup; blur/pointer unlock cancels. The server launches
+on that command without its former 280 ms delay. The local cosmetic flight
+and short aiming arc use the shared Rust grenade path through WASM; only
+server explosions apply damage. Matching snapshots suppress duplicate meshes.
+The held left hand has an inward-facing palm and an upright grenade grip.
+Static-world bullet impacts are predicted at ballistic arrival, with matching
+server effects deduplicated; player hits and payouts remain authoritative.
+Local tests cover holding, release, focus cancellation and delayed impacts.
+Browser release testing with 250 ms added round-trip delay measured 11.7 ms
+input-to-predicted-flight, one authoritative grenade, and clean removal.
+The upright grip was visually checked in .artifacts/grenade-hold/held.png.
+A 600 ms main-thread stall plus 250 ms network-delay test passed: one grenade,
+3 ms local release, clean removal, no JS errors. Release stays latched until
+acknowledged; server guesses preserve the latch to prevent duplicate throws.
+Whole-scene lateral stair wobble remains unreproduced, not declared fixed.
+
 ## October 17 combat pass
 
 Protocol 24/map 33 add shared Space-to-climb, physical Yard stair infill,

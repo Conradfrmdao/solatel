@@ -1101,22 +1101,26 @@ export class Viewmodel {
         _target.multiplyMatrices(rifle, limb.grip);
       }
       _target.decompose(_wrist, _grip, _scaleOut);
-      const sinceThrow = this.throwAt === undefined ? Infinity : this.time - this.throwAt;
+      const sinceThrow = this.grenadeHeld ? Math.min(.14, this.time - this.throwAt) :
+        this.throwAt === undefined ? Infinity : SIM.grenadeWindup + this.time - this.throwAt;
       if (limb.side === 'left' && sinceThrow < THROW_SECONDS) {
         const release = SIM.grenadeWindup;
         // Compact overhand toss: bring the hand beside the shoulder, drive
-        // forward, then relax below the sightline. Release is server-timed.
+        // forward, then relax below the sightline. Release follows the input immediately.
         const wind = release * .46;
         if (sinceThrow < wind) {
-          this.throwWrist.copy(this.throwStart).lerp(_hang.set(-.20,-.08,-.34),smooth(sinceThrow/wind));
+          this.throwWrist.copy(this.throwStart).lerp(_hang.set(-.16,-.13,-.38),smooth(sinceThrow/wind));
         } else if (sinceThrow < release) {
-          this.throwWrist.set(-.20,-.08,-.34).lerp(_hang.set(-.15,.005,-.51),smooth((sinceThrow-wind)/(release-wind)));
+          this.throwWrist.set(-.16,-.13,-.38).lerp(_hang.set(-.15,.005,-.51),smooth((sinceThrow-wind)/(release-wind)));
         } else {
-          this.throwWrist.set(-.15,.005,-.51).lerp(_hang.set(-.11,-.15,-.54),smooth(Math.min(1,(sinceThrow-release)/.08)));
+          this.throwWrist.set(-.16,-.13,-.38).lerp(_hang.set(-.11,-.15,-.54),smooth(Math.min(1,(sinceThrow-release)/.08)));
         }
         const recover = smooth(Math.max(0, (sinceThrow - release - .08) / (THROW_SECONDS - release - .08)));
         _wrist.lerp(this.throwWrist, 1 - recover);
         // The wrist stays independent of the rifle rotating down beneath it.
+        // Fingers rise around the body; palm faces inward, never at the camera.
+        alignFrames(limb.frame.along, limb.frame.palm,
+          _upper.set(.12,.97,-.20).normalize(), _lower.set(1,-.12,0).normalize(), this.throwGrip);
         _grip.slerp(this.throwGrip, 1 - recover);
         if (limb.fingers?.length) applyCurls(limb.fingers,
           limb.fingers.map(f => sinceThrow < release ? (f.finger==='Thumb' ? 1.12 : 1.24) : .12 + .75 * recover));
@@ -1168,10 +1172,8 @@ export class Viewmodel {
         _elbow.copy(_shoulder).addScaledVector(_reach,along).addScaledVector(_hang,height);
         _upper.subVectors(_shoulder,_elbow).normalize();
         _lower.subVectors(_elbow,_wrist).normalize();
-        // Neutral wrist follows the forearm instead of being folded sideways.
-        _reach.copy(limb.straight).applyQuaternion(_grip);
-        _q.setFromUnitVectors(_reach,_lower);
-        _grip.premultiply(_q);
+        // Keep the prepared hand orientation. The rifle's straight-wrist
+        // axis points the other way and would invert this upright grip.
       }
 
       // Shoulder to elbow and elbow to wrist, for turning the bones.
@@ -1195,7 +1197,7 @@ export class Viewmodel {
       setWorldRotation(arm, _armTurn);
       setWorldRotation(fore, _foreTurn);
       setWorldRotation(hand, _grip);
-      if (limb.side === 'left' && sinceThrow < SIM.grenadeWindup) {
+      if (limb.side === 'left' && this.grenadeHeld) {
         hand.updateWorldMatrix(true, false);
         this.throwMesh.position.copy(limb.frame.centre).applyMatrix4(hand.matrixWorld);
         // The grenade is held in the palm and rotates with the hand.
@@ -1227,19 +1229,27 @@ export class Viewmodel {
 
   /** Begin the throw: the left hand winds up and releases on the shared
    *  server timer while the right hand lowers and recovers the weapon. */
-  onThrow() {
-    const left=this.arms?.find(limb=>limb.side==='left');
-    if (left) {
-      left.hand.getWorldQuaternion(this.throwGrip);
-      left.hand.getWorldPosition(this.throwStart);
+  setGrenadeHeld(held) {
+    if (held && !this.grenadeHeld) {
+      const left = this.arms?.find(limb => limb.side === 'left');
+      if (left) left.hand.getWorldPosition(this.throwStart);
+      this.throwAt = this.time;
+      this.aimProgress = this.aim = 0;
+      this.aiming = false;
     }
-    this.throwAt = this.time;
-    this.aimProgress = 0;
-    this.aim = 0;
-    this.aiming = false;
+    if (!held && this.grenadeHeld) this.throwAt = undefined;
+    this.grenadeHeld = held;
   }
 
-  get throwing() { return this.throwAt !== undefined && this.time - this.throwAt < THROW_SECONDS; }
+  onThrow() {
+    this.grenadeHeld = false;
+    this.throwAt = this.time;
+  }
+
+  get throwing() {
+    return this.grenadeHeld || (this.throwAt !== undefined &&
+      this.time - this.throwAt < THROW_SECONDS - SIM.grenadeWindup);
+  }
 
   /** The eye's height over the feet, which crouching changes. Casings land
    *  on the floor under the player, and this is how far down it is. */
@@ -1391,8 +1401,8 @@ export class Viewmodel {
       reload = smooth(Math.min(1, p / 0.18)) * smooth(Math.min(1, (1 - p) / 0.2));
       seat = Math.max(0, 1 - Math.abs(p - 0.62) / 0.06);
     }
-    let thrown = 0;
-    if (this.throwAt !== undefined) {
+    let thrown = this.grenadeHeld ? 1 : 0;
+    if (!this.grenadeHeld && this.throwAt !== undefined) {
       const since = this.time - this.throwAt;
       if (since < THROW_SECONDS) {
         const p = since / THROW_SECONDS;

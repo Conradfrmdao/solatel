@@ -303,6 +303,7 @@ export class LocalPlayer {
       intent.fire = false;
       intent.reload = false;
       intent.throw = false;
+      intent.grenadeHeld = false;
       if (!this.gathered) {
         intent.forward = 0;
         intent.right = 0;
@@ -310,12 +311,18 @@ export class LocalPlayer {
         intent.crouch = false;
       }
     }
+    const releaseGrenade = intent.throw && this.pendingThrowSeq == null &&
+      this.matchId && !this.eliminated && this.health > 0 && this.grenades > 0;
+    if (releaseGrenade) this.pendingThrowSeq = this.nextSeq;
+    if (!this.matchId || this.eliminated || this.health <= 0) this.pendingThrowSeq = null;
     let buttons = 0;
     if (intent.jump) buttons |= BUTTON_JUMP;
     if (intent.fire) buttons |= BUTTON_FIRE;
     if (intent.crouch) buttons |= BUTTON_CROUCH;
     if (intent.reload) buttons |= BUTTON_RELOAD;
-    if (intent.throw) buttons |= BUTTON_THROW;
+    // Keep the release edge present until acknowledged. A slow frame may
+    // make the server discard old movement commands, including a one-tick tap.
+    if (this.pendingThrowSeq != null) buttons |= BUTTON_THROW;
     if (intent.sprint) buttons |= BUTTON_SPRINT;
     // Raised to aim, so everybody else sees the rifle come up.
     if (this.input.aiming) buttons |= BUTTON_AIM;
@@ -356,12 +363,10 @@ export class LocalPlayer {
     // costs one flash that meant nothing.
     const armed = this.matchId && !this.eliminated && this.health > 0;
     this._predictArms(intent, command);
-    if (intent.throw && !this._throwHeld && armed && this.grenades > 0 &&
-        this.ticks >= (this.throwReadyTick ?? 0)) {
-      this.thrown = true;
-      this.throwReadyTick = this.ticks + Math.ceil(SIM.grenadeWindup / SIM.tickDt);
+    this.grenadeHeld = Boolean(intent.grenadeHeld && armed && this.grenades > 0);
+    if (releaseGrenade) {
+      this.thrown = this.predictor.grenade_path();
     }
-    this._throwHeld = intent.throw;
 
     this.link.send({
       t: 'inputs',
@@ -449,6 +454,7 @@ export class LocalPlayer {
         // the new server player starts from sequence zero - replaying that
         // backlog against the first snapshot would teleport the player.
         this.unacked.length = 0;
+        this.pendingThrowSeq = null;
         this.predictionError = 0;
         this.clearCorrection();
         this.name = message.name ?? this.name;
@@ -605,6 +611,7 @@ export class LocalPlayer {
         this.queuedFor = null;
         this.place = 0;
         this.unacked.length = 0;
+        this.pendingThrowSeq = null;
         this.predictionError = 0;
         this.clearCorrection();
         this._arm(message.loadout);
@@ -677,6 +684,7 @@ export class LocalPlayer {
 
     // Anything the server has consumed is history now.
     const ack = snapshot.ack_input_seq;
+    if (this.pendingThrowSeq != null && ack >= this.pendingThrowSeq) this.pendingThrowSeq = null;
     this.unacked = this.unacked.filter((command) => command.seq > ack);
 
     // Adopt the server's answer, then replay what it has not seen through the
@@ -892,7 +900,7 @@ export class LocalPlayer {
 
   /** Whether a grenade left this player's hand since last asked, once. */
   takeThrow() {
-    const thrown = Boolean(this.thrown);
+    const thrown = this.thrown;
     this.thrown = false;
     return thrown;
   }

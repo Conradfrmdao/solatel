@@ -2967,28 +2967,26 @@ fn a_grenade_kill_pays_the_thrower() {
 }
 
 #[test]
-fn a_grenade_stays_in_hand_until_the_release_and_cannot_be_primed_twice() {
+fn a_grenade_release_launches_in_the_same_tick_and_is_not_repeated() {
     let mut duel = Duel::new();
     let _ledger = charge(&mut duel);
     let target = duel.position(duel.victim);
     duel.press(Buttons::THROW, target);
-    assert!(!duel.lobby.matches[&duel.match_id].grenades[0].launched);
-    duel.press(0, target);
+    let grenade = &duel.lobby.matches[&duel.match_id].grenades[0];
+    assert!(grenade.launched);
+    assert!(grenade.flight.velocity.length() > 1.0);
     duel.press(Buttons::THROW, target);
     assert_eq!(duel.body(duel.shooter).grenades, GRENADES_PER_LIFE - 1);
     assert_eq!(duel.lobby.matches[&duel.match_id].grenades.len(), 1);
-    duel.steps(seconds(GRENADE_WINDUP + TICK_DT));
-    assert!(duel.lobby.matches[&duel.match_id].grenades[0].launched);
 }
 
 #[test]
-fn dying_before_release_cancels_the_unthrown_grenade() {
+fn dying_before_release_prevents_a_grenade() {
     let mut duel = Duel::new();
     let _ledger = charge(&mut duel);
     let target = duel.position(duel.victim);
-    duel.press(Buttons::THROW, target);
     duel.body_mut(duel.shooter).state.health = 0;
-    duel.steps(seconds(GRENADE_WINDUP + TICK_DT));
+    duel.press(Buttons::THROW, target);
     assert!(duel.lobby.matches[&duel.match_id].grenades.is_empty());
 }
 
@@ -3704,6 +3702,26 @@ fn a_throw_held_across_a_late_packet_is_one_throw() {
         GRENADES_PER_LIFE - 1,
         "the button never came up, so there was only ever one throw"
     );
+}
+
+#[test]
+fn a_release_retried_after_a_long_stall_does_not_throw_twice() {
+    let mut walker = Walker::new();
+    let throwing = |seq| InputCommand {
+        seq,
+        forward: 0.0,
+        right: 0.0,
+        yaw: 0.0,
+        pitch: 0.3,
+        buttons: Buttons(Buttons::THROW),
+    };
+    walker.on_time(&[throwing(1)]);
+    for _ in 0..GUESS_WINDOW_TICKS + 10 {
+        walker.lobby.step();
+    }
+    walker.send(&[throwing(2), throwing(3)]);
+    walker.lobby.step();
+    assert_eq!(walker.body().grenades, GRENADES_PER_LIFE - 1);
 }
 
 /// A duel with the victim written into their own history running sideways
