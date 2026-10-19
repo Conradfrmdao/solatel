@@ -15,7 +15,9 @@ f = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(f)
 f.PALETTE.update({
     'terminal_floor': ('#a09a8d', .38),
-    'terminal_wall': ('#dad7c9', .87),
+    'terminal_wall': ('#b6b7b0', .87),
+    'terminal_roof_concrete': ('#949b9b', .88),
+    'terminal_roof_liner': ('#596469', .62),
     'terminal_teal': ('#28565b', .65),
     'terminal_amber': ('#b58036', .65),
     'terminal_frame': ('#303b40', .65),
@@ -174,8 +176,17 @@ def main():
     for xa,xb in [(-47,-32),(-19,-10),(4,13),(26,47)]:
         for za in range(-72,72,12):
             ya,yb=18-abs(xa)*6/47,18-abs(xb)*6/47
-            detail.face([(xa,ya-.22,za),(xb,yb-.22,za),(xb,yb-.22,za+12),(xa,ya-.22,za+12)],'terminal_wall',(0,-1,0))
+            detail.face([(xa,ya-.22,za),(xb,yb-.22,za),(xb,yb-.22,za+12),(xa,ya-.22,za+12)],'terminal_roof_concrete',(0,-1,0))
             beam(detail,(xa,ya-.38,za),(xb,yb-.38,za),.45,'terminal_roof_steel')
+            # A roof cassette is an assembled object, not a flat painted quad:
+            # ribbed liner, gaskets, and short crossing members catch grazing
+            # daylight at a believable scale from the playing floor.
+            for offset in [3,6,9]:
+                y0=ya-.32
+                y1=yb-.32
+                beam(detail,(xa+.42,y0,za+offset),(xb-.42,y1,za+offset),.105,'terminal_roof_liner')
+            for edge in [.45,11.55]:
+                beam(detail,(xa+.30,ya-.4,za+edge),(xb-.30,yb-.4,za+edge),.07,'terminal_frame')
         for x in [xa,xb]:
             y=18-abs(x)*6/47
             beam(detail,(x,y-.3,-72),(x,y-.3,72),.38,'terminal_roof_steel')
@@ -189,7 +200,9 @@ def main():
         for z0 in range(-72,72,12):
             x0,x1=sorted((side*30,side*47))
             y0,y1=18-abs(x0)*6/47,18-abs(x1)*6/47
-            detail.face([(x0,y0-.12,z0),(x1,y1-.12,z0),(x1,y1-.12,z0+12),(x0,y0-.12,z0+12)],'terminal_stone',(0,-1,0))
+            detail.face([(x0,y0-.12,z0),(x1,y1-.12,z0),(x1,y1-.12,z0+12),(x0,y0-.12,z0+12)],'terminal_roof_concrete',(0,-1,0))
+            for offset in [2.4,4.8,7.2,9.6]:
+                beam(detail,(x0+.3,y0-.31,z0+offset),(x1-.3,y1-.31,z0+offset),.09,'terminal_roof_liner')
         for z in [-60,-36,-12,12,36,60]:
             x=side*29
             structure.box(x-.7,0,z-.7,x+.7,12,z+.7,'terminal_wall')

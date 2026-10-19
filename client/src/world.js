@@ -180,7 +180,9 @@ const PAINTED = { kind: WEATHERED, blotch: 0.12, streak: 0.15, foot: 0.2, chips:
 const TIMBER = { kind: WEATHERED, blotch: 0.12, foot: 0.2, planks: 0.2 };
 const SURFACES = {
   terminal_floor: { kind: WEATHERED, blotch: 0.02, foot: 0, seams: [6, 6] },
-  terminal_wall: { ...CONCRETE, blotch: 0.04, streak: 0.04, foot: 0.08, seams: [4, 3] },
+  terminal_wall: { ...CONCRETE, blotch: 0.11, streak: 0.08, foot: 0.08, seams: [4, 3] },
+  terminal_roof_concrete: { ...CONCRETE, blotch: 0.12, streak: 0, foot: 0 },
+  terminal_roof_liner: { ...PAINTED, blotch: 0.05, streak: 0, foot: 0, chips: 0.06 },
   terminal_stone: { ...CONCRETE, blotch: 0.04, streak: 0.03, foot: 0.05 },
   terminal_teal: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
   terminal_amber: { ...PAINTED, blotch: 0.03, chips: 0.06, foot: 0.04 },
@@ -1459,9 +1461,9 @@ export class World {
         // flat colour - so shading it flat is both truer to the art and what
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
-        if (/^terminal_(teal|amber|frame|alloy|roof_steel)$/.test(material.name)) {
-          material.metalness = material.name === 'terminal_alloy' ? 0.75 : material.name === 'terminal_roof_steel' ? .58 : 0.25;
-          material.roughness = material.name === 'terminal_alloy' ? 0.3 : material.name === 'terminal_roof_steel' ? .52 : 0.42;
+        if (/^terminal_(teal|amber|frame|alloy|roof_steel|roof_liner)$/.test(material.name)) {
+          material.metalness = material.name === 'terminal_alloy' ? 0.75 : material.name === 'terminal_roof_steel' || material.name === 'terminal_roof_liner' ? .68 : 0.25;
+          material.roughness = material.name === 'terminal_alloy' ? 0.3 : material.name === 'terminal_roof_steel' || material.name === 'terminal_roof_liner' ? .48 : 0.42;
         }
         if (material.name === 'terminal_mirror') {
           material.metalness = 1;

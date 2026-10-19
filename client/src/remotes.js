@@ -918,6 +918,7 @@ export class Remotes {
       flash: 0,
       dip: 0,
       crouch: 0,
+      air: 0,
       /** 0 at the low ready, 1 at the shoulder (see `_driveArms`). */
       raise: 0,
       shotAt: -Infinity,
@@ -1050,10 +1051,19 @@ export class Remotes {
     aimVector(entry.yaw, entry.pitch, _aim);
     this._orient(player, entry, player.raise, _rifleDir);
 
+    // The source pack has no jump clip. Pose the real rig's legs toward a
+    // compact takeoff silhouette, then lengthen them for the landing. This
+    // follows the same bones as each operator's clothing and armor, so gear
+    // remains attached through the whole move. Blend over brief stair-contact
+    // gaps instead of snapping from one stance to another.
+    player.air += ((!entry.onGround ? 1 : 0) - player.air)
+      * (1 - Math.exp(-step / (entry.onGround ? .10 : .075)));
+    if (player.air > .01) this._jump(player, entry, player.air);
+
     // Down on one knee: the hips lowered and each leg solved so its foot
     // stays where the clip put it, the trailing one drawn back.
     player.crouch += ((entry.crouched ? 1 : 0) - player.crouch) * (1 - Math.exp(-CROUCH_RATE * step));
-    if (player.crouch > 0.01) this._kneel(player, entry, player.crouch);
+    if (player.crouch > 0.01 && entry.onGround) this._kneel(player, entry, player.crouch);
 
     // A dip in the hips when they come down.
     if (entry.onGround && !player.wasOnGround) player.dip = LAND_DIP;
@@ -1134,6 +1144,27 @@ export class Remotes {
     if (kneel > 0.001) {
       _qTurn.setFromAxisAngle(_side, TOE_TUCK * kneel);
       turnWorld(bones.footR, _qTurn);
+    }
+  }
+
+  _jump(player, entry, weight) {
+    const { bones } = player;
+    if (!bones.upLegL || !bones.upLegR || !bones.legL || !bones.legR || !bones.footL || !bones.footR) return;
+    aimVector(entry.yaw + player.legYaw, 0, _fwd);
+    _side.crossVectors(_fwd, _up).normalize();
+    const falling = THREE.MathUtils.smoothstep(-entry.vy, 0, 5);
+    for (const [upper, lower, foot, sign, goal] of [
+      [bones.upLegL, bones.legL, bones.footL, -1, _goalL],
+      [bones.upLegR, bones.legR, bones.footR, 1, _goalR],
+    ]) {
+      foot.getWorldPosition(goal);
+      upper.getWorldPosition(_hip);
+      _lift.copy(_hip)
+        .addScaledVector(_fwd, (sign < 0 ? .26 : -.13) * (1 - falling) + .07 * falling)
+        .addScaledVector(_side, sign * .045)
+        .addScaledVector(_up, -(0.56 + falling * .16));
+      goal.lerp(_lift, weight);
+      solveLeg(upper, lower, foot, goal, _fwd);
     }
   }
 
@@ -1712,6 +1743,7 @@ function snapshotToEntries(older, newer, alpha) {
       yaw: lerpAngle(a.yaw, b.yaw, alpha),
       pitch: a.pitch + (b.pitch - a.pitch) * alpha,
       vx: velocity[0],
+      vy: velocity[1],
       vz: velocity[2],
       speed: Math.hypot(velocity[0], velocity[2]),
       onGround: b.on_ground,
@@ -1737,6 +1769,7 @@ function snapshotToEntries(older, newer, alpha) {
       yaw: s.yaw,
       pitch: s.pitch,
       vx: s.velocity[0],
+      vy: s.velocity[1],
       vz: s.velocity[2],
       speed: Math.hypot(s.velocity[0], s.velocity[2]),
       onGround: s.on_ground,
