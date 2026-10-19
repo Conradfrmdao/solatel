@@ -175,7 +175,7 @@ export const RIFLE = {
   /** How a reload holds the gun: dropped and drawn in (metres), the muzzle
    *  up, turned in, and canted clockwise so the magazine well faces the left
    *  hand (radians) - as an envelope over the whole reload. */
-  reloadPose: { drop: 0.04, back: 0.03, pitch: 0.12, yaw: 0.05, roll: -0.45 },
+  reloadPose: { drop: 0.0, back: 0.04, pitch: 0.04, yaw: -0.02, roll: -0.13 },
 
   action: {
     bolt: { back: 0.075, seconds: 0.075 },
@@ -303,7 +303,7 @@ export const PISTOL = variant(RIFLE, {
   supportAhead: 0,
   // The slide runs back and the hammer falls and is cocked again by it; a
   // reload ends with the slide racked.
-  reloadPose: { drop: 0.04, back: 0.02, pitch: 0.28, yaw: 0.05, roll: -0.3 },
+  reloadPose: { drop: 0.0, back: 0.04, pitch: 0.16, yaw: -0.025, roll: -0.22 },
   action: { bolt: { back: 0.03, seconds: 0.07 }, hammer: 0.7, trigger: 0.25, magazine: [0, -0.18, 0.03], charge: 0.03 },
   // Both wrists cocked down, as on any pistol, so the forearms leave the
   // hands back and down and come up to them from the bottom of the picture;

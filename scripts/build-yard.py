@@ -149,6 +149,25 @@ def main():
     for x in range(-42,43,7):
         y=18-abs(x)*6/47
         beam(detail,(x,y,-72),(x,y,72),.1)
+    # Services hang below the trusses, as they do in the terminal reference:
+    # inset cable trays, vented HVAC trunks and warm linear work lights.
+    # All of this is overhead so the established stairs and lanes stay intact.
+    for x in [-38,-17,17,38]:
+        roof=18-abs(x)*6/47
+        for z in range(-66,67,12):
+            detail.box(x-1.15,roof-1.2,z-5.6,x+1.15,roof-.78,z+5.6,'terminal_roof_steel')
+            for edge in [-1.13,1.13]:
+                detail.box(x+edge-.055,roof-1.4,z-5.8,x+edge+.055,roof-.63,z+5.8,'terminal_frame')
+            for zz in np.arange(z-5,z+5,.85):
+                detail.box(x-.93,roof-1.24,zz,x+.93,roof-1.2,zz+.055,'terminal_alloy')
+        for z in [-54,-30,-6,18,42,66]:
+            detail.box(x-.65,roof-1.42,z-2.25,x+.65,roof-1.34,z+2.25,'terminal_black')
+            detail.box(x-.48,roof-1.46,z-1.9,x+.48,roof-1.415,z+1.9,'lamp')
+    for z in range(-60,61,12):
+        for x in [-31,-10,10,31]:
+            roof=18-abs(x)*6/47
+            beam(detail,(x,roof-1.65,z-5),(x,roof-.4,z-5),.07,'terminal_alloy')
+            beam(detail,(x,roof-1.65,z+5),(x,roof-.4,z+5),.07,'terminal_alloy')
     # The reference is a substantial warehouse with strips of skylight,
     # not an all-glass greenhouse. Concrete roof cassettes leave three long
     # daylight slots, each framed by deep beams and aluminium mullions.
@@ -280,13 +299,28 @@ def main():
                 detail.box(x-2,4.07,zz-.04,x+2,4.12,zz+.04,'lamp')
         beam(detail,(-36,4.08,z),(36,4.08,z),.25,'terminal_frame')
 
-    def cargo(x,z,w=3.5,d=2,h=1.3,colour='terminal_amber'):
-        structure.hidden.box(x-w/2,0,z-d/2,x+w/2,h,z+d/2,colour)
-        bevel_box(detail,(x-w/2,0,z-d/2),(x+w/2,h,z+d/2),colour)
+    # Three high portrait signs belong to the bridge columns. A steel back
+    # and perimeter frame make them structural fixtures rather than floating
+    # decals; the display art itself is added in terminal-props.js.
+    for x,z in [(-9,-20),(17,20),(-26,20)]:
+        detail.box(x-1.5,5.25,z-.67,x+1.5,10.75,z-.53,'terminal_black')
+        for xx in [x-1.56,x+1.52]:
+            detail.box(xx,5.2,z-.73,xx+.045,10.8,z-.48,'terminal_alloy')
+        for yy in [5.2,10.76]:
+            detail.box(x-1.56,yy,z-.73,x+1.56,yy+.04,z-.48,'terminal_alloy')
+        detail.box(x-1.52,5.14,z-.78,x+1.52,5.2,z-.48,'terminal_amber')
+
+    def cargo(x,z,w=3.5,d=2,h=1.3,colour='terminal_roof_steel'):
+        # Grey service cases with amber guards read closer to actual freight
+        # equipment than room-sized orange or beige blocks.
+        shell='terminal_roof_steel' if colour=='terminal_stone' else colour
+        structure.hidden.box(x-w/2,0,z-d/2,x+w/2,h,z+d/2,shell)
+        bevel_box(detail,(x-w/2,0,z-d/2),(x+w/2,h,z+d/2),shell)
         # Skids, metal corner guards, ribs and latches: recognizable cargo,
         # rather than featureless stacked boxes or repeated giant containers.
         for xx in [x-w/2+.12,x+w/2-.12]:
             detail.box(xx-.07,.04,z-d/2-.03,xx+.07,h+.03,z+d/2+.03,'terminal_frame')
+            detail.box(xx-.085,.14,z-d/2-.045,xx+.085,.23,z+d/2+.045,'terminal_amber')
         for zz in [z-d/2-.025,z+d/2+.025]:
             for y in [.12,h-.13]:
                 detail.box(x-w/2,y,zz-.03,x+w/2,y+.08,zz+.03,'terminal_alloy')

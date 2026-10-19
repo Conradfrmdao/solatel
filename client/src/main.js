@@ -571,6 +571,7 @@ async function boot() {
       if (bloomPass) bloomPass.enabled = preset.bloom;
       if (aoPass) aoPass.enabled = preset.ao || forceAo;
       world.setShadowSize(preset.shadows);
+      world.setFloorReflections(level === 'ultra');
       setNatureDetail({ grass: preset.grass, sky: preset.sky });
       resize();
     },
@@ -1111,7 +1112,7 @@ async function boot() {
     }
     viewmodel.update(dt, input.yaw, input.pitch, local.speed, local.onGround, eye);
     lightHere(eye, here);
-    viewmodel.setLight(dt, here.sky, here.sun);
+    viewmodel.setLight(dt, here.sky, here.sun, world.sunOffset, world.sun.color, camera.quaternion);
     hud.update(now, link, local, input);
     hud.updateDamage(now, eye, input.yaw);
 
@@ -1141,6 +1142,9 @@ async function boot() {
     // A diagnostic that cannot see the expensive half of the frame is worse
     // than none, because it is believed.
     const drawStart = performance.now();
+    // The hall's closely spaced stair guards alias into comb-like dark bars
+    // in screen-space AO. Its baked occlusion already supplies that depth.
+    if (aoPass) aoPass.enabled = (quality.level === 'ultra' || forceAo) && !world.arena?.userData.indoor;
     renderer.info.reset();
     renderer.clear();
     if (composer) composer.render();

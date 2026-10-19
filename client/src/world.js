@@ -1069,6 +1069,12 @@ export class World {
     shadow.map = null;
   }
 
+  setFloorReflections(enabled) {
+    this._floorReflections=enabled;
+    const reflection=this.arena?.userData.floorReflector;
+    if (reflection) reflection.visible=enabled;
+  }
+
   _buildLighting() {
     const sun = new THREE.DirectionalLight(0xfff2e0, 3.2);
     sun.position.set(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
@@ -1384,6 +1390,7 @@ export class World {
     if (arena) {
       this.scene.add(arena);
       this.arena = arena;
+      if (arena.userData.floorReflector) arena.userData.floorReflector.visible=Boolean(this._floorReflections);
       useLight(arena.userData.light);
       this._loadedUrl = url;
       playBounds(arena, this.bounds);
@@ -1499,6 +1506,7 @@ export class World {
     // Preserve the props' authored UVs, normals and PBR maps; the structural
     // batch above intentionally drops UVs from the procedural hall.
     await dressTerminal(arena);
+    if (arena.userData.floorReflector) arena.userData.floorReflector.visible=Boolean(this._floorReflections);
 
     this._maps = this._maps ?? new Map();
     this._maps.set(url, arena);

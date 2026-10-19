@@ -53,12 +53,12 @@ import { makeGrenade } from './grenade-model.js';
 import { reloadPose } from './reload-timing.js';
 
 /** The first-person rifle's own key and fill, in full light (`setLight`). */
-const KEY_LIGHT = 2.4;
-const FILL_LIGHT = 1.7;
+const KEY_LIGHT = 2.1;
+const FILL_LIGHT = 1.15;
 /** How much of the sky the gun reflects, against the world's own share:
  *  the guns are photographed metal and wood, and without it their steel
  *  is black. */
-const ENVIRONMENT_LIGHT = 0.8;
+const ENVIRONMENT_LIGHT = 0.95;
 
 /** Frame-rate independent approach: the same curve at 30 fps as at 240. */
 function damp(current, target, rate, dt) {
@@ -110,6 +110,8 @@ const _armTurn = new THREE.Quaternion();
 const _foreTurn = new THREE.Quaternion();
 const _roll = new THREE.Quaternion();
 const _scaleOut = new THREE.Vector3();
+const _viewSun = new THREE.Vector3();
+const _viewInverse = new THREE.Quaternion();
 
 /**
  * A soft grey puff, drawn into a canvas once.
@@ -400,6 +402,7 @@ function restParts(model) {
     part.node.position.copy(part.position);
     part.node.quaternion.copy(part.quaternion);
     part.node.visible = true;
+    if (part.replacement) part.replacement.visible = false;
   }
 }
 
@@ -522,12 +525,12 @@ export class Viewmodel {
     // Its own scene means its own light. Keyed from the upper left so the
     // weapon's top and left faces catch it and it reads as a solid object
     // rather than a silhouette.
-    const key = new THREE.DirectionalLight(0xffffff, KEY_LIGHT);
+    const key = new THREE.DirectionalLight(0xffd9ad, KEY_LIGHT);
     key.position.set(-0.6, 1.0, 0.4);
     this.scene.add(key);
     // Enough fill that dark camouflage and black gloves still read as cloth
     // and leather rather than as holes in the picture.
-    const fill = new THREE.HemisphereLight(0xb4c8e6, 0x3a3228, FILL_LIGHT);
+    const fill = new THREE.HemisphereLight(0xcbd8df, 0x665448, FILL_LIGHT);
     this.scene.add(fill);
     this.lights = { key, fill, sky: 1, sun: 1 };
   }
@@ -539,14 +542,23 @@ export class Viewmodel {
    * player's own weapon and has to read - and eased, so walking through a
    * doorway is a change of light rather than a switch.
    */
-  setLight(dt, sky, sun) {
+  setLight(dt, sky, sun, sunDirection, sunColor, viewQuaternion) {
     const lights = this.lights;
     const ease = 1 - Math.exp(-dt / 0.25);
     lights.sky += (Math.min(Math.max(sky, 0.35), 1.15) - lights.sky) * ease;
     lights.sun += (sun - lights.sun) * ease;
-    lights.key.intensity = KEY_LIGHT * (0.45 + 0.55 * lights.sun) * Math.min(1, 0.4 + 0.6 * lights.sky);
+    lights.key.intensity = KEY_LIGHT * (0.28 + 0.72 * lights.sun) * Math.min(1, 0.4 + 0.6 * lights.sky);
     lights.fill.intensity = FILL_LIGHT * lights.sky;
     this.scene.environmentIntensity = (this.environmentBase ?? 1) * ENVIRONMENT_LIGHT * lights.sky;
+    // A fixed white studio lamp makes every gun look pale and unrelated to
+    // the hall. Rotate the real map sun into view space so the same side of
+    // the weapon catches the same warm light as the wall behind it.
+    if (sunDirection && viewQuaternion) {
+      _viewInverse.copy(viewQuaternion).invert();
+      _viewSun.copy(sunDirection).normalize().applyQuaternion(_viewInverse);
+      lights.key.position.copy(_viewSun).multiplyScalar(3);
+    }
+    if (sunColor) lights.key.color.copy(sunColor);
   }
 
   /**
@@ -1431,10 +1443,10 @@ export class Viewmodel {
     const hip = this.hipPosition;
     const ads = this.adsPosition;
     this.root.position.set(
-      hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX - lag * c.move.shift,
+      hip.x + (ads.x - hip.x) * a + (sway.x * swayScale) + bobX + breathX - lag * c.move.shift - reload * .065,
       hip.y + (ads.y - hip.y) * a + (sway.y * swayScale) + bobY + breathY
         + (this.airLift - this.landDip) * steady(c.ads.bobScale)
-        - reload * c.reloadPose.drop + seat * 0.02 - thrown * 0.14 - lowered * LOWERED.drop - this.sprintBlend * 0.065,
+        - reload * c.reloadPose.drop + reload * .02 + seat * 0.02 - thrown * 0.14 - lowered * LOWERED.drop - this.sprintBlend * 0.065,
       hip.z + (ads.z - hip.z) * a + r.back + reload * c.reloadPose.back,
     );
     const hr = this.hipRotation;
@@ -1541,7 +1553,8 @@ export class Viewmodel {
     // A reload, in the fractions of it the server's clock gives.
     const p = this.reloadProgress == null ? this.reloadProgress : reloadPose(this.reloadProgress, this.reloadSeconds, this.rig.weapon);
     let out = 0;
-    let shown = true;
+    let oldOut = 0;
+    let newOut = 0;
     let carry = 0;
     let charge = 0;
     let atHandle = 0;
@@ -1549,13 +1562,13 @@ export class Viewmodel {
       const span = (a, b) => smooth(Math.min(1, Math.max(0, (p - a) / (b - a))));
       carry = span(0.04, 0.12);
       out = span(0.12, 0.26);
-      if (p >= 0.26 && p < 0.42) {
-        // Away to the pouch for the next one, out of sight.
-        shown = false;
-        out = 1 + 0.6 * span(0.26, 0.34) * (1 - span(0.34, 0.42));
-      } else if (p >= 0.42) {
-        out = 1 - 0.88 * span(0.42, 0.56) - 0.12 * span(0.56, 0.62);
-      }
+      // The empty magazine leaves the well and goes down to the pouch.
+      // A second, identical model rises into the hand and seats in the well;
+      // neither model vanishes while visible in front of the camera.
+      oldOut = p >= .62 ? 0 : p < .26 ? out : 1 + 2 * span(.26,.34);
+      newOut = p < .42 ? 3 - 2 * span(.34,.42)
+        : 1 - .88 * span(.42,.56) - .12 * span(.56,.62);
+      out = p < .34 ? oldOut : newOut;
       if (action.charge > 0) {
         atHandle = span(0.62, 0.7) * (1 - span(0.82, 0.95));
         charge = action.charge * span(0.7, 0.76) * (1 - span(0.76, 0.8));
@@ -1585,8 +1598,16 @@ export class Viewmodel {
     const magazine = parts.magazine;
     const [mx, my, mz] = action.magazine;
     if (magazine) {
-      magazine.node.position.copy(magazine.position).add(_shift.set(mx * out, my * out, mz * out));
-      magazine.node.visible = shown;
+      if (!magazine.replacement) {
+        magazine.replacement = magazine.node.clone(true);
+        magazine.replacement.name = `${magazine.node.name}_fresh`;
+        magazine.node.parent.add(magazine.replacement);
+      }
+      const swapping = p !== null && p !== undefined;
+      magazine.node.position.copy(magazine.position).add(_shift.set(mx * oldOut, my * oldOut, mz * oldOut));
+      magazine.node.visible = !swapping || p < .34 || p >= .62;
+      magazine.replacement.position.copy(magazine.position).add(_shift.set(mx * newOut, my * newOut, mz * newOut));
+      magazine.replacement.visible = swapping && p >= .34 && p < .62;
     }
 
     // The left hand: off where it holds the gun onto the magazine, or the
