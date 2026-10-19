@@ -28,6 +28,7 @@ export async function terminalFloor() {
   material.flatShading=true;
   material.metalness=0;
   material.normalScale.setScalar(.07);
+  material.defines = { ...material.defines, BAKED_STATIC_SUN: 1 };
   for(const key of ['map','normalMap','roughnessMap','metalnessMap','aoMap']) {
     const texture=material[key];if(!texture)continue;
     texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
@@ -138,6 +139,57 @@ export async function dressTerminal(map) {
   });
   map.add(result);
   addMarkings(map);
+  await addDisplays(map);
+}
+
+// The four full-height cover screens carry the game's real key art. The
+// protective steel-and-glass casings are part of the collision map already;
+// these lit faces only dress them and never change a firing lane.
+async function addDisplays(map) {
+  const cover = await new THREE.TextureLoader().loadAsync(asset('assets/menu/splash.webp'));
+  const canvas = document.createElement('canvas');
+  canvas.width = 1600;
+  canvas.height = 640;
+  const c = canvas.getContext('2d');
+  c.fillStyle = '#071016';
+  c.fillRect(0, 0, canvas.width, canvas.height);
+  // Preserve the complete Solatel mark, soldier, and daylight artwork.
+  c.drawImage(cover.image, 0, 0, 1120, 640);
+  const shade = c.createLinearGradient(760, 0, 1170, 0);
+  shade.addColorStop(0, '#07101600');
+  shade.addColorStop(1, '#071016');
+  c.fillStyle = shade;
+  c.fillRect(760, 0, 420, 640);
+  c.fillStyle = '#d69338';
+  c.fillRect(1160, 80, 8, 480);
+  c.fillStyle = '#f2eee6';
+  c.textAlign = 'left';
+  c.font = '700 74px "Saira Condensed", sans-serif';
+  c.fillText('PLAY', 1208, 200);
+  c.fillText('KILL', 1208, 302);
+  c.fillText('EARN', 1208, 404);
+  c.fillStyle = '#d69338';
+  c.fillRect(1208, 439, 295, 3);
+  c.fillStyle = '#c5d0d0';
+  c.font = '600 29px "Saira Condensed", sans-serif';
+  c.fillText('DAYBREAK TERMINAL', 1208, 505);
+  c.fillText('SOLATEL / 01', 1208, 548);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  const material = new THREE.MeshBasicMaterial({map: texture, toneMapped: false, side: THREE.FrontSide});
+  const displays = new THREE.Group();
+  displays.name = 'terminal-solatel-displays';
+  for (const [x, z, width] of [[1, -43, 6], [-19, -17, 8], [17, 17, 7], [-2, 54, 6]]) {
+    for (const side of [-1, 1]) {
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(width * .75 - .3, 2.4), material);
+      face.name = 'solatel-cover-display';
+      face.position.set(x * .75, 1.42, z * .75 + side * .185);
+      if (side < 0) face.rotation.y = Math.PI;
+      displays.add(face);
+    }
+  }
+  map.add(displays);
 }
 
 function addMarkings(map) {

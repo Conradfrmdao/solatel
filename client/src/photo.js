@@ -38,12 +38,16 @@ import { PHOTO_SETS } from './photo-sets.js';
  * and the ribs of a sheet out of line where two patches meet.
  */
 export const PHOTO = {
-  terminal_floor: ['concrete_floor', 5.0, 0.8, 0.03, 0, 0.45],
-  terminal_wall: ['concrete_wall', 4.0, 0.85, 0.12, 0, 0.38],
-  terminal_stone: ['concrete_wall', 3.0, 0.8, 0.12, 0, 0.38],
+  terminal_floor: ['concrete_floor', 5.0, 0.35, 0.5, 1, 0.8],
+  terminal_wall: ['concrete_wall', 4.0, 0.4, 0.65, 1, 0.78],
+  terminal_stone: ['concrete_wall', 3.0, 0.42, 0.55, 1, 0.78],
   terminal_brick: ['brick', 2.4, 0.35, 0.6, 0],
-  terminal_teal: ['metal_plate', 1.5, 1.0, 0.1, 0, 0.12],
-  terminal_amber: ['metal_plate', 1.5, 1.0, 0.1, 0, 0.12],
+  terminal_teal: ['painted_metal', 1.5, 0.62, 0.6, 1, 0.65],
+  terminal_amber: ['painted_metal', 1.5, 0.65, 0.6, 1, 0.65],
+  terminal_frame: ['metal_plate', 1.5, 0.9, 0.7, 1, 0.78],
+  terminal_alloy: ['metal_plate', 1.5, 0.4, 0.7, 1, 0.75],
+  terminal_roof_steel: ['metal_plate', 2.0, 0.52, 0.65, 1, 0.78],
+  terminal_mirror: ['metal_plate', 2.0, 0.3, 0.45, 1, 0.8],
   concrete: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_light: ['concrete_wall', 3.0, 0.45, 1.0, 1],
   concrete_grey: ['concrete_wall', 3.0, 0.75, 1.0, 1],

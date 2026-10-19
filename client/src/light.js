@@ -254,7 +254,13 @@ export const LIGHT_BEFORE_LIGHTS = `
     // nothing to say: nearer in, the real shadow is sharper and moves.
     vec2 off = abs(LIGHT_POSITION.xz - lightShadowCentre.xz);
     float beyond = smoothstep(${(SHADOW_REACH * 0.7).toFixed(1)}, ${(SHADOW_REACH * 0.95).toFixed(1)}, max(off.x, off.y));
+    #ifdef BAKED_STATIC_SUN
+    // Architectural meshes do not move. Their baked visibility avoids the
+    // shadow-map acne that made the terminal's stairs and roof hatch.
+    lightVolumeSun = mix(1.0, colour.a, lightVolumeStrength);
+    #else
     lightVolumeSun = mix(1.0, colour.a, beyond * lightVolumeStrength);
+    #endif
   }
 `;
 

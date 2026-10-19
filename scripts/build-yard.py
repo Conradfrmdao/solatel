@@ -21,6 +21,7 @@ f.PALETTE.update({
     'terminal_frame': ('#303b40', .65),
     'terminal_stone': ('#a9a28f', .88),
     'terminal_alloy': ('#909b9f', .3),
+    'terminal_roof_steel': ('#626f75', .52),
     'terminal_black': ('#202d31', .5),
     'terminal_brick': ('#a38369', .87),
     'terminal_mirror': ('#c3c9c6', .12),
@@ -133,8 +134,8 @@ def main():
             for y in [4.7,10.8]:
                 detail.box(x-.52,y,z-.65,x+.52,y+.14,z+.65,'terminal_amber')
         for a,b in [((-47,12,z),(0,18,z)),((0,18,z),(47,12,z))]:
-            beam(detail,a,b,.65,'terminal_wall')
-        beam(detail,(-47,11.8,z),(47,11.8,z),.6,'terminal_wall')
+            beam(detail,a,b,.65,'terminal_roof_steel')
+        beam(detail,(-47,11.8,z),(47,11.8,z),.6,'terminal_roof_steel')
         for x in range(-42,43,7):
             roof = 18-abs(x)*6/47
             beam(detail,(x,11.8,z),(x,roof,z),.11)
@@ -155,10 +156,10 @@ def main():
         for za in range(-72,72,12):
             ya,yb=18-abs(xa)*6/47,18-abs(xb)*6/47
             detail.face([(xa,ya-.22,za),(xb,yb-.22,za),(xb,yb-.22,za+12),(xa,ya-.22,za+12)],'terminal_wall',(0,-1,0))
-            beam(detail,(xa,ya-.38,za),(xb,yb-.38,za),.45,'terminal_wall')
+            beam(detail,(xa,ya-.38,za),(xb,yb-.38,za),.45,'terminal_roof_steel')
         for x in [xa,xb]:
             y=18-abs(x)*6/47
-            beam(detail,(x,y-.3,-72),(x,y-.3,72),.38,'terminal_wall')
+            beam(detail,(x,y-.3,-72),(x,y-.3,72),.38,'terminal_roof_steel')
     # End gables close the hall while admitting daylight.
     for z in [-71.7,71.7]:
         glass.face([(-47,12,z),(47,12,z),(0,18,z)],'glass',(0,0,1))

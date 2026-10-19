@@ -1,3 +1,22 @@
+## October 19 Yard art pass
+
+Yard's pale concrete and untextured structural steel have been replaced with
+stronger scanned PBR treatment, cooler roof steel, and lower exposure. Four
+two-sided cover displays now show the existing Solatel key art with the
+Play/Kill/Earn message. The Yard menu thumbnail is a capture of the current
+hall. Keep the display planes decorative: the underlying metal screens carry
+the existing collision and must stay solid.
+
+The stair hatching was real-time shadow acne. `_loadMap` disables real-time
+shadow reception on Yard's fixed architecture and marks those materials for
+the baked static sun; `batchStatic` must preserve those flags when merging
+meshes. The actual skylight shadow and indirect lighting still come from
+`assets/light/yard.bin`. If changing Yard geometry or colours, run the build,
+collision derivation, and light bake. This material-only roof change left the
+generated `map.rs` byte-identical, so map version 33 did not change. The
+renderer was checked at side stairs, central stairs, roof, and the main hall
+without JS errors; the thin zig-zag pattern is gone.
+
 ## October 19 completion update
 
 The user tested the latest live build and confirmed there is no longer Yard

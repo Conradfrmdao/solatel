@@ -750,7 +750,12 @@ function batchStatic(map) {
     }
     if (!visible || Array.isArray(node.material)) return;
     const key = node.material.uuid;
-    if (!groups.has(key)) groups.set(key, { material: node.material, parts: [] });
+    if (!groups.has(key)) groups.set(key, {
+      material: node.material,
+      parts: [],
+      castShadow: node.castShadow,
+      receiveShadow: node.receiveShadow,
+    });
     const g = node.geometry.clone();
     g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toMap, node.matrixWorld));
     for (const name of Object.keys(g.attributes)) if (name !== 'position') g.deleteAttribute(name);
@@ -758,7 +763,7 @@ function batchStatic(map) {
     merged.push(node);
   });
   let batches = 0;
-  for (const { material, parts } of groups.values()) {
+  for (const { material, parts, castShadow, receiveShadow } of groups.values()) {
     if (parts.length < 2) continue;
     const indexed = parts.every((g) => g.index);
     const geometry = mergeGeometries(indexed ? parts : parts.map((g) => (g.index ? g.toNonIndexed() : g)));
@@ -768,8 +773,8 @@ function batchStatic(map) {
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = receiveShadow;
     mesh.name = `batch:${material.name}`;
     // The map is scaled by the simulation's scale; the batch is in the map's
     // own frame, so it goes in as a child and takes the same scale.
@@ -944,7 +949,7 @@ export class World {
     const spec = SKIES[mapName] ?? SKIES[DEFAULT_SKY];
     // Expose the sunlit terminal for its interior, keeping covered routes
     // legible while the skylights retain their bright daylight contrast.
-    if(this.renderer)this.renderer.toneMappingExposure=mapName==='yard'?1.2:.9;
+    if(this.renderer)this.renderer.toneMappingExposure=mapName==='yard'?1.02:.9;
     this._skies = this._skies ?? new Map();
     if (!this._skies.has(spec.file)) this._skies.set(spec.file, this._loadSky(spec.file));
     // Only the latest request goes up: the sky read at startup may still be
@@ -1414,7 +1419,7 @@ export class World {
       if (node.userData?.collision_only) node.visible = false;
       if (!node.isMesh) return;
       node.castShadow = true;
-      node.receiveShadow = true;
+      node.receiveShadow = mapName !== 'yard';
       if(!node.geometry.attributes.normal)node.geometry.computeVertexNormals();
       if (floor && node.material.name === 'terminal_floor') {
         const position=node.geometry.attributes.position;
@@ -1433,6 +1438,7 @@ export class World {
       const materials = Array.isArray(node.material) ? node.material : [node.material];
       for (const material of materials) {
         if (!material) continue;
+        if (mapName === 'yard') material.defines = { ...material.defines, BAKED_STATIC_SUN: 1 };
         // Left at the default these read as wet plastic, and at fully rough
         // they read as paper. This is closer to the painted metal and concrete
         // the shapes are meant to be, and leaves enough sheen for the key
@@ -1446,9 +1452,9 @@ export class World {
         // flat colour - so shading it flat is both truer to the art and what
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
-        if (/^terminal_(teal|amber|frame|alloy)$/.test(material.name)) {
-          material.metalness = material.name === 'terminal_alloy' ? 0.75 : 0.25;
-          material.roughness = material.name === 'terminal_alloy' ? 0.3 : 0.42;
+        if (/^terminal_(teal|amber|frame|alloy|roof_steel)$/.test(material.name)) {
+          material.metalness = material.name === 'terminal_alloy' ? 0.75 : material.name === 'terminal_roof_steel' ? .58 : 0.25;
+          material.roughness = material.name === 'terminal_alloy' ? 0.3 : material.name === 'terminal_roof_steel' ? .52 : 0.42;
         }
         if (material.name === 'terminal_mirror') {
           material.metalness = 1;
