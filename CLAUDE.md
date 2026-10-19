@@ -1,3 +1,14 @@
+## October 19 completion update
+
+The user tested the latest live build and confirmed there is no longer Yard
+stair whole-scene wobble. Both central and side flights were also walked with
+real W-key input on the live server at about 240–258 ms RTT: no sideways eye
+motion, yaw/roll oscillation, downward eye motion on ascent, or prediction
+correction. This supersedes the earlier unresolved-stair notes below.
+Protocol 25 grenade release, predicted wall feedback, seven soldier voice
+lines, solid guards, Space mantle and brisk LMG reload are deployed at
+5e43d8bfe797. Live health reports a reconciling ledger and zero escrow.
+
 ## October 19 grenade release pass
 
 Protocol 25 changes G to hold-to-prepare, release-to-throw. Input emits the
