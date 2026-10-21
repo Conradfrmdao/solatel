@@ -222,6 +222,15 @@ async function boot() {
   const soldier = await remotes.load(soldierUrl);
   // And the same soldier's arms in first person, in the same pose.
   viewmodel.setArms(soldier, remotes.clips.aim);
+  // Authored operators download behind the menu so they do not hold up the
+  // first frame. Portrait generation waits for them to render matching cards.
+  const operatorLoading = [
+    remotes.loadOperator(5, asset('assets/characters/ranger.glb'))
+      .catch((error) => console.warn('Ranger model unavailable; using soldier fallback', error)),
+    remotes.loadOperator(8, asset('assets/characters/ghost.glb'))
+      .catch((error) => console.warn('Ghost model unavailable; using soldier fallback', error)),
+  ];
+  if (options.has('portraits')) await Promise.all(operatorLoading);
 
   const local = new LocalPlayer(link, input);
   // The menu is built before the HUD, because the settings controls live in
@@ -248,7 +257,8 @@ async function boot() {
     const format = { scale: 2, type: 'image/webp', quality: 0.9 };
     window.solatelPortraits = (async () => ({
       guns: Object.fromEntries(await portraits(PRIMARIES.map((id) => [id, WEAPONS[id]?.optics[0] ?? 'red_dot']), format)),
-      skins: Object.fromEntries(await soldierPortraits(soldier, remotes.clips.ready, SKINS.map((s) => s.id), format)),
+      skins: Object.fromEntries(await soldierPortraits(soldier, remotes.clips.ready,
+        SKINS.map((s) => s.id), { ...format, operatorProfiles: remotes.operatorProfiles })),
     }))();
   }
   const hud = new Hud(hudRoot);
@@ -404,6 +414,10 @@ async function boot() {
     viewmodel.setSkin(local.skin ?? 0);
     armedWith = local.loadout;
     await world.load(mapName);
+    // Finish the background operator downloads behind the match loading
+    // card, then compile their shaders before the first combat frame.
+    await Promise.all(operatorLoading);
+    remotes.refreshProfiles();
     // The gun in hand reflects the same sky as everything else.
     viewmodel.setEnvironment(scene.environment, scene.environmentIntensity);
 

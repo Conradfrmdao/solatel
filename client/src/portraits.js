@@ -101,7 +101,8 @@ const SOLDIER_HEIGHT = 240;
  * - three quarters on, under the same studio light as the guns. Resolves to
  * an empty map if the browser cannot draw.
  */
-export async function soldierPortraits(template, pose, skins, { scale = 1, type = 'image/png', quality } = {}) {
+export async function soldierPortraits(template, pose, skins,
+  { scale = 1, type = 'image/png', quality, operatorProfiles } = {}) {
   const out = new Map();
   let renderer;
   try {
@@ -148,6 +149,26 @@ export async function soldierPortraits(template, pose, skins, { scale = 1, type 
       }
     });
     for (const skin of skins) {
+      const profile = operatorProfiles?.get(skin);
+      if (profile?.authored) {
+        // Use the same textured, animated model that appears in matches.
+        const authored = cloneSkinned(profile.template);
+        const authoredMixer = new THREE.AnimationMixer(authored);
+        authoredMixer.clipAction(profile.clips.ready).play();
+        authoredMixer.update(0);
+        authored.rotation.y = 0.5;
+        authored.traverse((node) => { if (node.isSkinnedMesh) node.frustumCulled = false; });
+        scene.remove(body);
+        scene.add(authored);
+        renderer.clear();
+        renderer.render(scene, camera);
+        out.set(skin, canvas.toDataURL(type, quality));
+        scene.remove(authored);
+        scene.add(body);
+        authoredMixer.stopAllAction();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        continue;
+      }
       for (const [mesh, plain, geometry] of meshes) {
         mesh.material = dressed(plain, skin, { unit: 1, cloth: plain.name === CLOTH_MATERIAL });
         mesh.geometry=operatorGeometry(geometry,plain.name,skin);

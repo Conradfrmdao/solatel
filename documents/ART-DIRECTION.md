@@ -35,20 +35,38 @@ kit silhouettes, but still share the source character's face and garment
 sculpt. The four menu images show the actual implementation. Exact concept
 faces, sleeve cuts, clothing folds and texture fidelity remain unfinished.
 
-With the user's explicit permission to upload the generated Ranger image
-to Tencent's public Hunyuan3D Hugging Face demo, a raw geometry test succeeded
-(381,556 triangles). Textured generation was refused by the demo's GPU
-duration limit. The mesh is untextured and unrigged, has soft small details,
-and remains a local ignored experiment under `.artifacts/generated-3d/`.
-It is not a finished game asset. Do not upload the other operators without
-the user's authorization for that external destination.
+The earlier Tencent Hunyuan3D geometry test remains a local ignored
+experiment; its textured service was not available here. With the user's
+subsequent explicit permission, the four separate operator references were
+processed through three.ws Forge's TRELLIS and Make-It-Animatable services.
+Ranger and Ghost have distinct textured meshes, Mixamo-compatible rigs and
+retargeted idle, run, fire and death clips. Their gameplay models are in
+`assets/characters/`, and skins 5 and 8 use those models and matching menu
+portraits. Local two-player matches confirmed the correct model and weapon
+appear for each skin. Their silhouettes and clothing are much closer to the
+approved lineup than the recolored soldier, though the generated facial
+detail and material definition still fall short of the reference art.
+
+Breacher and Engineer generation produced damaged facial geometry and
+textures. Those results are only in ignored `.artifacts/character-pipeline/`;
+skins 6 and 9 still use the previous in-game implementation until usable
+replacement heads, helmet/visor details, rigs and animations are ready.
+Do not present these two as faithful 3D versions of the approved concepts.
+The authored first-person sleeves and hands are also still being evaluated;
+they must match each operator without breaking weapon poses or reloads.
+
+The three.ws terms say that generated content belongs to its creator subject
+to the output review obligation in its terms. The underlying TRELLIS and
+Make-It-Animatable projects publish MIT licenses, and the source Ch15 motion
+clips are used under Adobe Mixamo's game-use permission. Check these terms
+again before a paid asset redistribution outside the game.
 
 Exact production outfits still require detailed garment and equipment
-modeling, retopology, UVs, PBR textures, rigging, first-person arm integration,
-and animation QA against the supplied lineup. There is no connected service
-here that completes all those steps or guarantees exact image fidelity.
-The public demo's license also needs consideration before any output is
-distributed: https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE.
+modeling, retopology, UVs, PBR textures, first-person arm integration, and
+animation QA against the supplied lineup. No automated image-to-3D result
+here guarantees exact likeness. The rejected Breacher and Engineer models
+need manually fitted, properly textured heads and helmet details before they
+can replace the current game models.
 
 Fixed regressions to preserve: the aim transition now hides the gun when
 the scope overlay becomes visible. The Arena screenshot at (-13.6, 0.9, 15)

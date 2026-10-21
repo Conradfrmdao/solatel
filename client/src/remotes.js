@@ -403,6 +403,10 @@ export class Remotes {
   constructor(scene) {
     this.scene = scene;
     this.template = null;
+    /** The original soldier remains the first-person arm source and fallback. */
+    this.profile = null;
+    /** Authored character models keyed by their existing skin id. */
+    this.operatorProfiles = new Map();
     this.weapon = null;
     /** Which way the face looks, in the head bone's frame (see `load`). */
     this.face = null;
@@ -436,42 +440,11 @@ export class Remotes {
   async load(soldierUrl) {
     const soldier = await new GLTFLoader().loadAsync(soldierUrl);
     this.template = soldier.scene;
-    // Which way the face looks, in the head bone's own frame: the soldier
-    // is loaded at rest, facing +Z.
-    const head = this.template.getObjectByName(BONE.head);
-    if (head) {
-      this.template.updateMatrixWorld(true);
-      this.face = new THREE.Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()).invert());
-    }
-
     await MeshoptSimplifier.ready;
-    this.template.traverse((node) => {
-      if (node.isMesh || node.isSkinnedMesh) {
-        node.castShadow = true;
-        node.receiveShadow = true;
-        // Culled by bounds that reach as far as any pose does (see
-        // `POSE_REACH`); the copies made for each player take these.
-        if (node.isSkinnedMesh) {
-          node.geometry.computeBoundingSphere();
-          node.boundingSphere = node.geometry.boundingSphere.clone();
-          node.boundingSphere.radius *= POSE_REACH;
-          node.frustumCulled = true;
-        }
-        detailed(node.geometry);
-        // Lit by the map's light, so a soldier in a dark room is in the dark.
-        for (const material of [node.material].flat()) {
-          // The source is a Phong FBX conversion, not authored PBR. Its
-          // inferred metallic/roughness texture made fabric and gloves look
-          // like polished metal. Cloth, leather and painted armor are
-          // dielectrics; keep their color/normal detail without that gloss.
-          material.metalness = 0;
-          material.roughnessMap = null;
-          material.roughness = 0.88;
-          material.normalScale?.setScalar(0.7);
-          lightMaterial(material);
-        }
-      }
-    });
+    this.profile = this._profile(soldier, false);
+    this.face = this.profile.face;
+    this.clips = this.profile.clips;
+    this.fall = this.profile.fall;
     // A gun in somebody else's hands is lit by the map as they are. The one
     // in the player's own hands is drawn in a scene of its own, lit its own
     // way, so these are copies with copies of its materials.
@@ -484,9 +457,76 @@ export class Remotes {
     this.guns = new Map();
     this.weapon = this._gun('rifle', 'red_dot');
 
+    return this.template;
+  }
+
+  /** Register a complete, animated character for one skin. A missing or
+   *  incomplete asset leaves the original soldier as the fallback. */
+  async loadOperator(skin, url) {
+    if (!this.profile) throw new Error('load the original soldier first');
+    const model = await new GLTFLoader().loadAsync(url);
+    const profile = this._profile(model, true);
+    this.operatorProfiles.set(skin, profile);
+    return profile.template;
+  }
+
+  /** Called behind the loading card, after operator downloads complete. */
+  refreshProfiles() {
+    for (const [id, player] of this.players) {
+      const profile = this.operatorProfiles.get(this.skins.get(id)) ?? this.profile;
+      if (player.profile === profile) continue;
+      this.scene.remove(player.root);
+      this.players.delete(id);
+    }
+  }
+
+  _profile(model, authored) {
+    const template = model.scene;
+    for (const name of [BONE.hips, BONE.spine, BONE.head, BONE.handL, BONE.handR,
+      BONE.upLegL, BONE.legL, BONE.footL, BONE.upLegR, BONE.legR, BONE.footR]) {
+      if (!template.getObjectByName(name)) throw new Error(`character rig is missing ${name}`);
+    }
+    // Which way the face looks in the head bone's own frame. Both the
+    // original and authored models are exported facing +Z.
+    template.updateMatrixWorld(true);
+    const head = template.getObjectByName(BONE.head);
+    const face = new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()).invert());
+    template.traverse((node) => {
+      if (!node.isMesh && !node.isSkinnedMesh) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+      // Ranger's generated mesh is indexed but omits normals. glTFLoader
+      // otherwise forces flat shading on every triangle, giving cloth and
+      // faces a faceted look even with the correct texture.
+      if (!node.geometry.getAttribute('normal')) node.geometry.computeVertexNormals();
+      if (node.isSkinnedMesh) {
+        node.geometry.computeBoundingSphere();
+        node.boundingSphere = node.geometry.boundingSphere.clone();
+        node.boundingSphere.radius *= POSE_REACH;
+        node.frustumCulled = true;
+      }
+      detailed(node.geometry);
+      for (const material of [node.material].flat()) {
+        // Both the FBX conversion and the generated operators arrive with
+        // one material for cloth, skin and armor. Their all-metal defaults
+        // make faces and sleeves look like polished metal under map lights.
+        material.metalness = authored ? 0.06 : 0;
+        material.roughnessMap = null;
+        material.roughness = authored ? 0.82 : 0.88;
+        if (authored && material.flatShading) {
+          material.flatShading = false;
+          material.needsUpdate = true;
+        }
+        if (!authored) material.normalScale?.setScalar(0.7);
+        lightMaterial(material);
+      }
+    });
     const find = (name) => {
-      const clip = THREE.AnimationClip.findByName(soldier.animations, name);
-      if (!clip) throw new Error(`the soldier has no ${name} clip`);
+      const clip = THREE.AnimationClip.findByName(model.animations, name);
+      if (!clip || !clip.tracks.length || clip.duration <= 0) {
+        throw new Error(`character has no usable ${name} clip`);
+      }
       return clip;
     };
     const upper = (bone) => UPPER.test(bone);
@@ -494,17 +534,16 @@ export class Remotes {
     const fire = find(CLIP.fire);
     // The first frame of the shot: rifle shouldered, looking down it.
     const aim = split(THREE.AnimationUtils.subclip(fire, 'aim', 0, 1, 30), 'aim', upper);
-    this.clips = {
+    const clips = {
       idle: split(find(CLIP.idle), 'idle-legs', lower),
       run: split(find(CLIP.run), 'run-legs', lower),
       aim,
-      ready: lowReady(this.template, find(CLIP.idle), aim),
+      ready: lowReady(template, find(CLIP.idle), aim),
       swing: split(find(CLIP.run), 'run-arms', upper),
       fire: split(fire, 'fire-arms', upper),
       death: find(CLIP.death),
     };
-    this.fall = fallOf(this.template, this.clips.death);
-    return this.template;
+    return { template, clips, fall: fallOf(template, clips.death), face, authored };
   }
 
   /** What every other player in a match is drawn with - the soldier and
@@ -514,7 +553,8 @@ export class Remotes {
     // One of each gun, each with a different optic, which between them use
     // every material any of them is drawn with.
     const optics = { pistol: 'irons', smg: 'red_dot', rifle: 'x2', lmg: 'x3', sniper: 'x4' };
-    return [this.template, ...WEAPON_IDS.map((w) => this._gun(w, optics[w]))].filter(Boolean);
+    return [this.template, ...[...this.operatorProfiles.values()].map((p) => p.template),
+      ...WEAPON_IDS.map((w) => this._gun(w, optics[w]))].filter(Boolean);
   }
 
   /** The model of `weapon` with `optic`, as everybody else carries it: lit by
@@ -650,7 +690,7 @@ export class Remotes {
 
       let player = this.players.get(entry.id);
       if (!player) {
-        player = this._spawn(entry.id);
+        player = this._spawn(entry.id, this.skins.get(entry.id) ?? 0);
         this.players.set(entry.id, player);
         this._dress(player, this.skins.get(entry.id) ?? 0);
       }
@@ -695,8 +735,8 @@ export class Remotes {
     }
     let to = root.rotation.y;
     const fall = new THREE.Vector3();
-    if (this.fall) {
-      const own = Math.atan2(this.fall.x, this.fall.z);
+    if (player.profile.fall) {
+      const own = Math.atan2(player.profile.fall.x, player.profile.fall.z);
       if (from) {
         const dx = root.position.x - from.x;
         const dz = root.position.z - from.z;
@@ -720,7 +760,7 @@ export class Remotes {
       player.root.rotation.y = turn.from + (turn.to - turn.from) * ease(t / DEATH_TURN_SECONDS);
     }
     // Still while it is down: the clip holds its last frame.
-    if (t < this.clips.death.duration + 0.5) player.mixer.update(dt);
+    if (t < player.profile.clips.death.duration + 0.5) player.mixer.update(dt);
     if (t < DEATH_LINGER_SECONDS) return true;
     const seen = this.view?.intersectsSphere(_seen.set(player.root.position, SEEN_RADIUS)) ?? false;
     return seen && t < DEATH_LINGER_SECONDS * 2;
@@ -772,7 +812,13 @@ export class Remotes {
       const skin = entry.skin ?? 0;
       this.skins.set(entry.id, skin);
       const player = this.players.get(entry.id);
-      if (player) this._dress(player, skin);
+      if (!player) continue;
+      if (player.profile !== (this.operatorProfiles.get(skin) ?? this.profile)) {
+        // Skins are ordinarily chosen between matches. Rebuild the rig if
+        // a board update changes one while a player is already visible.
+        this.scene.remove(player.root);
+        this.players.delete(entry.id);
+      } else this._dress(player, skin);
     }
   }
 
@@ -780,6 +826,7 @@ export class Remotes {
   _dress(player, skin) {
     if (player.skin === skin) return;
     player.skin = skin;
+    if (player.profile.authored) return;
     player.body.traverse((node) => {
       if (!node.isSkinnedMesh) return;
       node.userData.plain ??= node.material;
@@ -835,11 +882,12 @@ export class Remotes {
       .addScaledVector(_side, SHOULDER_MUZZLE.right);
   }
 
-  _spawn(id) {
+  _spawn(id, skin = 0) {
     // The root turns with the player's aim. The body inside it turns a
     // little further for the legs.
     const root = new THREE.Group();
-    const body = cloneSkinned(this.template);
+    const profile = this.operatorProfiles.get(skin) ?? this.profile;
+    const body = cloneSkinned(profile.template);
     root.add(body);
     this.scene.add(root);
 
@@ -855,13 +903,13 @@ export class Remotes {
       return a;
     };
     const actions = {
-      idle: action(this.clips.idle),
-      run: action(this.clips.run),
-      ready: action(this.clips.ready),
-      aim: action(this.clips.aim),
-      swing: action(this.clips.swing),
-      fire: action(this.clips.fire, false),
-      death: action(this.clips.death, false),
+      idle: action(profile.clips.idle),
+      run: action(profile.clips.run),
+      ready: action(profile.clips.ready),
+      aim: action(profile.clips.aim),
+      swing: action(profile.clips.swing),
+      fire: action(profile.clips.fire, false),
+      death: action(profile.clips.death, false),
     };
     actions.idle.play();
     for (const name of ['ready', 'aim', 'swing', 'fire']) actions[name].play().setEffectiveWeight(0);
@@ -907,7 +955,7 @@ export class Remotes {
       .map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
     return {
-      id, root, body, mixer, actions, bones, rifle, grenade, muzzle, flashSprite, hipsScale, clean, details,
+      id, root, body, mixer, actions, bones, rifle, grenade, muzzle, flashSprite, hipsScale, clean, details, profile,
       gun: null,
       gunKey: null,
       weapon: 'rifle',
@@ -1203,9 +1251,9 @@ export class Remotes {
     // the rifle follows only a little of the pitch. Measured, like the hands,
     // and turned onto the look by the neck and the head between them.
     const look = 1 - raise;
-    if (look > 1e-3 && bones.neck && bones.head && this.face) {
+    if (look > 1e-3 && bones.neck && bones.head && player.profile.face) {
       bones.head.getWorldQuaternion(_q);
-      _c.copy(this.face).applyQuaternion(_q);
+      _c.copy(player.profile.face).applyQuaternion(_q);
       const turnHead = clampTwist(wrapAngle(entry.yaw - Math.atan2(-_c.x, -_c.z))) * look;
       const bendHead = clampTwist(entry.pitch - Math.asin(Math.min(1, Math.max(-1, _c.y)))) * look;
       shareTurn(bones, NECK, yawThenPitch(turnHead, bendHead, entry.yaw, _twist));
