@@ -49,11 +49,14 @@ detail and material definition still fall short of the reference art.
 
 Breacher and Engineer generation produced damaged facial geometry and
 textures. Those results are only in ignored `.artifacts/character-pipeline/`;
-skins 6 and 9 still use the previous in-game implementation until usable
+skins 6 and 7 still use the previous in-game implementation until usable
 replacement heads, helmet/visor details, rigs and animations are ready.
 Do not present these two as faithful 3D versions of the approved concepts.
-The authored first-person sleeves and hands are also still being evaluated;
-they must match each operator without breaking weapon poses or reloads.
+The first-person view still uses the original hand rig, with sleeves tinted
+to the selected operator palette. Directly cutting arms from the generated
+Ranger and Ghost meshes caused detached wrists and malformed forearms in
+the weapon solver, so those arms were rejected. Matching first-person
+sleeve and glove geometry remains unfinished.
 
 The three.ws terms say that generated content belongs to its creator subject
 to the output review obligation in its terms. The underlying TRELLIS and
