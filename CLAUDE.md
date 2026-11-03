@@ -2912,4 +2912,17 @@ Browser-standard gamepads can now control play without pointer lock: left
 stick moves, right stick looks, LT aims, RT fires, A jumps, B crouches,
 X reloads, Y swaps, LB holds/releases a grenade and L3 sprints. Keyboard
 and mouse remain available. Nonstandard controller mappings and touch-screen
-play are not yet implemented or verified.
+play were still pending at this point.
+
+## November 3 mobile touch pass
+
+On coarse-pointer devices, the client now uses on-screen movement and combat
+controls and permits play without pointer lock. The layout places movement
+at the lower left, a prominent fire button at the right thumb, aim/jump/
+crouch/reload along the right edge, and sprint/grenade/weapon swap nearby.
+Dragging the open canvas turns the view. Holding grenade previews the throw
+and releasing it sends one throw command. Touch input uses the same server
+commands as keyboard and gamepad; touch-derived mouse events are suppressed
+so a tap does not fire twice. The health and ammo readouts move above the
+controls. Browser emulation checked landscape and portrait layout, and the
+input unit tests passed. Physical phone play and performance still need QA.

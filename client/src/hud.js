@@ -777,7 +777,7 @@ export class Hud {
 
     this.marker.classList.toggle('show', local.hitMarker > 0);
     this.marker.classList.toggle('head', local.hitMarker > 0 && local.hitWasHead);
-    this.lockHint.classList.toggle('hidden', input.locked);
+    this.lockHint.classList.toggle('hidden', input.locked || !input.requireLock || input.gamepadActive);
 
     // Held, not toggled. A scoreboard you have to press twice is a
     // scoreboard somebody leaves open during a fight.

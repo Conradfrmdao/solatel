@@ -49,7 +49,8 @@ export class Input {
    */
   constructor(canvas, { requireLock = true } = {}) {
     this.canvas = canvas;
-    this.requireLock = requireLock;
+    this.touchMode = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+    this.requireLock = requireLock && !this.touchMode;
 
     /** Where the player is looking. Updated every frame, never per tick. */
     this.yaw = 0;
@@ -74,6 +75,9 @@ export class Input {
     this._padButtons = [];
     this._padCrouch = false;
     this._padThrow = false;
+    this._touch = { forward: 0, right: 0, fire: false, aim: false, jump: false,
+      crouch: false, reload: false, grenade: false, throw: false, sprint: false };
+    this._lastTouchAt = -Infinity;
     this._lastLookAt = performance.now();
     /** Crouching is a toggle on C: holding a key down for a whole fight is
      *  a cramp, and Ctrl, the other habit, is Ctrl+W in a browser. */
@@ -103,10 +107,94 @@ export class Input {
     this.rawWanted = readStoredFlag(RAW_MOUSE_KEY, true);
 
     this._bind();
+    if (this.touchMode) this._bindTouch();
+  }
+
+  _bindTouch() {
+    const markTouch = (event) => { if (event.pointerType === 'touch') this._lastTouchAt = performance.now(); };
+    for (const type of ['pointerdown', 'pointermove', 'pointerup']) {
+      document.addEventListener(type, markTouch, { passive: true });
+    }
+    const layer = document.createElement('div');
+    layer.id = 'touch-controls';
+    layer.innerHTML = `<div class="touch-stick" aria-label="Move"><i></i></div>` +
+      `<button data-touch="sprint" aria-label="Sprint"><span>↗</span>SPRINT</button>` +
+      `<button data-touch="grenade" aria-label="Hold grenade, release to throw"><span>✦</span>GRENADE</button>` +
+      `<button data-touch="fire" aria-label="Fire"><span>✣</span>FIRE</button>` +
+      `<button data-touch="aim" aria-label="Aim"><span>⊕</span>ADS</button>` +
+      `<button data-touch="jump" aria-label="Jump or climb"><span>↑</span>JUMP</button>` +
+      `<button data-touch="crouch" aria-label="Crouch"><span>↓</span>CROUCH</button>` +
+      `<button data-touch="reload" aria-label="Reload"><span>↻</span>RELOAD</button>` +
+      `<button data-touch="swap" aria-label="Swap weapon"><span>⇄</span>SWAP WEAPON</button>`;
+    this.canvas.after(layer);
+    const stick = layer.querySelector('.touch-stick');
+    const thumb = stick.querySelector('i');
+    let stickId = null;
+    const move = (event) => {
+      const rect = stick.getBoundingClientRect();
+      const radius = Math.max(1, rect.width * .38);
+      const x = Math.max(-1, Math.min(1, (event.clientX - rect.left - rect.width / 2) / radius));
+      const y = Math.max(-1, Math.min(1, (event.clientY - rect.top - rect.height / 2) / radius));
+      this._touch.right = x;
+      this._touch.forward = -y;
+      thumb.style.transform = `translate(${x * radius}px, ${y * radius}px)`;
+    };
+    stick.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      stickId = event.pointerId;
+      stick.setPointerCapture(stickId);
+      move(event);
+    });
+    stick.addEventListener('pointermove', (event) => { if (event.pointerId === stickId) move(event); });
+    const releaseStick = (event) => {
+      if (event.pointerId !== stickId) return;
+      stickId = null;
+      this._touch.forward = this._touch.right = 0;
+      thumb.style.transform = '';
+    };
+    stick.addEventListener('pointerup', releaseStick);
+    stick.addEventListener('pointercancel', releaseStick);
+    for (const button of layer.querySelectorAll('button[data-touch]')) {
+      const action = button.dataset.touch;
+      button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        button.setPointerCapture(event.pointerId);
+        if (action === 'swap') this._sidearm = !this._sidearm;
+        else if (action === 'crouch') this._touch.crouch = !this._touch.crouch;
+        else this._touch[action] = true;
+      });
+      const release = (event) => {
+        event.preventDefault();
+        if (action === 'grenade' && this._touch.grenade) this._touch.throw = true;
+        if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
+      };
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', (event) => {
+        event.preventDefault();
+        if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
+      });
+    }
+    let lookId = null;
+    let x = 0; let y = 0;
+    this.canvas.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'touch' || lookId !== null) return;
+      lookId = event.pointerId; x = event.clientX; y = event.clientY;
+      this.canvas.setPointerCapture(lookId);
+    });
+    this.canvas.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== lookId) return;
+      this._dx += (event.clientX - x) * 1.8;
+      this._dy += (event.clientY - y) * 1.8;
+      x = event.clientX; y = event.clientY;
+    });
+    const stopLook = (event) => { if (event.pointerId === lookId) lookId = null; };
+    this.canvas.addEventListener('pointerup', stopLook);
+    this.canvas.addEventListener('pointercancel', stopLook);
   }
 
   _bind() {
     window.addEventListener('mousemove', (event) => {
+      if (this.touchMode && (event.sourceCapabilities?.firesTouchEvents || performance.now() - this._lastTouchAt < 700)) return;
       if (this.requireLock && !this.locked) return;
       // Sum the coalesced samples when the browser offers them. A 1000 Hz
       // mouse produces sixteen samples between two frames and the browser
@@ -129,6 +217,7 @@ export class Input {
     });
 
     window.addEventListener('mousedown', (event) => {
+      if (this.touchMode && (event.sourceCapabilities?.firesTouchEvents || performance.now() - this._lastTouchAt < 700)) return;
       // Only while the mouse is captured. Without this, dragging the
       // sensitivity slider fires the gun.
       if (!(this.locked || !this.requireLock)) return;
@@ -136,6 +225,7 @@ export class Input {
       if (event.button === 2) this._aim = true;
     });
     window.addEventListener('mouseup', (event) => {
+      if (this.touchMode && (event.sourceCapabilities?.firesTouchEvents || performance.now() - this._lastTouchAt < 700)) return;
       if (event.button === 0) this._fire = false;
       if (event.button === 2) this._aim = false;
     });
@@ -198,6 +288,8 @@ export class Input {
       this._tapped.clear();
       this._fire = false;
       this._aim = false;
+      Object.assign(this._touch, { forward: 0, right: 0, fire: false, aim: false,
+        jump: false, reload: false, grenade: false, throw: false, sprint: false });
     });
 
     // Coming back to the window is exactly when raw input registration is
@@ -373,7 +465,9 @@ export class Input {
     if (this.requireLock && !this.locked && !pad) return false;
     const padSprint = Boolean(pad && pad.axes[1] < -.35 && pad.buttons[10]?.pressed &&
       !this._padCrouch && !pad.buttons[6]?.pressed && !pad.buttons[7]?.pressed && !pad.buttons[4]?.pressed);
-    return padSprint || (this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
+    const touchSprint = this._touch.sprint && this._touch.forward > .2 && !this._touch.crouch &&
+      !this._touch.aim && !this._touch.fire && !this._touch.grenade;
+    return padSprint || touchSprint || (this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
       && !this._aim && !this._fire && !this._keys.has('KeyG')
       && (this.sprintToggle ? this._sprintLatched : this._keys.has('ShiftLeft') || this._keys.has('ShiftRight')));
   }
@@ -418,6 +512,8 @@ export class Input {
     return [...navigator.getGamepads()].find((pad) => pad?.connected && pad.mapping === 'standard') ?? null;
   }
 
+  get gamepadActive() { return Boolean(this._gamepad()); }
+
   /** Movement intent for this tick, as the wire wants it. */
   sample() {
     const pad = this._gamepad();
@@ -446,19 +542,22 @@ export class Input {
       if (was(4) && !pressed(4)) this._padThrow = true;
       if (pressed(0)) this._padCrouch = false;
     }
+    forward = Math.max(-1, Math.min(1, forward + this._touch.forward));
+    right = Math.max(-1, Math.min(1, right + this._touch.right));
     const held = (code) => this._keys.has(code) || this._tapped.has(code);
     if (forward <= 0 || this._crouch || this._aim || this._fire || held('KeyG')) this._sprintLatched = false;
     const intent = {
       forward,
       right,
-      jump: this._keys.has('Space') || pressed(0),
-      fire: (this._fire || pressed(7)) && !held('KeyG') && !pressed(4),
-      crouch: this._crouch || this._padCrouch,
-      reload: held('KeyR') || (pressed(2) && !was(2)),
-      throw: Boolean(this._grenadeReleased || this._padThrow),
-      grenadeHeld: this._keys.has('KeyG') || pressed(4),
-      sprint: (this.sprinting || Boolean(pad && forward > .2 && pressed(10))) && !held('KeyG') && !pressed(4) && !pressed(6),
+      jump: this._keys.has('Space') || pressed(0) || this._touch.jump,
+      fire: (this._fire || pressed(7) || this._touch.fire) && !held('KeyG') && !pressed(4) && !this._touch.grenade,
+      crouch: this._crouch || this._padCrouch || this._touch.crouch,
+      reload: held('KeyR') || (pressed(2) && !was(2)) || this._touch.reload,
+      throw: Boolean(this._grenadeReleased || this._padThrow || this._touch.throw),
+      grenadeHeld: this._keys.has('KeyG') || pressed(4) || this._touch.grenade,
+      sprint: (this.sprinting || Boolean(pad && forward > .2 && pressed(10))) && !held('KeyG') && !pressed(4) && !pressed(6) && !this._touch.aim,
     };
+    this._touch.throw = false;
     this._padThrow = false;
     this._padButtons = pad ? pad.buttons.map((button) => button.pressed || button.value > .5) : [];
     this._grenadeReleased = false;
@@ -471,6 +570,7 @@ export class Input {
   resetCrouch() {
     this._crouch = false;
     this._padCrouch = false;
+    this._touch.crouch = false;
     this._sprintLatched = false;
   }
 
@@ -491,7 +591,7 @@ export class Input {
   get aiming() {
     const pad = this._gamepad();
     if (this.requireLock && !this.locked && !pad) return false;
-    return this._aim || Boolean(pad?.buttons[6]?.pressed || (pad?.buttons[6]?.value ?? 0) > .5);
+    return this._aim || this._touch.aim || Boolean(pad?.buttons[6]?.pressed || (pad?.buttons[6]?.value ?? 0) > .5);
   }
 
   /** Raw key state, for the HUD's input row. */

@@ -1779,6 +1779,87 @@
         .needs-keyboard { display: block; }
       }
 
+      #touch-controls { display: none; }
+      @media (pointer: coarse) {
+        #solatel-canvas { touch-action: none; }
+        body.running #health {
+          top: max(12px, env(safe-area-inset-top)); bottom: auto;
+          left: max(16px, env(safe-area-inset-left));
+          font-size: 22px; gap: 8px;
+        }
+        body.running #health .bar { width: 88px; height: 8px; }
+        body.running #weapon {
+          top: max(10px, env(safe-area-inset-top)); bottom: auto;
+          right: max(92px, calc(env(safe-area-inset-right) + 92px));
+        }
+        body.running #weapon .ammo b { font-size: 25px; }
+        body.running #weapon .ammo { font-size: 17px; }
+        body.running #touch-controls {
+          position: fixed; inset: 0; z-index: 20; display: block;
+          pointer-events: none; user-select: none; -webkit-user-select: none;
+        }
+        .touch-stick {
+          position: absolute; left: max(18px, env(safe-area-inset-left));
+          bottom: max(26px, env(safe-area-inset-bottom));
+          width: clamp(95px, 19vw, 150px); aspect-ratio: 1;
+          border-radius: 50%; border: 2px solid rgba(255,255,255,.5);
+          background: rgba(11,18,27,.38); pointer-events: auto; touch-action: none;
+        }
+        .touch-stick i {
+          position: absolute; left: 34%; top: 34%; width: 32%; height: 32%;
+          border-radius: 50%; background: rgba(255,255,255,.7);
+          box-shadow: 0 0 12px #0008;
+        }
+        #touch-controls button {
+          position: absolute; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 1px;
+          width: 62px; height: 62px; padding: 3px;
+          border-radius: 50%; border: 1.5px solid #ffffffaa;
+          color: white; background: #111d2daa;
+          font: 700 10px/1 var(--shout); letter-spacing: .04em;
+          text-shadow: 0 1px 3px #000;
+          pointer-events: auto; touch-action: none;
+        }
+        #touch-controls button span { font: 700 27px/1 var(--read); }
+        #touch-controls button:active { filter: brightness(1.5); }
+        #touch-controls [data-touch='aim'] { right: max(12px, env(safe-area-inset-right)); bottom: 73%; }
+        #touch-controls [data-touch='jump'] { right: max(12px, env(safe-area-inset-right)); bottom: 54%; }
+        #touch-controls [data-touch='crouch'] { right: max(12px, env(safe-area-inset-right)); bottom: 35%; }
+        #touch-controls [data-touch='reload'] { right: max(12px, env(safe-area-inset-right)); bottom: 16%; }
+        #touch-controls [data-touch='fire'] {
+          right: max(88px, calc(env(safe-area-inset-right) + 88px)); bottom: 32%;
+          width: 98px; height: 98px; border: 2px solid #ffb04a;
+          background: #a64a1cb8; box-shadow: 0 0 12px #f89a3b88;
+          font-size: 17px;
+        }
+        #touch-controls [data-touch='fire'] span { font-size: 38px; }
+        #touch-controls [data-touch='grenade'] {
+          right: max(197px, calc(env(safe-area-inset-right) + 197px)); bottom: 44%;
+          width: 57px; height: 57px;
+        }
+        #touch-controls [data-touch='sprint'] {
+          left: max(181px, calc(env(safe-area-inset-left) + 181px)); bottom: 35%;
+          width: 58px; height: 58px;
+        }
+        #touch-controls [data-touch='swap'] {
+          right: max(95px, calc(env(safe-area-inset-right) + 95px));
+          bottom: max(12px, env(safe-area-inset-bottom));
+          width: 178px; height: 52px; border-radius: 14px;
+          flex-direction: row; gap: 8px; font-size: 13px;
+        }
+        #touch-controls [data-touch='swap'] span { font-size: 22px; }
+      }
+      @media (pointer: coarse) and (orientation: portrait) {
+        body.running #health, body.running #weapon { top: max(60px, env(safe-area-inset-top)); }
+        #touch-controls [data-touch='aim'] { bottom: 60%; }
+        #touch-controls [data-touch='jump'] { bottom: 49%; }
+        #touch-controls [data-touch='crouch'] { bottom: 38%; }
+        #touch-controls [data-touch='reload'] { bottom: 27%; }
+        #touch-controls [data-touch='fire'] { bottom: 20%; }
+        #touch-controls [data-touch='grenade'] { right: 145px; bottom: 33%; }
+        #touch-controls [data-touch='sprint'] { left: 18px; bottom: 39%; }
+      }
+
       /* Form controls in the menu's colours rather than the browser's. */
       #menu input[type='range'],
       #menu input[type='checkbox'] { accent-color: #9fe8b4; }

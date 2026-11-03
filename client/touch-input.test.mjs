@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { Input } from './src/input.js';
+
+test('touch intent shares the same server command path and grenade release is one pulse', () => {
+  globalThis.window = new EventTarget();
+  window.localStorage = { getItem: () => null, setItem() {} };
+  globalThis.document = new EventTarget();
+  const input = new Input(new EventTarget(), { requireLock: false });
+  input._touch.forward = .8;
+  input._touch.right = -.4;
+  input._touch.aim = true;
+  input._touch.fire = true;
+  assert.equal(input.aiming, true);
+  assert.deepEqual([input.sample().forward, input.sample().right], [.8, -.4]);
+  assert.equal(input.sample().fire, true);
+  input._touch.sprint = true;
+  assert.equal(input.sample().sprint, false);
+  input._touch.fire = false;
+  input._touch.aim = false;
+  assert.equal(input.sample().sprint, true);
+  input._touch.fire = true;
+  input._touch.aim = true;
+  input._touch.grenade = true;
+  assert.equal(input.sample().fire, false);
+  assert.equal(input.sample().grenadeHeld, true);
+  input._touch.grenade = false;
+  input._touch.throw = true;
+  assert.equal(input.sample().throw, true);
+  assert.equal(input.sample().throw, false);
+  delete globalThis.window;
+  delete globalThis.document;
+});

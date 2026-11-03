@@ -479,6 +479,7 @@ async function boot() {
   // is started by the same click that captures the mouse. A player who has not
   // clicked has not started playing.
   canvas.addEventListener('mousedown', () => audio.resume());
+  document.addEventListener('pointerdown', (event) => { if (event.pointerType === 'touch') audio.resume(); });
 
   // A handle on the client's own state, for the browser console and for the
   // automated smoke test. Deliberately behind a flag: none of it lets anyone

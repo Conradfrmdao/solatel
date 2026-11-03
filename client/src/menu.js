@@ -1277,7 +1277,7 @@ const TEMPLATE = `
           <ul id="menu-activity" class="feed"><li class="dim">reading the latest wins&hellip;</li></ul>
         </section>
       </div>
-      <p class="needs-keyboard">Solatel is played with a keyboard and mouse. Open it on a computer to play.</p>
+      <p class="needs-keyboard">On a phone, turn it sideways for more room. Move with the left stick, drag the world to look, and use the buttons to fight.</p>
     </section>
 
     <section class="pane hidden" data-pane="board">
