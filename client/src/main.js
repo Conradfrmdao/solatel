@@ -1,4 +1,5 @@
 import { pathMayHitPlayer } from './predicted-impact.js';
+import { initMobileLandscape } from './fullscreen.js';
 // Solatel browser client.
 //
 // The client renders and predicts; it never decides what happened. Every fact
@@ -1183,6 +1184,8 @@ async function boot() {
   renderer.info.autoReset = false;
   requestAnimationFrame(frame);
 }
+
+initMobileLandscape();
 
 boot().catch((err) => {
   console.error(err);

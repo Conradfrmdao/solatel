@@ -35,10 +35,42 @@ export function isFullscreen() {
   return Boolean(document.fullscreenElement);
 }
 
+function isTouchScreen() {
+  return Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+}
+
+async function lockLandscape() {
+  if (!isTouchScreen() || !screen.orientation?.lock) return false;
+  try {
+    await screen.orientation.lock('landscape');
+    return true;
+  } catch {
+    // Browser tabs often require fullscreen; iOS Safari may not offer this API.
+    return false;
+  }
+}
+
+/** Ask immediately in installed-app contexts, and offer a gesture on phones
+ *  whose browsers require one. The portrait prompt remains until the viewport
+ *  actually rotates, even if the lock request is refused. */
+export function initMobileLandscape() {
+  if (!isTouchScreen()) return;
+  const button = document.getElementById('mobile-landscape-button');
+  button?.addEventListener('click', async () => {
+    const full = await enterFullscreen();
+    if (!full) await lockLandscape();
+  });
+  void lockLandscape();
+}
+
 /** Takes the whole screen; must be called from a click or a key. */
 export async function enterFullscreen() {
   const page = document.documentElement;
-  if (document.fullscreenElement || !page.requestFullscreen) return false;
+  if (document.fullscreenElement) {
+    await lockLandscape();
+    return true;
+  }
+  if (!page.requestFullscreen) return false;
   try {
     await page.requestFullscreen({ navigationUI: 'hide' });
   } catch {
@@ -50,6 +82,7 @@ export async function enterFullscreen() {
   } catch {
     /* not this browser: Escape leaves fullscreen as well as freeing the mouse */
   }
+  await lockLandscape();
   return true;
 }
 

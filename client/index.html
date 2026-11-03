@@ -43,6 +43,7 @@
       html, body {
         margin: 0;
         height: 100%;
+        height: 100dvh;
         overflow: hidden;
         background: var(--bg);
         color: var(--ink);
@@ -1780,6 +1781,7 @@
       }
 
       #touch-controls { display: none; }
+      #mobile-landscape { display: none; }
       @media (pointer: coarse) {
         #solatel-canvas { touch-action: none; }
         body.running #health {
@@ -1796,12 +1798,14 @@
         body.running #weapon .ammo { font-size: 17px; }
         body.running #touch-controls {
           position: fixed; inset: 0; z-index: 20; display: block;
+          height: 100dvh;
+          --stick-size: clamp(96px, 18vw, 150px);
           pointer-events: none; user-select: none; -webkit-user-select: none;
         }
         .touch-stick {
           position: absolute; left: max(18px, env(safe-area-inset-left));
           bottom: max(26px, env(safe-area-inset-bottom));
-          width: clamp(95px, 19vw, 150px); aspect-ratio: 1;
+          width: var(--stick-size); aspect-ratio: 1;
           border-radius: 50%; border: 2px solid rgba(255,255,255,.5);
           background: rgba(11,18,27,.38); pointer-events: auto; touch-action: none;
         }
@@ -1838,7 +1842,7 @@
           width: 57px; height: 57px;
         }
         #touch-controls [data-touch='sprint'] {
-          left: max(181px, calc(env(safe-area-inset-left) + 181px)); bottom: 35%;
+          left: calc(max(18px, env(safe-area-inset-left)) + var(--stick-size) + 13px); bottom: 35%;
           width: 58px; height: 58px;
         }
         #touch-controls [data-touch='swap'] {
@@ -1849,6 +1853,15 @@
         }
         #touch-controls [data-touch='swap'] span { font-size: 22px; }
       }
+      @media (pointer: coarse) and (orientation: landscape) and (max-height: 330px) {
+        body.running #touch-controls { --stick-size: clamp(84px, 18vw, 112px); }
+        #touch-controls button { width: 52px; height: 52px; font-size: 9px; }
+        #touch-controls button span { font-size: 23px; }
+        #touch-controls [data-touch='fire'] { width: 82px; height: 82px; }
+        #touch-controls [data-touch='fire'] span { font-size: 32px; }
+        #touch-controls [data-touch='grenade'], #touch-controls [data-touch='sprint'] { width: 48px; height: 48px; }
+        #touch-controls [data-touch='swap'] { width: 152px; height: 43px; font-size: 11px; }
+      }
       @media (pointer: coarse) and (orientation: portrait) {
         body.running #health, body.running #weapon { top: max(60px, env(safe-area-inset-top)); }
         #touch-controls [data-touch='aim'] { bottom: 60%; }
@@ -1858,6 +1871,20 @@
         #touch-controls [data-touch='fire'] { bottom: 20%; }
         #touch-controls [data-touch='grenade'] { right: 145px; bottom: 33%; }
         #touch-controls [data-touch='sprint'] { left: 18px; bottom: 39%; }
+        #mobile-landscape {
+          position: fixed; inset: 0; z-index: 100;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 14px; padding: 28px; text-align: center;
+          background: #080c13; color: var(--chalk); font: 500 17px/1.4 var(--read);
+        }
+        #mobile-landscape .turn { font: 800 56px/1 var(--shout); color: var(--amber); }
+        #mobile-landscape strong { font: 800 28px/1.1 var(--shout); letter-spacing: .04em; }
+        #mobile-landscape p { max-width: 28ch; margin: 0; color: var(--dim); }
+        #mobile-landscape button {
+          min-height: 48px; padding: 10px 20px; border-radius: 8px;
+          border: 1px solid #ffcc71; background: var(--amber); color: #211303;
+          font: 800 17px var(--shout); touch-action: manipulation;
+        }
       }
 
       /* Form controls in the menu's colours rather than the browser's. */
@@ -2095,6 +2122,13 @@
     <div id="hud"></div>
     <div id="menu" class="hidden"></div>
     <div id="matchmaking" class="hidden"></div>
+    <div id="mobile-landscape" role="dialog" aria-label="Rotate phone for landscape play">
+      <span class="turn" aria-hidden="true">⤵</span>
+      <strong>TURN YOUR PHONE SIDEWAYS</strong>
+      <p>Solatel plays in landscape so the map and controls fit your screen.</p>
+      <button id="mobile-landscape-button" type="button">ENTER LANDSCAPE</button>
+      <p>If your browser cannot rotate automatically, turn your phone sideways.</p>
+    </div>
 
     <div id="boot">
       <h1>SOLATEL</h1>

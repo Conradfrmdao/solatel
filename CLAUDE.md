@@ -2926,3 +2926,11 @@ commands as keyboard and gamepad; touch-derived mouse events are suppressed
 so a tap does not fire twice. The health and ammo readouts move above the
 controls. Browser emulation checked landscape and portrait layout, and the
 input unit tests passed. Physical phone play and performance still need QA.
+
+Mobile orientation now requests landscape immediately where an installed app
+allows it, and again after a player gesture enters fullscreen. A portrait
+phone sees a rotate prompt with an Enter landscape button. The browser may
+reject orientation lock or lack the API, so the prompt also tells the player
+to rotate manually. Touch controls use dynamic viewport height, safe-area
+insets and a compact layout on short landscape screens. Layout checks covered
+844x390, 667x375, 568x320 and 390x844 CSS-pixel viewports.
