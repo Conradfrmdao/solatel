@@ -976,7 +976,13 @@ export class Menu {
           `</button>`
         );
       })
-      .join('');
+      .join('') +
+      `<div class="map coming-soon" aria-disabled="true">` +
+      `<span class="art" aria-hidden="true"></span>` +
+      `<span class="badge">Coming soon</span>` +
+      `<span class="name">Facility</span>` +
+      `<span class="blurb">In development</span>` +
+      `</div>`;
     // Until a map is picked the screen is the maps; then the gear and the
     // stakes open under them, in the same window.
     if (this.battle) this.battle.dataset.phase = this.chosenMap ? 'gear' : 'pick';
@@ -1569,6 +1575,8 @@ const TEMPLATE = `
         <span><kbd>G</kbd> hold to aim grenade / release to throw</span>
         <span><kbd>tab</kbd> scores</span>
         <span><kbd>esc</kbd> free the mouse</span>
+        <span><kbd>controller</kbd> left stick move · right stick look · LT aim · RT fire</span>
+        <span><kbd>controller</kbd> A jump · B crouch · X reload · Y swap · LB grenade · L3 sprint</span>
       </div>
       <div class="devices">
         <div class="device best">

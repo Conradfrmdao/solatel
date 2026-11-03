@@ -193,9 +193,16 @@ async function publishFiles() {
   // time on a name it was told exists.
   const assets = resolve(root, 'assets');
   if (!(await exists(assets))) throw new Error('no assets/ directory at the workspace root');
+  // Facility is a future map. Keep its source in the repository, but do not
+  // publish its world, baked light or scatter data to every browser build.
+  const unpublished = new Set([
+    'maps/facility.glb', 'light/facility.bin', 'scatter/facility.bin',
+  ]);
   for await (const file of walk(assets)) {
     // URLs, so `/` whatever this machine's separator is.
-    add(`assets/${relative(assets, file).split(sep).join('/')}`, await readFile(file));
+    const plain = relative(assets, file).split(sep).join('/');
+    if (unpublished.has(plain) || /^sounds\/voice-[a-d]-(pain|death)-\d+\.mp3$/.test(plain)) continue;
+    add(`assets/${plain}`, await readFile(file));
   }
 
   await Promise.all(jobs);

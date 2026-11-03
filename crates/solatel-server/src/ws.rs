@@ -146,7 +146,7 @@ async fn run_session(
             resumed: outcome.resumed,
             tick_hz: TICK_HZ,
             snapshot_hz: SNAPSHOT_HZ,
-            maps: map::MAPS
+            maps: map::PLAYABLE_MAPS
                 .iter()
                 .map(|m| solatel_protocol::net::MapInfo {
                     name: m.name.to_string(),

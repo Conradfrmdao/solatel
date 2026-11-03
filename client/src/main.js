@@ -722,14 +722,12 @@ async function boot() {
                 blood.hit(landing.at, origin, victim.feet, camera.position, head);
                 remotes.hit(victim.id, into, head);
                 audio.fleshHit(landing.at, eye, forward);
-                audio.pain(landing.at, eye, forward, victim.id);
               }
             }
           });
         }
       } else if (message.t === 'damaged') {
         audio.hurt();
-        audio.ownPain(local.id);
         hud.bleed(now, message.amount);
         // Which way it came from, held on screen as the player turns, and a
         // flinch: the view rolls a little and comes back. A roll only - the

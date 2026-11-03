@@ -719,6 +719,15 @@ fn a_map_this_build_does_not_have_is_ignored() {
 }
 
 #[test]
+fn facility_cannot_be_queued_while_coming_soon() {
+    let mut lobby = free_play();
+    let (tx, _rx) = mpsc::channel(64);
+    let (outcome, session) = join(&mut lobby, "Visitor", None, tx);
+    queue_map(&mut lobby, outcome.player_id, session, "facility", 1);
+    assert_eq!(lobby.connections[&outcome.player_id].at, Whereabouts::Idle);
+}
+
+#[test]
 fn a_table_this_server_does_not_run_is_ignored() {
     let mut lobby = free_play();
     lobby.tiers = vec![Stakes::from_usd(1).unwrap()];

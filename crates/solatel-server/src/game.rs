@@ -1373,7 +1373,7 @@ impl Lobby {
         // on this pass rather than one every half second. Several matches at
         // one table run side by side; nothing about a match is exclusive to
         // the line it came from.
-        for map in map::MAPS {
+        for map in map::PLAYABLE_MAPS {
             for stakes in self.tiers.clone() {
                 while self.form_one(map, stakes, now) {}
             }
@@ -1976,7 +1976,7 @@ impl Lobby {
                 // `&'static str` is what gets stored: a queue keyed on a
                 // string the client sent would be a queue keyed on whatever
                 // the client felt like sending.
-                let Some(ground) = map::MAPS.iter().find(|m| m.name == map) else {
+                let Some(ground) = map::PLAYABLE_MAPS.iter().find(|m| m.name == map) else {
                     return;
                 };
                 let Some(stakes) = self.tier(tier_dollars) else {

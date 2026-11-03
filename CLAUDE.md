@@ -2893,3 +2893,23 @@ not after.
 Movement and shooting feel cannot be tuned by guessing at numbers. Build a
 version, then ask Conrad for a test pass and a specific description of what
 feels wrong. Expect several rounds; that is the plan, not a failure.
+## November 3 Facility, hit feedback and controller pass
+
+Facility is retained in source for later development but removed from public
+matchmaking. The server advertises only Arena and Yard and rejects a direct
+Facility queue command. The menu shows a disabled Coming soon card. The web
+build omits Facility's GLB, light and scatter files, so they are not in the
+manifest or deployed browser assets. The server test suite passed 170 tests.
+
+The old HaelDB pain/death yell cuts were repeatedly sounding comic in
+combat. Hit presentation now uses a short filtered ballistic impact at the
+victim, a quieter body fall on death, and a restrained confirmation cue;
+the old voice clips are not loaded or published. The separate, deliberate
+soldier kill reward callouts remain. This is an audio pass, not a claim that
+every hit sound has had human listening QA across devices.
+
+Browser-standard gamepads can now control play without pointer lock: left
+stick moves, right stick looks, LT aims, RT fires, A jumps, B crouches,
+X reloads, Y swaps, LB holds/releases a grenade and L3 sprints. Keyboard
+and mouse remain available. Nonstandard controller mappings and touch-screen
+play are not yet implemented or verified.

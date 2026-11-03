@@ -1274,6 +1274,10 @@
       .map[data-map='arena'] .art { background-image: url(assets/menu/map-arena.webp); }
       .map[data-map='yard'] .art { background-image: url(assets/menu/map-yard.webp); }
       .map[data-map='facility'] .art { background-image: url(assets/menu/map-facility.webp); }
+      .map.coming-soon { cursor: default; border-color: rgba(255,255,255,.12); }
+      .map.coming-soon .art { background-image: url(assets/menu/map-facility.webp); filter: grayscale(.45) brightness(.62); }
+      .map.coming-soon:hover { border-color: rgba(255,255,255,.12); }
+      .map.coming-soon:hover .art { transform: none; }
       .map:hover .art { transform: scale(1.035); }
       .map:hover { border-color: rgba(246, 162, 27, 0.5); }
       .map.on {
@@ -1464,6 +1468,8 @@
       .battle[data-phase='gear'] .map .badge { display: none; }
       .battle[data-phase='gear'] .map:not(.on) { opacity: 0.7; }
       .battle[data-phase='gear'] .map:not(.on):hover { opacity: 1; }
+      .battle[data-phase='gear'] .map.coming-soon:hover { opacity: .7; }
+      .battle[data-phase='gear'] .map.coming-soon .badge { display: inline-flex; }
       .battle[data-phase='gear'] .map .seats { top: 12px; bottom: auto; }
       .map .fetch { display: grid; gap: 4px; width: min(100%, 360px); margin-top: 3px; }
       .map .fetch .bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.16); overflow: hidden; }

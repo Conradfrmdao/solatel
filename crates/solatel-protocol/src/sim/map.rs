@@ -31956,6 +31956,9 @@ pub static FACILITY: Map = Map::new(
 // --- end of generated tables ---
 /// Every map the build knows about.
 pub static MAPS: &[&Map] = &[&ARENA, &YARD, &FACILITY];
+/// Maps offered for new public matches. Keep Facility's collision data for
+/// development without advertising or forming paid matches on it.
+pub static PLAYABLE_MAPS: &[&Map] = &[&ARENA, &YARD];
 
 pub fn by_name(name: &str) -> Option<&'static Map> {
     MAPS.iter().copied().find(|map| map.name == name)

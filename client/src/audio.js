@@ -232,7 +232,11 @@ export class Audio {
    */
   preload() {
     if (this._fetching) return this._fetching;
-    const names = [...new Set([...Object.values(SOUND_SETS).flat(), ...REWARD_LINES])];
+    // The old yelling takes sounded exaggerated on every hit. Only load
+    // physical impacts and intentional kill-reward callouts.
+    const names = [...new Set([...Object.entries(SOUND_SETS)
+      .filter(([set]) => !/^voice-[a-d]-(pain|death)$/.test(set))
+      .flatMap(([, clips]) => clips), ...REWARD_LINES])];
     this._fetching = Promise.all(
       names.map(async (name) => {
         try {
@@ -613,13 +617,17 @@ export class Audio {
     });
   }
 
-  /** A round into somebody: a heavy, wet blow, from where they stood. */
+  /** A round into somebody: a short, dry ballistic impact at the victim. */
   fleshHit(at, listener, forward) {
     if (!this.ready) return;
     const place = this.place(at, listener, forward);
     if (!place) return;
     const start = this.context.currentTime + place.delay;
-    this._play('hit-flesh', place.input, start, 0.9 * place.gain, 0.92 + Math.random() * 0.12);
+    const tone = this.context.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 2700;
+    tone.connect(place.input);
+    this._play('hit-dirt', tone, start, 0.55 * place.gain, 0.94 + Math.random() * 0.1);
   }
 
   /** Somebody hurt crying out, in their own voice - at most every
@@ -641,8 +649,7 @@ export class Audio {
     if (!place) return;
     const start = this.context.currentTime + place.delay;
     this.cried.set(id, start);
-    this._play(`voice-${voiceOf(id)}-death`, place.input, start, 0.95 * place.gain);
-    this._play('fall', place.input, start + 0.55 + Math.random() * 0.2, 0.8 * place.gain);
+    this._play('fall', place.input, start + 0.24 + Math.random() * 0.12, 0.7 * place.gain);
   }
 
   /** This player hurt: their own cry, close and quiet, under the thud. */
@@ -695,10 +702,8 @@ export class Audio {
     if (!this.ready) return;
     const { context } = this;
     const now = context.currentTime;
-    this.blip(now, killed ? 1180 : 1500, 0.5, 0.07);
-    // A kill gets a second, higher note a moment later, so the two are told
-    // apart without listening for them.
-    if (killed) this.blip(now + 0.075, 1760, 0.45, 0.12);
+    this.blip(now, killed ? 720 : 940, 0.24, 0.045);
+    if (killed) this.blip(now + 0.052, 1080, 0.19, 0.075);
   }
 
   /** One short voiced reward, with no queued lines or immediate repeats. */
@@ -842,7 +847,7 @@ export class Audio {
     thud.connect(gain).connect(this.master);
     thud.start(now);
     thud.stop(now + 0.32);
-    this._play('hit-flesh', this.master, now, 0.5, 0.85);
+    // Keep the body cue; the former heavy punch recording sounded comic.
   }
 
   /**

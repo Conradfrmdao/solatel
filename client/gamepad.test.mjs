@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { Input } from './src/input.js';
+
+test('standard gamepad moves, aims, shoots, and releases one grenade without pointer lock', () => {
+  globalThis.window = new EventTarget();
+  window.localStorage = { getItem: () => null, setItem() {} };
+  globalThis.document = new EventTarget();
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  const pad = { connected: true, mapping: 'standard', axes: [0, -1, 0, 0], buttons };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { getGamepads: () => [pad] } });
+  const input = new Input(new EventTarget());
+  assert.equal(input.sample().forward, 1);
+  buttons[6].pressed = true;
+  buttons[7].pressed = true;
+  assert.equal(input.aiming, true);
+  assert.equal(input.sample().fire, true);
+  buttons[4].pressed = true;
+  assert.equal(input.sample().fire, false);
+  assert.equal(input.sample().grenadeHeld, true);
+  buttons[4].pressed = false;
+  assert.equal(input.sample().throw, true);
+  assert.equal(input.sample().throw, false);
+  buttons[3].pressed = true;
+  input.sample();
+  assert.equal(input.sidearm, true);
+  buttons[3].pressed = false;
+  input.sample();
+  buttons[3].pressed = true;
+  input.sample();
+  assert.equal(input.sidearm, false);
+  delete globalThis.navigator;
+  delete globalThis.window;
+  delete globalThis.document;
+});

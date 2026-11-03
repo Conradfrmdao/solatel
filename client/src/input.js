@@ -71,6 +71,10 @@ export class Input {
     this._keys = new Set();
     this._fire = false;
     this._aim = false;
+    this._padButtons = [];
+    this._padCrouch = false;
+    this._padThrow = false;
+    this._lastLookAt = performance.now();
     /** Crouching is a toggle on C: holding a key down for a whole fight is
      *  a cramp, and Ctrl, the other habit, is Ctrl+W in a browser. */
     this._crouch = false;
@@ -365,10 +369,13 @@ export class Input {
   }
 
   get sprinting() {
-    if (this.requireLock && !this.locked) return false;
-    return this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
+    const pad = this._gamepad();
+    if (this.requireLock && !this.locked && !pad) return false;
+    const padSprint = Boolean(pad && pad.axes[1] < -.35 && pad.buttons[10]?.pressed &&
+      !this._padCrouch && !pad.buttons[6]?.pressed && !pad.buttons[7]?.pressed && !pad.buttons[4]?.pressed);
+    return padSprint || (this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
       && !this._aim && !this._fire && !this._keys.has('KeyG')
-      && (this.sprintToggle ? this._sprintLatched : this._keys.has('ShiftLeft') || this._keys.has('ShiftRight'));
+      && (this.sprintToggle ? this._sprintLatched : this._keys.has('ShiftLeft') || this._keys.has('ShiftRight')));
   }
 
   /**
@@ -386,21 +393,40 @@ export class Input {
     this._dy = 0;
     this.lastDelta = Math.round(Math.hypot(dx, dy));
 
-    if (this.requireLock && !this.locked) return;
+    const pad = this._gamepad();
+    if (this.requireLock && !this.locked && !pad) return;
 
     const turn = this.sensitivity * this.lookScale;
     this.yaw = wrapAngle(this.yaw - dx * turn);
     this.pitch -= dy * turn;
     const limit = SIM.maxPitch;
     this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
+    if (pad) {
+      const now = performance.now();
+      const dt = Math.min(0.05, Math.max(0, (now - this._lastLookAt) / 1000));
+      const axis = (value) => Math.abs(value ?? 0) < 0.13 ? 0 : Math.sign(value) * ((Math.abs(value) - 0.13) / 0.87) ** 1.5;
+      this.yaw = wrapAngle(this.yaw - axis(pad.axes[2]) * dt * 3.1 * this.lookScale);
+      this.pitch = Math.max(-limit, Math.min(limit, this.pitch - axis(pad.axes[3]) * dt * 2.3 * this.lookScale));
+      this._lastLookAt = now;
+    }
+  }
+
+  /** Browser-standard Xbox/PlayStation layout. Unmapped devices retain
+   *  keyboard and mouse control until the browser exposes a standard pad. */
+  _gamepad() {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
+    return [...navigator.getGamepads()].find((pad) => pad?.connected && pad.mapping === 'standard') ?? null;
   }
 
   /** Movement intent for this tick, as the wire wants it. */
   sample() {
-    if (this.requireLock && !this.locked) {
+    const pad = this._gamepad();
+    if (this.requireLock && !this.locked && !pad) {
       // A player who has released the mouse should not keep running into a
       // wall.
       this._tapped.clear();
+      this._padButtons = [];
+      this._padThrow = false;
       return { forward: 0, right: 0, jump: false, fire: false, crouch: this._crouch, reload: false, throw: false };
     }
     let forward = 0;
@@ -409,19 +435,32 @@ export class Input {
     if (this._keys.has('KeyS')) forward -= 1;
     if (this._keys.has('KeyD')) right += 1;
     if (this._keys.has('KeyA')) right -= 1;
+    const pressed = (index) => Boolean(pad?.buttons[index]?.pressed || (pad?.buttons[index]?.value ?? 0) > .5);
+    const was = (index) => Boolean(this._padButtons[index]);
+    if (pad) {
+      const axis = (value) => Math.abs(value ?? 0) < .18 ? 0 : (value - Math.sign(value) * .18) / .82;
+      forward = Math.max(-1, Math.min(1, forward - axis(pad.axes[1])));
+      right = Math.max(-1, Math.min(1, right + axis(pad.axes[0])));
+      if (pressed(1) && !was(1)) this._padCrouch = !this._padCrouch;
+      if (pressed(3) && !was(3)) this._sidearm = !this._sidearm;
+      if (was(4) && !pressed(4)) this._padThrow = true;
+      if (pressed(0)) this._padCrouch = false;
+    }
     const held = (code) => this._keys.has(code) || this._tapped.has(code);
     if (forward <= 0 || this._crouch || this._aim || this._fire || held('KeyG')) this._sprintLatched = false;
     const intent = {
       forward,
       right,
-      jump: this._keys.has('Space'),
-      fire: this._fire && !held('KeyG'),
-      crouch: this._crouch,
-      reload: held('KeyR'),
-      throw: Boolean(this._grenadeReleased),
-      grenadeHeld: this._keys.has('KeyG'),
-      sprint: this.sprinting && !held('KeyG'),
+      jump: this._keys.has('Space') || pressed(0),
+      fire: (this._fire || pressed(7)) && !held('KeyG') && !pressed(4),
+      crouch: this._crouch || this._padCrouch,
+      reload: held('KeyR') || (pressed(2) && !was(2)),
+      throw: Boolean(this._grenadeReleased || this._padThrow),
+      grenadeHeld: this._keys.has('KeyG') || pressed(4),
+      sprint: (this.sprinting || Boolean(pad && forward > .2 && pressed(10))) && !held('KeyG') && !pressed(4) && !pressed(6),
     };
+    this._padThrow = false;
+    this._padButtons = pad ? pad.buttons.map((button) => button.pressed || button.value > .5) : [];
     this._grenadeReleased = false;
     this._tapped.clear();
     return intent;
@@ -431,6 +470,7 @@ export class Input {
    *  beginning on its knees. */
   resetCrouch() {
     this._crouch = false;
+    this._padCrouch = false;
     this._sprintLatched = false;
   }
 
@@ -449,8 +489,9 @@ export class Input {
    *  rifle come up to the shoulder, but it changes nothing the server
    *  decides: where a shot goes is the same either way. */
   get aiming() {
-    if (this.requireLock && !this.locked) return false;
-    return this._aim;
+    const pad = this._gamepad();
+    if (this.requireLock && !this.locked && !pad) return false;
+    return this._aim || Boolean(pad?.buttons[6]?.pressed || (pad?.buttons[6]?.value ?? 0) > .5);
   }
 
   /** Raw key state, for the HUD's input row. */
