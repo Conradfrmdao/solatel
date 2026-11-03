@@ -612,6 +612,7 @@ async function boot() {
   // the canvas, and it is not set until a match has a map in it - there is
   // nothing to show before then.
   document.getElementById('boot').classList.add('hidden');
+  document.body.classList.remove('booting');
 
   /** The match this client has already loaded a map for. */
   let enteredMatch = null;
@@ -958,6 +959,7 @@ async function boot() {
       // this player. Back to the menu, and the world stops being drawn
       // rather than being left standing behind it.
       enteredMatch = null;
+      input.touchLayout?.close();
       menu.show(true);
       // How it went, before the lobby: at once at the whistle, and after
       // the death has been played out for anybody killed.

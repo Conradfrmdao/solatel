@@ -162,6 +162,9 @@ export class Menu {
     const onPlay = root.querySelector('#fullscreen-on-play');
     onPlay.checked = fullscreenWanted();
     onPlay.addEventListener('change', () => setFullscreenWanted(onPlay.checked));
+    root.querySelector('#edit-touch-controls').addEventListener('click', () => {
+      document.dispatchEvent(new Event('solatel:edit-touch'));
+    });
     // The play screen is laid out to the window (see `showPane`).
     root.dataset.pane = 'play';
     this.skinName = root.querySelector('#menu-skin-name');
@@ -280,7 +283,7 @@ export class Menu {
       if (this.chosenMap && this._onQueue) {
         // The whole screen for the match, asked for here because a browser
         // gives it only in answer to a click (`fullscreen.js`).
-        if (fullscreenWanted()) enterFullscreen();
+        if (fullscreenWanted() || window.matchMedia?.('(pointer: coarse)').matches) enterFullscreen();
         this._onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
       }
     });
@@ -1522,10 +1525,15 @@ const TEMPLATE = `
           <input id="volume" type="range" min="0" max="100" step="1" />
           <span id="volume-value"></span>
         </label>
-        <label class="check">
+        <label class="check desktop-only">
           full screen
           <input id="fullscreen-on-play" type="checkbox" />
           <span>take the whole screen when you press play; hold Esc to leave it</span>
+        </label>
+        <label class="mobile-only">
+          mobile controls
+          <button id="edit-touch-controls" type="button">customize buttons</button>
+          <span>drag, resize and adjust opacity; saved on this phone</span>
         </label>
         <label class="check">
           raw mouse

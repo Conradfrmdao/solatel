@@ -2934,3 +2934,17 @@ reject orientation lock or lack the API, so the prompt also tells the player
 to rotate manually. Touch controls use dynamic viewport height, safe-area
 insets and a compact layout on short landscape screens. Layout checks covered
 844x390, 667x375, 568x320 and 390x844 CSS-pixel viewports.
+
+The mobile entry is now a required one-tap gate in browser tabs. That tap
+requests fullscreen and landscape together; on browsers that refuse either
+request, the game remains usable in landscape after the tap. A web page
+cannot enter fullscreen without a user gesture. The installable app manifest
+requests fullscreen and landscape at app launch where the browser supports
+those display settings.
+
+Touch buttons stay hidden during boot, menus and death. In mobile Settings
+or the in-game gear, players can open a control preview, drag individual
+controls, resize the selected control, change opacity, reset, and save the
+layout on that device. The editor sends neutral input while open; a match
+ending closes it. Browser smoke checks covered hidden states, the mobile
+entry gate, drag/resize persistence after reload, and reset.

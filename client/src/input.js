@@ -18,6 +18,7 @@
 // it needs playing rather than reasoning.
 
 import { SIM, wrapAngle } from './sim.js';
+import { installTouchLayout } from './touch-layout.js';
 
 const DEFAULT_SENSITIVITY = 0.0022;
 
@@ -77,6 +78,7 @@ export class Input {
     this._padThrow = false;
     this._touch = { forward: 0, right: 0, fire: false, aim: false, jump: false,
       crouch: false, reload: false, grenade: false, throw: false, sprint: false };
+    this._touchEditing = false;
     this._lastTouchAt = -Infinity;
     this._lastLookAt = performance.now();
     /** Crouching is a toggle on C: holding a key down for a whole fight is
@@ -125,7 +127,8 @@ export class Input {
       `<button data-touch="jump" aria-label="Jump or climb"><span>↑</span>JUMP</button>` +
       `<button data-touch="crouch" aria-label="Crouch"><span>↓</span>CROUCH</button>` +
       `<button data-touch="reload" aria-label="Reload"><span>↻</span>RELOAD</button>` +
-      `<button data-touch="swap" aria-label="Swap weapon"><span>⇄</span>SWAP WEAPON</button>`;
+      `<button data-touch="swap" aria-label="Swap weapon"><span>⇄</span>SWAP WEAPON</button>` +
+      `<button id="touch-customize" type="button" aria-label="Customize touch controls">⚙</button>`;
     this.canvas.after(layer);
     const stick = layer.querySelector('.touch-stick');
     const thumb = stick.querySelector('i');
@@ -140,12 +143,13 @@ export class Input {
       thumb.style.transform = `translate(${x * radius}px, ${y * radius}px)`;
     };
     stick.addEventListener('pointerdown', (event) => {
+      if (this._touchEditing) return;
       event.preventDefault();
       stickId = event.pointerId;
       stick.setPointerCapture(stickId);
       move(event);
     });
-    stick.addEventListener('pointermove', (event) => { if (event.pointerId === stickId) move(event); });
+    stick.addEventListener('pointermove', (event) => { if (!this._touchEditing && event.pointerId === stickId) move(event); });
     const releaseStick = (event) => {
       if (event.pointerId !== stickId) return;
       stickId = null;
@@ -157,6 +161,7 @@ export class Input {
     for (const button of layer.querySelectorAll('button[data-touch]')) {
       const action = button.dataset.touch;
       button.addEventListener('pointerdown', (event) => {
+        if (this._touchEditing) return;
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
         if (action === 'swap') this._sidearm = !this._sidearm;
@@ -164,12 +169,14 @@ export class Input {
         else this._touch[action] = true;
       });
       const release = (event) => {
+        if (this._touchEditing) return;
         event.preventDefault();
         if (action === 'grenade' && this._touch.grenade) this._touch.throw = true;
         if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
       };
       button.addEventListener('pointerup', release);
       button.addEventListener('pointercancel', (event) => {
+        if (this._touchEditing) return;
         event.preventDefault();
         if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
       });
@@ -177,11 +184,13 @@ export class Input {
     let lookId = null;
     let x = 0; let y = 0;
     this.canvas.addEventListener('pointerdown', (event) => {
+      if (this._touchEditing) return;
       if (event.pointerType !== 'touch' || lookId !== null) return;
       lookId = event.pointerId; x = event.clientX; y = event.clientY;
       this.canvas.setPointerCapture(lookId);
     });
     this.canvas.addEventListener('pointermove', (event) => {
+      if (this._touchEditing) return;
       if (event.pointerId !== lookId) return;
       this._dx += (event.clientX - x) * 1.8;
       this._dy += (event.clientY - y) * 1.8;
@@ -190,6 +199,16 @@ export class Input {
     const stopLook = (event) => { if (event.pointerId === lookId) lookId = null; };
     this.canvas.addEventListener('pointerup', stopLook);
     this.canvas.addEventListener('pointercancel', stopLook);
+    this.touchLayout = installTouchLayout(layer, (editing) => {
+      this._touchEditing = editing;
+      this._fire = this._aim = false;
+      this._grenadeReleased = this._padThrow = false;
+      this._tapped.clear();
+      this._touch.forward = this._touch.right = 0;
+      for (const action of ['fire', 'aim', 'jump', 'reload', 'grenade', 'throw', 'sprint']) this._touch[action] = false;
+      thumb.style.transform = '';
+      stickId = null; lookId = null;
+    });
   }
 
   _bind() {
@@ -461,6 +480,7 @@ export class Input {
   }
 
   get sprinting() {
+    if (this._touchEditing) return false;
     const pad = this._gamepad();
     if (this.requireLock && !this.locked && !pad) return false;
     const padSprint = Boolean(pad && pad.axes[1] < -.35 && pad.buttons[10]?.pressed &&
@@ -486,6 +506,8 @@ export class Input {
     this._dx = 0;
     this._dy = 0;
     this.lastDelta = Math.round(Math.hypot(dx, dy));
+
+    if (this._touchEditing) return;
 
     const pad = this._gamepad();
     if (this.requireLock && !this.locked && !pad) return;
@@ -516,6 +538,11 @@ export class Input {
 
   /** Movement intent for this tick, as the wire wants it. */
   sample() {
+    if (this._touchEditing) {
+      this._touch.throw = false;
+      return { forward: 0, right: 0, jump: false, fire: false, crouch: false,
+        reload: false, throw: false, grenadeHeld: false, sprint: false };
+    }
     const pad = this._gamepad();
     if (this.requireLock && !this.locked && !pad) {
       // A player who has released the mouse should not keep running into a
@@ -589,6 +616,7 @@ export class Input {
    *  rifle come up to the shoulder, but it changes nothing the server
    *  decides: where a shot goes is the same either way. */
   get aiming() {
+    if (this._touchEditing) return false;
     const pad = this._gamepad();
     if (this.requireLock && !this.locked && !pad) return false;
     return this._aim || this._touch.aim || Boolean(pad?.buttons[6]?.pressed || (pad?.buttons[6]?.value ?? 0) > .5);

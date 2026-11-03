@@ -181,6 +181,7 @@ async function publishFiles() {
   }
   add('sim/solatel_sim_bg.wasm', await readFile(wasm));
   add('favicon.png', await readFile(resolve(here, 'favicon.png')));
+  for (const size of [192, 512]) add(`app-icon-${size}.png`, await readFile(resolve(here, `app-icon-${size}.png`)));
   // The decoder for the photographs, which run as KTX2 (`photo.js`): three's
   // own, fetched at runtime by the loader rather than bundled.
   const basis = resolve(here, 'node_modules', 'three', 'examples', 'jsm', 'libs', 'basis');
@@ -224,7 +225,14 @@ function once(text, from, to) {
  * with the same name can serve each other's pages.
  */
 async function writePage(script, names) {
-  const buildId = BUILD_PREFIX + hashOf(`${script}\n${JSON.stringify(names)}`);
+  const manifest = JSON.stringify({
+    name: 'Solatel', short_name: 'Solatel',
+    start_url: '/', scope: '/', display: 'fullscreen', orientation: 'landscape',
+    background_color: '#080c13', theme_color: '#080c13',
+    icons: [192, 512].map((size) => ({ src: names[`app-icon-${size}.png`],
+      sizes: `${size}x${size}`, type: 'image/png' })),
+  });
+  const buildId = BUILD_PREFIX + hashOf(`${script}\n${JSON.stringify(names)}\n${manifest}`);
   let html = await readFile(resolve(here, 'index.html'), 'utf8');
   html = once(html, '<script type="module" src="solatel.js"></script>', `<script type="module" src="${script}"></script>`);
   html = once(html, '<link rel="icon" href="favicon.png" />', `<link rel="icon" href="${names['favicon.png']}" />`);
@@ -243,6 +251,7 @@ async function writePage(script, names) {
       `    <script id="solatel-manifest" type="application/json">${table}</script>\n  </head>`,
   );
   // The page first: the server never claims a build whose page is not there.
+  await emit('manifest.json', Buffer.from(`${manifest}\n`), { contentNamed: false });
   await emit('index.html', Buffer.from(html), { contentNamed: false });
   await emit('build.json', Buffer.from(`${JSON.stringify({ build: buildId })}\n`), { contentNamed: false });
   return buildId;

@@ -59,6 +59,19 @@ export function initMobileLandscape() {
   button?.addEventListener('click', async () => {
     const full = await enterFullscreen();
     if (!full) await lockLandscape();
+    document.body.classList.add('mobile-ready');
+  });
+  if (window.matchMedia?.('(display-mode: fullscreen)').matches) {
+    document.body.classList.add('mobile-ready');
+  }
+  let wasFullscreen = false;
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement) {
+      wasFullscreen = true;
+      document.body.classList.add('mobile-ready');
+    } else if (wasFullscreen) {
+      document.body.classList.remove('mobile-ready');
+    }
   });
   void lockLandscape();
 }
