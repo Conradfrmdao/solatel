@@ -2955,6 +2955,13 @@ entry gate, drag/resize persistence after reload, and reset.
 
 ## November 6 mobile browser correction
 
+The later mobile control/PWA pass is documented in `documents/MOBILE.md`.
+It supersedes the mandatory mobile entry gate with an optional, session-dismissed
+install recommendation, a standalone manifest and gameplay-only rotate prompt.
+Touch movement anchors at touchdown, Sprint toggles automatic forward running,
+ADS toggles, and Fire supports drag-to-look. Mobile low resolution no longer uses
+the 0.75 render scale. The phone weapon HUD and diagnostic visibility are compact.
+
 Fullscreen and orientation were checked against MDN and current WebKit
 documentation/issues. Supported browser tabs request fullscreen from the
 entry tap and then lock landscape. iPhone Safari still cannot fullscreen

@@ -18,6 +18,7 @@ test('touch intent shares the same server command path and grenade release is on
   assert.equal(input.sample().sprint, false);
   input._touch.fire = false;
   input._touch.aim = false;
+  input._touch.sprint = true;
   assert.equal(input.sample().sprint, true);
   input._touch.fire = true;
   input._touch.aim = true;
@@ -30,4 +31,25 @@ test('touch intent shares the same server command path and grenade release is on
   assert.equal(input.sample().throw, false);
   delete globalThis.window;
   delete globalThis.document;
+});
+
+test('a sprint tap starts forward running, and backing up or combat cancels it', () => {
+  globalThis.window = new EventTarget();
+  window.localStorage = { getItem: () => null };
+  globalThis.document = new EventTarget();
+  const input = new Input(new EventTarget(), { requireLock: false });
+  input._touch.sprint = true;
+  assert.equal(input.sample().forward, 1);
+  assert.equal(input.sample().sprint, true);
+  input._touch.stickActive = true;
+  input._touch.forward = -.6;
+  assert.equal(input.sample().forward, -.6);
+  assert.equal(input.sample().sprint, false);
+  input._touch.sprint = true;
+  input._touch.fire = true;
+  assert.equal(input.sample().sprint, false);
+  input._touch.stickActive = false;
+  input._touch.forward = 0;
+  assert.equal(input.sample().forward, 0);
+  delete globalThis.window; delete globalThis.document;
 });

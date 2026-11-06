@@ -53,9 +53,13 @@ export function installTouchLayout(layer, onEditingChange) {
     }
     const halfW = element.offsetWidth * item.scale / 2 + 4;
     const halfH = element.offsetHeight * item.scale / 2 + 4;
-    const cx = clamp(item.x * innerWidth, halfW, innerWidth - halfW);
-    const cy = clamp(item.y * innerHeight, halfH, innerHeight - halfH);
-    item.x = cx / innerWidth; item.y = cy / innerHeight;
+    const bounds = layer.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const safe = getComputedStyle(layer);
+    const inset = (edge) => parseFloat(safe.getPropertyValue(`--safe-${edge}`)) || 0;
+    const cx = clamp(item.x * bounds.width, halfW + inset('left'), bounds.width - halfW - inset('right'));
+    const cy = clamp(item.y * bounds.height, halfH + inset('top'), bounds.height - halfH - inset('bottom'));
+    item.x = cx / bounds.width; item.y = cy / bounds.height;
     element.style.left = `${item.x * 100}%`;
     element.style.top = `${item.y * 100}%`;
     element.style.right = 'auto'; element.style.bottom = 'auto';
@@ -75,9 +79,10 @@ export function installTouchLayout(layer, onEditingChange) {
   const ensure = (name) => {
     if (!layout.controls[name]) {
       const rect = elements[name].getBoundingClientRect();
+      const bounds = layer.getBoundingClientRect();
       layout.controls[name] = {
-        x: (rect.left + rect.width / 2) / innerWidth,
-        y: (rect.top + rect.height / 2) / innerHeight,
+        x: (rect.left + rect.width / 2 - bounds.left) / bounds.width,
+        y: (rect.top + rect.height / 2 - bounds.top) / bounds.height,
         scale: 1,
       };
     }
@@ -129,8 +134,9 @@ export function installTouchLayout(layer, onEditingChange) {
     element.addEventListener('pointermove', (event) => {
       if (!drag || drag.name !== name || drag.id !== event.pointerId) return;
       const item = ensure(name);
-      item.x = (event.clientX - drag.offsetX) / innerWidth;
-      item.y = (event.clientY - drag.offsetY) / innerHeight;
+      const bounds = layer.getBoundingClientRect();
+      item.x = (event.clientX - drag.offsetX - bounds.left) / bounds.width;
+      item.y = (event.clientY - drag.offsetY - bounds.top) / bounds.height;
       place(name);
     });
     const stop = (event) => {
@@ -141,6 +147,7 @@ export function installTouchLayout(layer, onEditingChange) {
     element.addEventListener('pointercancel', stop);
   }
   window.addEventListener('resize', apply);
+  window.addEventListener('solatel:viewport', apply);
   new MutationObserver(() => {
     if (getComputedStyle(layer).display !== 'none') apply();
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });

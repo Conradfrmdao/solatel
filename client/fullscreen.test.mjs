@@ -21,7 +21,7 @@ test('mobile landscape is requested on visit and again after fullscreen gesture'
   initMobileLandscape();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(locks, ['landscape']);
-  assert.equal(classes.has('mobile-ready'), false);
+  assert.equal(classes.has('mobile-ready'), true);
   button.dispatchEvent(new Event('click'));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(locks, ['landscape', 'landscape']);
@@ -50,7 +50,6 @@ test('a phone browser without fullscreen remains usable after manual rotation', 
   initMobileLandscape();
   assert.equal(classes.has('mobile-browser-limited'), true);
   assert.equal(classes.has('mobile-ready'), true);
-  assert.equal(button.textContent, 'CONTINUE');
   button.dispatchEvent(new Event('click'));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(classes.has('mobile-bypass-portrait'), true);

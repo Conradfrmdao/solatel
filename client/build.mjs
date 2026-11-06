@@ -182,6 +182,7 @@ async function publishFiles() {
   add('sim/solatel_sim_bg.wasm', await readFile(wasm));
   add('favicon.png', await readFile(resolve(here, 'favicon.png')));
   for (const size of [192, 512]) add(`app-icon-${size}.png`, await readFile(resolve(here, `app-icon-${size}.png`)));
+  add('app-icon-maskable-512.png', await readFile(resolve(here, 'app-icon-maskable-512.png')));
   // The decoder for the photographs, which run as KTX2 (`photo.js`): three's
   // own, fetched at runtime by the loader rather than bundled.
   const basis = resolve(here, 'node_modules', 'three', 'examples', 'jsm', 'libs', 'basis');
@@ -227,10 +228,11 @@ function once(text, from, to) {
 async function writePage(script, names) {
   const manifest = JSON.stringify({
     name: 'Solatel', short_name: 'Solatel',
-    start_url: '/', scope: '/', display: 'fullscreen', orientation: 'landscape',
+    id: '/', start_url: '/', scope: '/', display: 'standalone', orientation: 'landscape',
     background_color: '#080c13', theme_color: '#080c13',
-    icons: [192, 512].map((size) => ({ src: names[`app-icon-${size}.png`],
-      sizes: `${size}x${size}`, type: 'image/png' })),
+    icons: [...[192, 512].map((size) => ({ src: names[`app-icon-${size}.png`],
+      sizes: `${size}x${size}`, type: 'image/png', purpose: 'any' })),
+      { src: names['app-icon-maskable-512.png'], sizes: '512x512', type: 'image/png', purpose: 'maskable' }],
   });
   const buildId = BUILD_PREFIX + hashOf(`${script}\n${JSON.stringify(names)}\n${manifest}`);
   let html = await readFile(resolve(here, 'index.html'), 'utf8');
@@ -252,6 +254,7 @@ async function writePage(script, names) {
       `    <script id="solatel-manifest" type="application/json">${table}</script>\n  </head>`,
   );
   // The page first: the server never claims a build whose page is not there.
+  await emit('manifest.webmanifest', Buffer.from(`${manifest}\n`), { contentNamed: false });
   await emit('manifest.json', Buffer.from(`${manifest}\n`), { contentNamed: false });
   await emit('index.html', Buffer.from(html), { contentNamed: false });
   await emit('build.json', Buffer.from(`${JSON.stringify({ build: buildId })}\n`), { contentNamed: false });

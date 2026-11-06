@@ -78,7 +78,7 @@ export class Input {
     this._padCrouch = false;
     this._padThrow = false;
     this._touch = { forward: 0, right: 0, fire: false, aim: false, jump: false,
-      crouch: false, reload: false, grenade: false, throw: false, sprint: false };
+      crouch: false, reload: false, grenade: false, throw: false, sprint: false, stickActive: false };
     this._touchEditing = false;
     this._lastTouchAt = -Infinity;
     this._lastLookAt = performance.now();
@@ -134,19 +134,26 @@ export class Input {
     const stick = layer.querySelector('.touch-stick');
     const thumb = stick.querySelector('i');
     let stickId = null;
+    let stickX = 0; let stickY = 0;
     const move = (event) => {
       const rect = stick.getBoundingClientRect();
       const radius = Math.max(1, rect.width * .38);
-      const x = Math.max(-1, Math.min(1, (event.clientX - rect.left - rect.width / 2) / radius));
-      const y = Math.max(-1, Math.min(1, (event.clientY - rect.top - rect.height / 2) / radius));
+      let x = (event.clientX - stickX) / radius;
+      let y = (event.clientY - stickY) / radius;
+      const length = Math.hypot(x, y);
+      if (length < .1) x = y = 0;
+      else { const gain = Math.min(1, (length - .1) / .9) / length; x *= gain; y *= gain; }
       this._touch.right = x;
       this._touch.forward = -y;
       thumb.style.transform = `translate(${x * radius}px, ${y * radius}px)`;
     };
     stick.addEventListener('pointerdown', (event) => {
       if (this._touchEditing) return;
+      if (stickId !== null) return;
       event.preventDefault();
       stickId = event.pointerId;
+      stickX = event.clientX; stickY = event.clientY;
+      this._touch.stickActive = true;
       stick.setPointerCapture(stickId);
       move(event);
     });
@@ -154,32 +161,50 @@ export class Input {
     const releaseStick = (event) => {
       if (event.pointerId !== stickId) return;
       stickId = null;
+      this._touch.stickActive = false;
       this._touch.forward = this._touch.right = 0;
       thumb.style.transform = '';
     };
     stick.addEventListener('pointerup', releaseStick);
     stick.addEventListener('pointercancel', releaseStick);
+    stick.addEventListener('lostpointercapture', releaseStick);
     for (const button of layer.querySelectorAll('button[data-touch]')) {
       const action = button.dataset.touch;
+      let firePointer = null; let fireX = 0; let fireY = 0;
       button.addEventListener('pointerdown', (event) => {
         if (this._touchEditing) return;
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
+        if (action === 'fire') { firePointer = event.pointerId; fireX = event.clientX; fireY = event.clientY; }
         if (action === 'swap') this._sidearm = !this._sidearm;
-        else if (action === 'crouch') this._touch.crouch = !this._touch.crouch;
+        else if (action === 'crouch' || action === 'aim' || action === 'sprint') {
+          this._touch[action] = !this._touch[action];
+          button.classList.toggle('touch-on', this._touch[action]);
+          if (action === 'sprint') { this._touch.crouch = false; this._touch.aim = false; }
+        }
         else this._touch[action] = true;
+        if (action === 'jump') this._tapped.add('Space');
+        if (action === 'reload') this._tapped.add('KeyR');
       });
       const release = (event) => {
         if (this._touchEditing) return;
         event.preventDefault();
+        firePointer = null;
         if (action === 'grenade' && this._touch.grenade) this._touch.throw = true;
-        if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
+        if (!['swap', 'crouch', 'aim', 'sprint'].includes(action)) this._touch[action] = false;
       };
       button.addEventListener('pointerup', release);
+      button.addEventListener('pointermove', (event) => {
+        if (this._touchEditing || event.pointerId !== firePointer) return;
+        this._dx += (event.clientX - fireX) * 1.8;
+        this._dy += (event.clientY - fireY) * 1.8;
+        fireX = event.clientX; fireY = event.clientY;
+      });
       button.addEventListener('pointercancel', (event) => {
         if (this._touchEditing) return;
         event.preventDefault();
-        if (action !== 'swap' && action !== 'crouch') this._touch[action] = false;
+        firePointer = null;
+        if (!['swap', 'crouch', 'aim', 'sprint'].includes(action)) this._touch[action] = false;
       });
     }
     let lookId = null;
@@ -210,6 +235,16 @@ export class Input {
       thumb.style.transform = '';
       stickId = null; lookId = null;
     });
+    this._touchLayer = layer;
+    const cancelTouches = () => {
+      stickId = null; lookId = null;
+      this._touch.stickActive = false;
+      this._touch.forward = this._touch.right = 0;
+      for (const action of ['fire', 'aim', 'jump', 'reload', 'grenade', 'throw', 'sprint']) this._touch[action] = false;
+      thumb.style.transform = '';
+    };
+    window.addEventListener('blur', cancelTouches);
+    window.addEventListener('orientationchange', cancelTouches);
   }
 
   _bind() {
@@ -486,7 +521,7 @@ export class Input {
     if (this.requireLock && !this.locked && !pad) return false;
     const padSprint = Boolean(pad && pad.axes[1] < -.35 && pad.buttons[10]?.pressed &&
       !this._padCrouch && !pad.buttons[6]?.pressed && !pad.buttons[7]?.pressed && !pad.buttons[4]?.pressed);
-    const touchSprint = this._touch.sprint && this._touch.forward > .2 && !this._touch.crouch &&
+    const touchSprint = this._touch.sprint && (Math.hypot(this._touch.forward, this._touch.right) < .1 || this._touch.forward > .2) && !this._touch.crouch &&
       !this._touch.aim && !this._touch.fire && !this._touch.grenade;
     return padSprint || touchSprint || (this._keys.has('KeyW') && !this._keys.has('KeyS') && !this._crouch
       && !this._aim && !this._fire && !this._keys.has('KeyG')
@@ -570,14 +605,19 @@ export class Input {
       if (was(4) && !pressed(4)) this._padThrow = true;
       if (pressed(0)) this._padCrouch = false;
     }
-    forward = Math.max(-1, Math.min(1, forward + this._touch.forward));
+    if (this._touch.forward < -.15 || this._touch.fire || this._touch.aim || this._touch.grenade || this._touch.crouch) this._touch.sprint = false;
+    const touchForward = this._touch.sprint && Math.hypot(this._touch.forward, this._touch.right) < .1 ? 1 : this._touch.forward;
+    if (this._touchLayer) for (const name of ['sprint', 'aim', 'crouch']) {
+      this._touchLayer.querySelector(`[data-touch="${name}"]`).classList.toggle('touch-on', this._touch[name]);
+    }
+    forward = Math.max(-1, Math.min(1, forward + touchForward));
     right = Math.max(-1, Math.min(1, right + this._touch.right));
     const held = (code) => this._keys.has(code) || this._tapped.has(code);
     if (forward <= 0 || this._crouch || this._aim || this._fire || held('KeyG')) this._sprintLatched = false;
     const intent = {
       forward,
       right,
-      jump: this._keys.has('Space') || pressed(0) || this._touch.jump,
+      jump: held('Space') || pressed(0) || this._touch.jump,
       fire: (this._fire || pressed(7) || this._touch.fire) && !held('KeyG') && !pressed(4) && !this._touch.grenade,
       crouch: this._crouch || this._padCrouch || this._touch.crouch,
       reload: held('KeyR') || (pressed(2) && !was(2)) || this._touch.reload,
@@ -599,6 +639,7 @@ export class Input {
     this._crouch = false;
     this._padCrouch = false;
     this._touch.crouch = false;
+    this._touch.sprint = false;
     this._sprintLatched = false;
   }
 

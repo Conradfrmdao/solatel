@@ -165,6 +165,7 @@ export class Menu {
     root.querySelector('#edit-touch-controls').addEventListener('click', () => {
       document.dispatchEvent(new Event('solatel:edit-touch'));
     });
+    root.querySelector('#install-solatel').addEventListener('click', () => document.dispatchEvent(new Event('solatel:install')));
     // The play screen is laid out to the window (see `showPane`).
     root.dataset.pane = 'play';
     this.skinName = root.querySelector('#menu-skin-name');
@@ -1535,6 +1536,7 @@ const TEMPLATE = `
           <button id="edit-touch-controls" type="button">customize buttons</button>
           <span>drag, resize and adjust opacity; saved on this phone</span>
         </label>
+        <label class="mobile-only pwa-settings">install Solatel<button id="install-solatel" type="button">installation guide</button><span>home screen setup for your phone</span></label>
         <p class="mobile-browser-tip">For a screen without Safari tabs, use Share, Add to Home Screen, then open Solatel from its icon.</p>
         <label class="check">
           raw mouse

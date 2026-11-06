@@ -59,10 +59,9 @@ export function initMobileLandscape() {
   const installed = window.matchMedia?.('(display-mode: fullscreen)').matches ||
     window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
   const canFullscreen = Boolean(document.documentElement.requestFullscreen && document.fullscreenEnabled !== false);
-  if (installed || !canFullscreen) document.body.classList.add('mobile-ready');
+  document.body.classList.add('mobile-ready');
   if (!canFullscreen && !installed) {
     document.body.classList.add('mobile-browser-limited');
-    if (button) button.textContent = 'CONTINUE';
   }
   button?.addEventListener('click', async () => {
     const full = await enterFullscreen();
@@ -70,18 +69,12 @@ export function initMobileLandscape() {
       await lockLandscape();
       document.body.classList.add('mobile-browser-limited');
     }
-    if (document.body.classList.contains('mobile-browser-limited')) {
-      document.body.classList.add('mobile-bypass-portrait');
-    }
+    document.body.classList.add('mobile-bypass-portrait');
     document.body.classList.add('mobile-ready');
   });
-  let wasFullscreen = false;
   document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) {
-      wasFullscreen = true;
       document.body.classList.add('mobile-ready');
-    } else if (wasFullscreen) {
-      document.body.classList.remove('mobile-ready');
     }
   });
   void lockLandscape();

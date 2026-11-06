@@ -1,5 +1,7 @@
 import { pathMayHitPlayer } from './predicted-impact.js';
 import { initMobileLandscape } from './fullscreen.js';
+import { initInstallation } from './pwa.js';
+import { initViewport } from './viewport.js';
 // Solatel browser client.
 //
 // The client renders and predicts; it never decides what happened. Every fact
@@ -263,6 +265,7 @@ async function boot() {
     }))();
   }
   const hud = new Hud(hudRoot);
+  hud.stats.hidden = input.touchMode && !options.has('debug');
   const audio = new Audio();
   // Every recording, fetched now so it is decoded by the first shot; nothing
   // waits on it.
@@ -555,8 +558,9 @@ async function boot() {
   const forceAo = options.has('ao');
 
   const resize = () => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const bounds = canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(bounds.width));
+    const height = Math.max(1, Math.round(bounds.height));
     const aspect = width / height;
     renderer.setSize(width, height, false);
     if (composer) composer.setSize(width, height);
@@ -567,6 +571,7 @@ async function boot() {
     viewmodel.setView(aspect, verticalFov(WEAPON_HORIZONTAL_FOV, aspect, viewmodel.weaponZoom));
   };
   window.addEventListener('resize', resize);
+  window.addEventListener('solatel:viewport', resize);
   resize();
 
   // The old box for ambient occlusion becomes the level that has it.
@@ -581,7 +586,7 @@ async function boot() {
   const quality = new Quality(
     renderer,
     (level, preset) => {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.ratio) * preset.scale);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.ratio) * (input.touchMode ? 1 : preset.scale));
       builtComposer?.setPixelRatio(renderer.getPixelRatio());
       composer = preset.post ? builtComposer : null;
       if (bloomPass) bloomPass.enabled = preset.bloom;
@@ -1187,7 +1192,9 @@ async function boot() {
   requestAnimationFrame(frame);
 }
 
+initViewport();
 initMobileLandscape();
+initInstallation();
 
 boot().catch((err) => {
   console.error(err);
