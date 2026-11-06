@@ -50,20 +50,31 @@ async function lockLandscape() {
   }
 }
 
-/** Ask immediately in installed-app contexts, and offer a gesture on phones
- *  whose browsers require one. The portrait prompt remains until the viewport
- *  actually rotates, even if the lock request is refused. */
+/** Ask immediately in installed-app contexts. Browser tabs that support the
+ *  API get a required gesture; unsupported browsers get a manual-rotate
+ *  prompt without a false promise that their chrome can be hidden. */
 export function initMobileLandscape() {
   if (!isTouchScreen()) return;
   const button = document.getElementById('mobile-landscape-button');
+  const installed = window.matchMedia?.('(display-mode: fullscreen)').matches ||
+    window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+  const canFullscreen = Boolean(document.documentElement.requestFullscreen && document.fullscreenEnabled !== false);
+  if (installed || !canFullscreen) document.body.classList.add('mobile-ready');
+  if (!canFullscreen && !installed) {
+    document.body.classList.add('mobile-browser-limited');
+    if (button) button.textContent = 'CONTINUE';
+  }
   button?.addEventListener('click', async () => {
     const full = await enterFullscreen();
-    if (!full) await lockLandscape();
+    if (!full) {
+      await lockLandscape();
+      document.body.classList.add('mobile-browser-limited');
+    }
+    if (document.body.classList.contains('mobile-browser-limited')) {
+      document.body.classList.add('mobile-bypass-portrait');
+    }
     document.body.classList.add('mobile-ready');
   });
-  if (window.matchMedia?.('(display-mode: fullscreen)').matches) {
-    document.body.classList.add('mobile-ready');
-  }
   let wasFullscreen = false;
   document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) {

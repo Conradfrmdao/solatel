@@ -2916,6 +2916,10 @@ play were still pending at this point.
 
 ## November 3 mobile touch pass
 
+Project UI rule: do not use emoji or Unicode glyphs as icons. Use SVG line
+icons, including mobile controls and orientation guidance, so Safari cannot
+substitute colourful emoji artwork.
+
 On coarse-pointer devices, the client now uses on-screen movement and combat
 controls and permits play without pointer lock. The layout places movement
 at the lower left, a prominent fire button at the right thumb, aim/jump/
@@ -2948,3 +2952,16 @@ controls, resize the selected control, change opacity, reset, and save the
 layout on that device. The editor sends neutral input while open; a match
 ending closes it. Browser smoke checks covered hidden states, the mobile
 entry gate, drag/resize persistence after reload, and reset.
+
+## November 6 mobile browser correction
+
+Fullscreen and orientation were checked against MDN and current WebKit
+documentation/issues. Supported browser tabs request fullscreen from the
+entry tap and then lock landscape. iPhone Safari still cannot fullscreen
+interactive page content. Browsers without that capability receive manual
+rotation and Home Screen guidance; Continue dismisses that prompt rather
+than trapping the player in portrait. Installed standalone apps are detected.
+Apple's Home Screen icon and web-app-capable metadata are published. The
+landscape phone lobby uses a compact header and three map cards across so
+browser bars do not push the map choices below the first screen. Physical
+iPhone testing remains necessary; browser emulation is not Safari hardware QA.

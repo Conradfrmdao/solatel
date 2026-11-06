@@ -3,8 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Solatel</title>
     <link rel="icon" href="favicon.png" />
+    <link rel="apple-touch-icon" href="app-icon-192.png" />
     <link rel="manifest" href="manifest.json" />
     <style>
       /* The look outside a match is Conrad's key art's: night navy, the
@@ -1696,6 +1698,33 @@
         #menu-tabs button { min-height: 46px; padding: 0 10px; }
         .menu-shell { padding: 16px 16px 48px; }
       }
+      @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+        .topbar .bar { min-height: 48px; padding: 3px 8px; gap: 5px; flex-wrap: nowrap; }
+        .brand { padding: 2px; flex: none; }
+        .brand img { height: 18px; }
+        .brand .motto, .me { display: none; }
+        #menu-tabs { order: 0; flex: 1 1 auto; width: auto; min-width: 0; margin: 0; overflow-x: auto; flex-wrap: nowrap; }
+        #menu-tabs button { min-height: 42px; padding: 0 7px; gap: 4px; font-size: 12px; white-space: nowrap; }
+        #menu-tabs button svg { width: 16px; height: 16px; }
+        #purse { padding: 4px 6px; gap: 4px; flex: none; }
+        #purse .amount { font-size: 12px; }
+        #purse .plus, #purse .tag { display: none; }
+        #menu[data-pane='play'] > .menu-shell { flex: none; min-height: 0; padding: 6px 9px 16px; }
+        .pane[data-pane='play'], .battle { gap: 7px; flex: none; }
+        .battle > .hero, .battle > .activity { display: none; }
+        .battle[data-phase='pick'], .battle[data-phase='gear'] { grid-template-rows: auto auto; }
+        .battle #menu-maps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+        .battle[data-phase='pick'] .map { min-height: 132px; height: 132px; }
+        .battle[data-phase='gear'] #menu-maps { grid-auto-rows: 76px; }
+        .battle[data-phase='gear'] .map { min-height: 76px; }
+        .battle .map { padding: 9px; }
+        .battle .map .name { font-size: clamp(21px, 3.4vw, 32px); }
+        .battle .map .blurb, .battle .map .seats { display: none; }
+        .battle .map .badge { top: 7px; left: 7px; padding: 4px 6px; font-size: 10px; }
+        .gear { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+        .gear-box.stakes { grid-column: 1 / -1; }
+        .needs-keyboard { display: none; }
+      }
 
       /* The rules, stated before anybody pays. */
       .rules {
@@ -1785,8 +1814,10 @@
       #touch-editor { display: none; }
       #mobile-landscape { display: none; }
       .mobile-only { display: none !important; }
+      .mobile-browser-tip { display: none; }
       @media (pointer: coarse) {
         .mobile-only { display: grid !important; }
+        body.mobile-browser-limited .mobile-browser-tip { display: block; color: var(--dim); font-size: 13px; }
         .desktop-only { display: none !important; }
         #mobile-landscape {
           position: fixed; inset: 0; z-index: 100;
@@ -1795,9 +1826,16 @@
           background: #080c13; color: var(--chalk); font: 500 17px/1.4 var(--read);
         }
         body.mobile-ready #mobile-landscape { display: none; }
-        #mobile-landscape .turn { font: 800 56px/1 var(--shout); color: var(--amber); }
+        #mobile-landscape .turn svg {
+          display: block; width: 64px; height: 64px;
+          fill: none; stroke: var(--amber); stroke-width: 3;
+          stroke-linecap: round; stroke-linejoin: round;
+        }
         #mobile-landscape strong { font: 800 28px/1.1 var(--shout); letter-spacing: .04em; }
         #mobile-landscape p { max-width: 30ch; margin: 0; color: var(--dim); }
+        #mobile-landscape .limited-note { display: none; }
+        body.mobile-browser-limited #mobile-landscape .standard-note { display: none; }
+        body.mobile-browser-limited #mobile-landscape .limited-note { display: block; }
         #mobile-landscape button {
           min-height: 48px; padding: 10px 20px; border-radius: 8px;
           border: 1px solid #ffcc71; background: var(--amber); color: #211303;
@@ -1845,7 +1883,11 @@
           text-shadow: 0 1px 3px #000;
           pointer-events: auto; touch-action: none;
         }
-        #touch-controls button span { font: 700 27px/1 var(--read); }
+        #touch-controls button svg {
+          width: 27px; height: 27px; fill: none; stroke: currentColor;
+          stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+          flex: none;
+        }
         #touch-controls button:active { filter: brightness(1.5); }
         #touch-controls [data-touch='aim'] { right: max(12px, env(safe-area-inset-right)); bottom: 73%; }
         #touch-controls [data-touch='jump'] { right: max(12px, env(safe-area-inset-right)); bottom: 54%; }
@@ -1857,7 +1899,7 @@
           background: #a64a1cb8; box-shadow: 0 0 12px #f89a3b88;
           font-size: 17px;
         }
-        #touch-controls [data-touch='fire'] span { font-size: 38px; }
+        #touch-controls [data-touch='fire'] svg { width: 38px; height: 38px; }
         #touch-controls [data-touch='grenade'] {
           right: max(197px, calc(env(safe-area-inset-right) + 197px)); bottom: 44%;
           width: 57px; height: 57px;
@@ -1872,13 +1914,13 @@
           width: 178px; height: 52px; border-radius: 14px;
           flex-direction: row; gap: 8px; font-size: 13px;
         }
-        #touch-controls [data-touch='swap'] span { font-size: 22px; }
+        #touch-controls [data-touch='swap'] svg { width: 22px; height: 22px; }
         #touch-controls #touch-customize {
           top: max(8px, env(safe-area-inset-top));
           right: max(12px, env(safe-area-inset-right));
           width: 30px; height: 30px; border-radius: 8px;
-          font: 700 22px/1 var(--read);
         }
+        #touch-controls #touch-customize svg { width: 21px; height: 21px; }
         body.editing-controls #touch-controls { z-index: 51; opacity: 1 !important; }
         body.editing-controls #touch-customize { display: none !important; }
         body.editing-controls .touch-selected { outline: 3px solid var(--amber-hot); outline-offset: 3px; }
@@ -1909,9 +1951,9 @@
       @media (pointer: coarse) and (orientation: landscape) and (max-height: 330px) {
         body.running #touch-controls { --stick-size: clamp(84px, 18vw, 112px); }
         #touch-controls button { width: 52px; height: 52px; font-size: 9px; }
-        #touch-controls button span { font-size: 23px; }
+        #touch-controls button svg { width: 23px; height: 23px; }
         #touch-controls [data-touch='fire'] { width: 82px; height: 82px; }
-        #touch-controls [data-touch='fire'] span { font-size: 32px; }
+        #touch-controls [data-touch='fire'] svg { width: 32px; height: 32px; }
         #touch-controls [data-touch='grenade'], #touch-controls [data-touch='sprint'] { width: 48px; height: 48px; }
         #touch-controls [data-touch='swap'] { width: 152px; height: 43px; font-size: 11px; }
       }
@@ -1924,7 +1966,7 @@
         #touch-controls [data-touch='fire'] { bottom: 20%; }
         #touch-controls [data-touch='grenade'] { right: 145px; bottom: 33%; }
         #touch-controls [data-touch='sprint'] { left: 18px; bottom: 39%; }
-        body.mobile-ready #mobile-landscape { display: flex; }
+        body.mobile-ready:not(.mobile-bypass-portrait) #mobile-landscape { display: flex; }
       }
 
       /* Form controls in the menu's colours rather than the browser's. */
@@ -2163,11 +2205,12 @@
     <div id="menu" class="hidden"></div>
     <div id="matchmaking" class="hidden"></div>
     <div id="mobile-landscape" role="dialog" aria-label="Enter full screen landscape play">
-      <span class="turn" aria-hidden="true">⤵</span>
-      <strong>FULL SCREEN LANDSCAPE</strong>
-      <p>Tap once to open Solatel across your phone's screen.</p>
+      <span class="turn" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="22" y="8" width="22" height="36" rx="4"/><path d="M9 40c4 11 14 18 26 18 9 0 17-4 22-11M48 45l9 2 1-9"/></svg></span>
+      <strong>PLAY IN LANDSCAPE</strong>
+      <p class="standard-note">Tap once to request fullscreen and rotate the game.</p>
+      <p class="limited-note">Turn your phone sideways. For a screen without Safari bars, use Share, Add to Home Screen, then open Solatel from its icon.</p>
       <button id="mobile-landscape-button" type="button">ENTER GAME</button>
-      <p>If your browser cannot rotate automatically, turn your phone sideways.</p>
+      <p class="standard-note">If your phone stays upright, turn it sideways yourself.</p>
     </div>
 
     <div id="boot">

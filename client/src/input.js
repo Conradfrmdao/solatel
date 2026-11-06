@@ -19,6 +19,7 @@
 
 import { SIM, wrapAngle } from './sim.js';
 import { installTouchLayout } from './touch-layout.js';
+import { TOUCH_ICONS } from './touch-icons.js';
 
 const DEFAULT_SENSITIVITY = 0.0022;
 
@@ -120,15 +121,15 @@ export class Input {
     const layer = document.createElement('div');
     layer.id = 'touch-controls';
     layer.innerHTML = `<div class="touch-stick" aria-label="Move"><i></i></div>` +
-      `<button data-touch="sprint" aria-label="Sprint"><span>↗</span>SPRINT</button>` +
-      `<button data-touch="grenade" aria-label="Hold grenade, release to throw"><span>✦</span>GRENADE</button>` +
-      `<button data-touch="fire" aria-label="Fire"><span>✣</span>FIRE</button>` +
-      `<button data-touch="aim" aria-label="Aim"><span>⊕</span>ADS</button>` +
-      `<button data-touch="jump" aria-label="Jump or climb"><span>↑</span>JUMP</button>` +
-      `<button data-touch="crouch" aria-label="Crouch"><span>↓</span>CROUCH</button>` +
-      `<button data-touch="reload" aria-label="Reload"><span>↻</span>RELOAD</button>` +
-      `<button data-touch="swap" aria-label="Swap weapon"><span>⇄</span>SWAP WEAPON</button>` +
-      `<button id="touch-customize" type="button" aria-label="Customize touch controls">⚙</button>`;
+      `<button data-touch="sprint" aria-label="Sprint">${TOUCH_ICONS.sprint}SPRINT</button>` +
+      `<button data-touch="grenade" aria-label="Hold grenade, release to throw">${TOUCH_ICONS.grenade}GRENADE</button>` +
+      `<button data-touch="fire" aria-label="Fire">${TOUCH_ICONS.fire}FIRE</button>` +
+      `<button data-touch="aim" aria-label="Aim">${TOUCH_ICONS.aim}ADS</button>` +
+      `<button data-touch="jump" aria-label="Jump or climb">${TOUCH_ICONS.jump}JUMP</button>` +
+      `<button data-touch="crouch" aria-label="Crouch">${TOUCH_ICONS.crouch}CROUCH</button>` +
+      `<button data-touch="reload" aria-label="Reload">${TOUCH_ICONS.reload}RELOAD</button>` +
+      `<button data-touch="swap" aria-label="Swap weapon">${TOUCH_ICONS.swap}SWAP WEAPON</button>` +
+      `<button id="touch-customize" type="button" aria-label="Customize touch controls">${TOUCH_ICONS.settings}</button>`;
     this.canvas.after(layer);
     const stick = layer.querySelector('.touch-stick');
     const thumb = stick.querySelector('i');

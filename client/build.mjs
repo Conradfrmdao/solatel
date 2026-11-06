@@ -236,6 +236,7 @@ async function writePage(script, names) {
   let html = await readFile(resolve(here, 'index.html'), 'utf8');
   html = once(html, '<script type="module" src="solatel.js"></script>', `<script type="module" src="${script}"></script>`);
   html = once(html, '<link rel="icon" href="favicon.png" />', `<link rel="icon" href="${names['favicon.png']}" />`);
+  html = once(html, '<link rel="apple-touch-icon" href="app-icon-192.png" />', `<link rel="apple-touch-icon" href="${names['app-icon-192.png']}" />`);
   // The page's own styles name their pictures and fonts by plain name, as
   // the code does: the splash has to be there before any script runs.
   html = html.replace(/url\((assets\/[^)'"\s]+)\)/g, (_, plain) => {

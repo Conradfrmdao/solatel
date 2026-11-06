@@ -186,7 +186,7 @@ export class Hud {
 
     if (event.killer_name) {
       const killer = escapeHtml(event.killer_name);
-      const mark = event.headshot ? '<span class="hs">✖</span>' : '<span class="hs">→</span>';
+      const mark = event.headshot ? '<span class="hs">HEAD</span>' : '<span class="hs">KILL</span>';
       line.innerHTML = `<span class="who">${killer}</span>${mark}<span class="who">${victim}</span>`;
     } else {
       // No killer: a fall, or the world taking them.

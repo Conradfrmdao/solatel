@@ -1535,6 +1535,7 @@ const TEMPLATE = `
           <button id="edit-touch-controls" type="button">customize buttons</button>
           <span>drag, resize and adjust opacity; saved on this phone</span>
         </label>
+        <p class="mobile-browser-tip">For a screen without Safari tabs, use Share, Add to Home Screen, then open Solatel from its icon.</p>
         <label class="check">
           raw mouse
           <input id="rawmouse" type="checkbox" />
