@@ -39,6 +39,15 @@
         --money: #9fe8b4;
         --shout: 'Saira Condensed', 'Arial Narrow', 'Roboto Condensed', sans-serif;
         --read: 'Barlow', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        --ui-safe-left: env(safe-area-inset-left, 0px);
+        --ui-safe-right: env(safe-area-inset-right, 0px);
+        --ui-safe-top: env(safe-area-inset-top, 0px);
+        --ui-safe-bottom: env(safe-area-inset-bottom, 0px);
+        --ui-left: calc(var(--ui-safe-left) + 20px);
+        --ui-right: calc(var(--ui-safe-right) + 20px);
+        --ui-top: calc(var(--ui-safe-top) + 10px);
+        --ui-bottom: calc(var(--ui-safe-bottom) + 10px);
+        --ui-center-x: calc((100% + var(--ui-safe-left) - var(--ui-safe-right)) / 2);
       }
 
       * { box-sizing: border-box; }
@@ -47,7 +56,7 @@
         margin: 0;
         height: 100%;
         height: var(--app-height, 100dvh);
-        width: var(--app-width, 100%);
+        width: 100%;
         overflow: hidden;
         background: var(--bg);
         color: var(--ink);
@@ -377,6 +386,7 @@
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
         text-align: center;
       }
+      .mm-content, .mm-footer, .db-content, .db-footer { display: contents; }
       .mm-card::before {
         content: '';
         height: 112px;
@@ -1928,10 +1938,8 @@
         body.editing-controls #touch-controls { z-index: 51; opacity: 1 !important; }
         body.editing-controls #touch-customize { display: none !important; }
         body.editing-controls .touch-selected { outline: 3px solid var(--amber-hot); outline-offset: 3px; }
-        body.editing-controls #touch-editor {
-          position: fixed; inset: 0; z-index: 50; display: block;
-          background: rgba(5, 9, 15, .86); pointer-events: auto;
-        }
+        body.editing-controls #touch-editor { position: absolute; inset: 0; display: block; pointer-events: none; }
+        body.editing-controls #touch-editor::before { content: ''; position: absolute; inset: 0; z-index: 50; background: rgba(5, 9, 15, .86); pointer-events: auto; }
         .touch-editor-bar {
           position: absolute; left: 50%; top: max(6px, env(safe-area-inset-top));
           transform: translateX(-50%); width: min(500px, calc(100vw - 180px));
@@ -1970,7 +1978,7 @@
         #touch-controls [data-touch='fire'] { bottom: 20%; }
         #touch-controls [data-touch='grenade'] { right: 145px; bottom: 33%; }
         #touch-controls [data-touch='sprint'] { left: 18px; bottom: 39%; }
-        body.running:not(.in-menu):not(.mobile-bypass-portrait) #mobile-landscape { display: flex; }
+        body.running:not(.in-menu):not(.editing-controls):not(.mobile-bypass-portrait) #mobile-landscape { display: flex; }
       }
 
       /* Phone defaults: movement under the left thumb, combat under the right.
@@ -1983,8 +1991,6 @@
         body.running #touch-controls, body.editing-controls #touch-controls {
           height: var(--app-height, 100dvh); width: var(--app-width, 100vw);
           --stick-size: clamp(96px, 28dvh, 124px);
-          --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px);
-          --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
         .touch-stick { left: max(28px, env(safe-area-inset-left)); bottom: max(28px, env(safe-area-inset-bottom)); border-color: #ffffff66; }
         #touch-controls button { width: 50px; height: 50px; font-size: 8px; background: #10182266; border-color: #ffffff88; }
@@ -2046,6 +2052,158 @@
       @media (pointer: coarse) and (max-width: 650px) and (orientation: landscape) {
         #touch-controls [data-touch='grenade'] { right: calc(max(22px, env(safe-area-inset-right)) + 160px); width: 42px; height: 42px; }
         #touch-controls [data-touch='swap'] { width: 100px; font-size: 8px; }
+      }
+
+      /* Keep the scene edge to edge. Only readable and interactive UI is
+         inset from cutouts, with a further thumb-friendly margin. */
+      @media (pointer: coarse) {
+        #boot, #debrief {
+          width: var(--app-width, 100vw); height: var(--app-height, 100dvh);
+        }
+        #boot {
+          padding: var(--ui-top) var(--ui-right) max(32px, var(--ui-bottom)) var(--ui-left);
+        }
+        #boot::before { background-image: url(assets/menu/hero.webp); filter: brightness(.65); inset: 0; }
+        #boot h1 {
+          inset: var(--ui-top) var(--ui-right) var(--ui-bottom) var(--ui-left);
+          background-image: url(assets/menu/logo.svg);
+          background-size: min(80%, 390px) auto; background-position: center 24%;
+        }
+        #boot-status { max-width: 100%; overflow-wrap: anywhere; }
+        #matchmaking, #debrief, #pwa-install, #mobile-landscape {
+          padding: var(--ui-top) var(--ui-right) var(--ui-bottom) var(--ui-left);
+          overflow: hidden;
+        }
+        #matchmaking, #debrief, #pwa-install { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+        .mm-card, .db-card {
+          max-height: 100%; min-height: 0; max-width: 100%; padding: 0;
+          display: flex; flex-direction: column; gap: 0;
+          overflow: hidden; animation: none;
+        }
+        .mm-card { width: min(580px, 100%); }
+        .db-card { width: min(720px, 100%); }
+        .mm-card::before, .db-card::before { display: none; }
+        .mm-content, .db-content {
+          display: grid; grid-auto-rows: max-content; align-content: start;
+          gap: 10px; min-height: 0; overflow: auto; overscroll-behavior: contain;
+          padding: 16px; scrollbar-gutter: stable;
+        }
+        .mm-content > *, .db-content > * { min-width: 0; overflow-wrap: anywhere; }
+        .mm-footer, .db-footer {
+          display: flex; justify-content: center; align-items: center;
+          flex: none; padding: 8px 16px;
+          background: var(--deck); border-top: 1px solid var(--rule);
+        }
+        .mm-footer:has(.hidden) { display: none; }
+        .mm-leave, .db-go { min-height: 44px; min-width: 0; width: min(100%, 280px); margin: 0; }
+        .db-keys { display: none; }
+        .mm-radar { width: 44px; height: 44px; margin: 0; }
+        .mm-radar i { inset: 18px; }
+        .mm-head { flex-wrap: wrap; gap: 4px 12px; }
+        .mm-title { font-size: 26px; letter-spacing: .04em; }
+        .mm-table { font-size: 16px; }
+        .mm-status { font-size: 13px; }
+        .mm-download:empty { display: none; }
+        .db-title { font-size: clamp(27px, 4vw, 38px); letter-spacing: .06em; }
+        .db-place { font-size: 15px; }
+        .db-how { font-size: 12px; }
+        .db-money { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+        .db-cell { min-width: 0; padding: 8px; }
+        .db-cell b { font-size: clamp(18px, 2.8vw, 24px); }
+        .db-label { font-size: 10px; letter-spacing: .06em; }
+        .db-cell small { font-size: 11px; }
+        .db-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+        .db-stat { padding: 6px 2px; }
+        .db-stat b { font-size: 21px; }
+        .db-stat span { font-size: 9px; letter-spacing: .06em; }
+        .db-board { table-layout: fixed; font-size: 11px; }
+        .db-board td { padding: 5px 3px; overflow: hidden; text-overflow: ellipsis; }
+        .db-board td.rank { width: 24px; }
+        .db-board td.name { width: 36%; }
+        .db-board td.state { font-size: 10px; }
+        #menu .topbar .bar {
+          padding-left: var(--ui-left); padding-right: var(--ui-right);
+          padding-top: max(3px, var(--ui-safe-top));
+        }
+        #menu .menu-shell, #menu[data-pane='play'] > .menu-shell {
+          padding-left: var(--ui-left); padding-right: var(--ui-right);
+          padding-bottom: var(--ui-bottom); min-width: 0;
+        }
+        .touch-stick { left: var(--ui-left); bottom: max(28px, var(--ui-bottom)); }
+        body.running #touch-controls, body.editing-controls #touch-controls {
+          padding: var(--ui-top) var(--ui-right) var(--ui-bottom) var(--ui-left);
+        }
+        #touch-controls [data-touch='sprint'] {
+          left: calc(var(--ui-left) + var(--stick-size) / 2 - 24px);
+          bottom: calc(max(28px, var(--ui-bottom)) + var(--stick-size) + 12px);
+        }
+        #touch-controls [data-touch='fire'] { right: calc(var(--ui-right) + 78px); }
+        #touch-controls [data-touch='aim'], #touch-controls [data-touch='jump'] { right: var(--ui-right); }
+        #touch-controls [data-touch='crouch'] { right: var(--ui-right); bottom: max(22px, var(--ui-bottom)); }
+        #touch-controls [data-touch='reload'] { right: calc(var(--ui-right) + 100px); bottom: max(18px, var(--ui-bottom)); }
+        #touch-controls [data-touch='grenade'] { right: calc(var(--ui-right) + 163px); bottom: max(20px, var(--ui-bottom)); }
+        #touch-controls [data-touch='swap'] { left: var(--ui-center-x); bottom: var(--ui-bottom); }
+        #touch-controls #touch-customize { top: var(--ui-top); right: var(--ui-right); }
+        body.running #health { top: var(--ui-top); left: var(--ui-left); }
+        body.running #weapon { left: var(--ui-center-x); bottom: calc(var(--ui-bottom) + 43px); }
+        body.running #pool, body.running #balance, body.running #winnings, body.running #matchclock { left: var(--ui-center-x); }
+        body.running #pool { top: var(--ui-top); }
+        body.running #matchclock { top: calc(var(--ui-top) + 27px); }
+        body.running #balance { top: calc(var(--ui-top) + 49px); }
+        body.running #winnings { top: calc(var(--ui-top) + 64px); }
+        .touch-editor-bar {
+          left: var(--ui-center-x); top: var(--ui-top);
+          width: min(500px, calc(100% - var(--ui-left) - var(--ui-right) - 100px));
+          max-height: calc(100% - var(--ui-top) - var(--ui-bottom));
+          display: flex; flex-direction: column; flex-wrap: nowrap;
+          align-items: stretch; justify-content: flex-start; overflow: hidden;
+          z-index: 52;
+        }
+        .touch-editor-content {
+          display: flex; flex-direction: column; gap: 7px;
+          min-height: 0; overflow: auto; overscroll-behavior: contain;
+        }
+        .touch-editor-title, .touch-editor-layout, .touch-editor-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 5px 10px; }
+        .touch-editor-actions { flex: none; padding-top: 5px; border-top: 1px solid #ffffff33; }
+        .touch-editor-title { width: 100%; }
+        .touch-editor-options { width: 100%; border-top: 1px solid #ffffff33; padding-top: 6px; }
+        .touch-editor-options summary { cursor: pointer; padding: 6px; color: #ffd18c; }
+        .touch-editor-options label { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0; }
+        .touch-editor-options input { width: min(140px, 40vw); }
+        .touch-editor-options select { min-height: 38px; padding: 5px 9px; background: #1b2b40; color: white; border: 1px solid #8291a4; border-radius: 5px; }
+        .touch-editor-options output { min-width: 3em; }
+        .touch-editor-actions button { min-height: 38px; }
+      }
+      @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+        .mm-content { grid-template-columns: 1fr auto; gap: 5px 10px; padding: 12px 16px; }
+        .mm-radar { display: none; }
+        .mm-head, .mm-bar, .mm-status, .mm-fine, .mm-download { grid-column: 1 / -1; }
+        .mm-table { grid-column: 1; text-align: left; }
+        .mm-seats { grid-column: 2; grid-row: 2; align-self: center; min-height: 0; }
+        .mm-title { font-size: 24px; }
+        .mm-fine { font-size: 10px; }
+        .db-content { padding: 10px 14px; gap: 6px; }
+        .db-head { gap: 2px; }
+        .db-title { font-size: 30px; }
+        .db-cell { padding: 6px; }
+        .db-cell b { font-size: 20px; }
+        .db-stat { padding: 4px 2px; }
+        .db-stat b { font-size: 19px; }
+        #boot h1 { background-size: min(50%, 320px) auto; background-position: center 26%; }
+      }
+      @media (pointer: coarse) and (orientation: landscape) and (min-width: 740px) and (max-height: 400px) {
+        .db-stats { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+      }
+      @media (pointer: coarse) and (max-width: 700px) and (orientation: landscape) {
+        #touch-controls [data-touch='grenade'] { right: calc(var(--ui-right) + 160px); bottom: 37%; width: 44px; height: 44px; }
+        #touch-controls [data-touch='swap'] { width: 100px; }
+      }
+      @media (pointer: coarse) and (orientation: portrait) {
+        .db-money { grid-template-columns: minmax(0, 1fr); }
+        .touch-editor-bar { width: calc(100% - var(--ui-left) - var(--ui-right)); }
+        #touch-controls [data-touch='grenade'] { right: calc(var(--ui-right) + 135px); bottom: 27%; }
+        #touch-controls [data-touch='fire'] { bottom: 38%; }
+        #touch-controls [data-touch='reload'] { bottom: 17%; }
       }
 
       /* Form controls in the menu's colours rather than the browser's. */

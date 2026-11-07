@@ -80,3 +80,34 @@ On a physical Android phone and iPhone:
 - [MDN: native install prompt](https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeinstallprompt_event)
 - [WebKit: Home Screen apps](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)
 - [WebKit: iPhone fullscreen limitation](https://bugs.webkit.org/show_bug.cgi?id=206854)
+
+## Phone layout, audio and Yard follow-up
+
+The control editor's **Sensitivity & button behavior** panel saves a separate
+touch multiplier and Hold or Toggle for Aim, Crouch and Sprint. The default
+swipe sensitivity is 115% of the previous speed. Hold Grenade with the right
+thumb, drag to aim and release to throw. The left thumb can steer throughout.
+
+The lobby, editor and gameplay controls apply the device safe insets plus an
+inward margin. The canvas still fills the viewport. The matchmaking and results
+cards have scrollable details and pinned action buttons. The phone splash uses
+a fitted logo over the scenic artwork. Rotation no longer feeds a measured
+width back into the root layout width.
+
+Audio retries from a completed touch, after returning to the app, and after an
+iOS AudioContext interruption. It requests a playback audio session on browsers
+that support it and respects the in-game volume. Test sound on a physical iPhone
+and Android device, including Home Screen mode, the Ring/Silent switch, and
+leaving and returning to the app.
+
+Yard uses brighter concrete and cargo paint with a higher indirect light floor
+across graphics presets. First match preparation overlaps the floor scan and
+wall texture loads. Its map prefetch is about 7.6 MB smaller in source asset
+bytes. Ranger and Ghost models load when a selected or match skin uses them.
+Actual time saved depends on which skins are present, the network, and the GPU.
+
+After building, run `node client/mobile-screens-smoke.mjs` for the phone screen
+checks and screenshots. These cover simulated cutouts, viewport rotation, the
+loading/results actions and the expanded control editor. They use Chrome phone
+emulation. Check physical Safari and Android for hardware audio, cutouts, frame
+rate and match load time.

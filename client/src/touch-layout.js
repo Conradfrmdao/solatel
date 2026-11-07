@@ -22,7 +22,7 @@ function readLayout() {
 
 /** Draggable, locally saved phone controls. Percent positions follow viewport
  *  changes; each device keeps its own layout in browser storage. */
-export function installTouchLayout(layer, onEditingChange) {
+export function installTouchLayout(layer, onEditingChange, preferences) {
   let layout = readLayout();
   let editing = false;
   let selected = null;
@@ -32,15 +32,35 @@ export function installTouchLayout(layer, onEditingChange) {
   const editor = document.createElement('div');
   editor.id = 'touch-editor';
   editor.innerHTML = `<div class="touch-editor-bar">
-    <strong>CUSTOMIZE CONTROLS</strong><span>Drag a control to move it. Tap to resize.</span>
-    <label>Size <input id="touch-size" type="range" min="70" max="150" value="100"></label>
-    <label>Opacity <input id="touch-opacity" type="range" min="35" max="100" value="100"></label>
-    <button type="button" id="touch-reset">RESET</button>
-    <button type="button" id="touch-done">DONE</button>
+    <div class="touch-editor-content">
+      <div class="touch-editor-title"><strong>CUSTOMIZE CONTROLS</strong><span>Drag a control to move it. Tap to resize.</span></div>
+      <div class="touch-editor-layout">
+        <label>Size <input id="touch-size" type="range" min="70" max="150" value="100"></label>
+        <label>Opacity <input id="touch-opacity" type="range" min="35" max="100" value="100"></label>
+      </div>
+      <details class="touch-editor-options"><summary>Sensitivity &amp; button behavior</summary>
+        <label>Touch sensitivity <input id="touch-sensitivity" type="range" min="50" max="250" step="5"><output id="touch-sensitivity-value"></output></label>
+        <label>Aim <select id="touch-mode-aim"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
+        <label>Crouch <select id="touch-mode-crouch"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
+        <label>Sprint <select id="touch-mode-sprint"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
+        <p>Hold: active while pressed. Toggle: tap to lock, tap again to release. Combat or moving backward stops sprint.</p>
+      </details>
+    </div>
+    <div class="touch-editor-actions"><button type="button" id="touch-reset">RESET</button>
+    <button type="button" id="touch-done">DONE</button></div>
   </div>`;
   document.body.append(editor);
   const size = editor.querySelector('#touch-size');
   const opacity = editor.querySelector('#touch-opacity');
+  const sensitivity = editor.querySelector('#touch-sensitivity');
+  const sensitivityValue = editor.querySelector('#touch-sensitivity-value');
+  const modes = Object.fromEntries(['aim', 'crouch', 'sprint'].map((name) => [name, editor.querySelector(`#touch-mode-${name}`)]));
+  const syncPreferences = () => {
+    const values = preferences.get();
+    sensitivity.value = String(values.sensitivity);
+    sensitivityValue.value = `${values.sensitivity}%`;
+    for (const [name, select] of Object.entries(modes)) select.value = values[name];
+  };
   const save = () => {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layout)); } catch { /* private browsing */ }
   };
@@ -56,7 +76,7 @@ export function installTouchLayout(layer, onEditingChange) {
     const bounds = layer.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     const safe = getComputedStyle(layer);
-    const inset = (edge) => parseFloat(safe.getPropertyValue(`--safe-${edge}`)) || 0;
+    const inset = (edge) => parseFloat(safe.getPropertyValue(`padding-${edge}`)) || 0;
     const cx = clamp(item.x * bounds.width, halfW + inset('left'), bounds.width - halfW - inset('right'));
     const cy = clamp(item.y * bounds.height, halfH + inset('top'), bounds.height - halfH - inset('bottom'));
     item.x = cx / bounds.width; item.y = cy / bounds.height;
@@ -100,6 +120,7 @@ export function installTouchLayout(layer, onEditingChange) {
     editing = true; selected = null; size.disabled = true;
     document.body.classList.add('editing-controls');
     onEditingChange(true);
+    syncPreferences();
     apply();
   };
   document.addEventListener('solatel:edit-touch', open);
@@ -109,6 +130,7 @@ export function installTouchLayout(layer, onEditingChange) {
     layout = { opacity: 1, controls: {} };
     selected = null; size.disabled = true;
     for (const element of Object.values(elements)) element.classList.remove('touch-selected');
+    preferences.reset(); syncPreferences();
     apply(); save();
   });
   size.addEventListener('input', () => {
@@ -120,6 +142,16 @@ export function installTouchLayout(layer, onEditingChange) {
     layout.opacity = Number(opacity.value) / 100;
     layer.style.opacity = String(layout.opacity); save();
   });
+  sensitivity.addEventListener('input', () => {
+    preferences.change({ sensitivity: Number(sensitivity.value) });
+    syncPreferences();
+  });
+  for (const [name, select] of Object.entries(modes)) {
+    select.addEventListener('change', () => {
+      preferences.change({ [name]: select.value });
+      syncPreferences();
+    });
+  }
   for (const [name, element] of Object.entries(elements)) {
     element.addEventListener('pointerdown', (event) => {
       if (!editing) return;
@@ -152,5 +184,6 @@ export function installTouchLayout(layer, onEditingChange) {
     if (getComputedStyle(layer).display !== 'none') apply();
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   apply();
+  syncPreferences();
   return { open, close, get editing() { return editing; } };
 }

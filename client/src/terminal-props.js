@@ -93,9 +93,14 @@ export async function dressTerminal(map) {
       cells.get(key).push(p);
     }
     const partsByMaterial = new Map();
+    const dressedMaterials = new Set();
+    const paintLift = name === 'old_military_crate' ? 1.24 : name === 'metal_tool_chest' ? 1.16 : 1;
     source.traverse(part => {
       if (!part.isMesh) return;
       for (const material of [part.material].flat()) {
+        if (dressedMaterials.has(material)) continue;
+        dressedMaterials.add(material);
+        if (paintLift !== 1) material.color.multiplyScalar(paintLift);
         lightMaterial(material);
         for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
           if (material[key]) material[key].anisotropy = 4;

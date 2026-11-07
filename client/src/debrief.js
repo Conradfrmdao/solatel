@@ -54,21 +54,25 @@ export class Debrief {
     this.root.className = 'hidden';
     this.root.innerHTML = `
       <div class="db-card" role="dialog" aria-modal="true" aria-labelledby="db-title">
-        <div class="db-head">
-          <div class="db-title" id="db-title"></div>
-          <div class="db-place"></div>
-          <div class="db-how"></div>
+        <div class="db-content">
+          <div class="db-head">
+            <div class="db-title" id="db-title"></div>
+            <div class="db-place"></div>
+            <div class="db-how"></div>
+          </div>
+          <div class="db-money">
+            <div class="db-cell db-won"><span class="db-label">won from kills</span><b></b><small></small></div>
+            <div class="db-cell db-stake"><span class="db-label">your stake</span><b></b><small></small></div>
+            <div class="db-cell db-wallet"><span class="db-label">your wallet</span><b></b><small></small></div>
+          </div>
+          <div class="db-stats"></div>
+          <div class="db-board-head"></div>
+          <table class="db-board"><tbody></tbody></table>
         </div>
-        <div class="db-money">
-          <div class="db-cell db-won"><span class="db-label">won from kills</span><b></b><small></small></div>
-          <div class="db-cell db-stake"><span class="db-label">your stake</span><b></b><small></small></div>
-          <div class="db-cell db-wallet"><span class="db-label">your wallet</span><b></b><small></small></div>
+        <div class="db-footer">
+          <button type="button" class="db-go">Continue</button>
+          <div class="db-keys">enter, space or esc</div>
         </div>
-        <div class="db-stats"></div>
-        <div class="db-board-head"></div>
-        <table class="db-board"><tbody></tbody></table>
-        <button type="button" class="db-go">Continue</button>
-        <div class="db-keys">enter, space or esc</div>
       </div>`;
     root.appendChild(this.root);
     const $ = (selector) => this.root.querySelector(selector);

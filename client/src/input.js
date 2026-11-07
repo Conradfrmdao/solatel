@@ -20,6 +20,7 @@
 import { SIM, wrapAngle } from './sim.js';
 import { installTouchLayout } from './touch-layout.js';
 import { TOUCH_ICONS } from './touch-icons.js';
+import { normalizeTouchOptions, readTouchOptions, writeTouchOptions, TOUCH_OPTION_DEFAULTS } from './touch-options.js';
 
 const DEFAULT_SENSITIVITY = 0.0022;
 
@@ -59,6 +60,7 @@ export class Input {
     this.pitch = 0;
 
     this.sensitivity = readStoredSensitivity();
+    this.touchOptions = readTouchOptions();
 
     this.locked = false;
     /** How many times the lock has been lost. A climbing number means
@@ -71,6 +73,8 @@ export class Input {
 
     this._dx = 0;
     this._dy = 0;
+    this._touchDx = 0;
+    this._touchDy = 0;
     this._keys = new Set();
     this._fire = false;
     this._aim = false;
@@ -170,42 +174,54 @@ export class Input {
     stick.addEventListener('lostpointercapture', releaseStick);
     for (const button of layer.querySelectorAll('button[data-touch]')) {
       const action = button.dataset.touch;
-      let firePointer = null; let fireX = 0; let fireY = 0;
+      let actionPointer = null;
+      let dragPointer = null; let dragX = 0; let dragY = 0;
       button.addEventListener('pointerdown', (event) => {
         if (this._touchEditing) return;
+        if (actionPointer !== null) return;
         event.preventDefault();
+        actionPointer = event.pointerId;
         button.setPointerCapture(event.pointerId);
-        if (action === 'fire') { firePointer = event.pointerId; fireX = event.clientX; fireY = event.clientY; }
-        if (action === 'swap') this._sidearm = !this._sidearm;
-        else if (action === 'crouch' || action === 'aim' || action === 'sprint') {
-          this._touch[action] = !this._touch[action];
-          button.classList.toggle('touch-on', this._touch[action]);
-          if (action === 'sprint') { this._touch.crouch = false; this._touch.aim = false; }
+        if (action === 'fire' || action === 'grenade') {
+          dragPointer = event.pointerId; dragX = event.clientX; dragY = event.clientY;
         }
-        else this._touch[action] = true;
-        if (action === 'jump') this._tapped.add('Space');
-        if (action === 'reload') this._tapped.add('KeyR');
+        this._pressTouchButton(action);
       });
       const release = (event) => {
         if (this._touchEditing) return;
+        if (event.pointerId !== actionPointer) return;
         event.preventDefault();
-        firePointer = null;
-        if (action === 'grenade' && this._touch.grenade) this._touch.throw = true;
-        if (!['swap', 'crouch', 'aim', 'sprint'].includes(action)) this._touch[action] = false;
+        actionPointer = null;
+        dragPointer = null;
+        this._releaseTouchButton(action);
       };
       button.addEventListener('pointerup', release);
       button.addEventListener('pointermove', (event) => {
-        if (this._touchEditing || event.pointerId !== firePointer) return;
-        this._dx += (event.clientX - fireX) * 1.8;
-        this._dy += (event.clientY - fireY) * 1.8;
-        fireX = event.clientX; fireY = event.clientY;
+        if (this._touchEditing || event.pointerId !== dragPointer) return;
+        this._touchDx += event.clientX - dragX;
+        this._touchDy += event.clientY - dragY;
+        dragX = event.clientX; dragY = event.clientY;
       });
       button.addEventListener('pointercancel', (event) => {
         if (this._touchEditing) return;
+        if (event.pointerId !== actionPointer) return;
         event.preventDefault();
-        firePointer = null;
-        if (!['swap', 'crouch', 'aim', 'sprint'].includes(action)) this._touch[action] = false;
+        actionPointer = null;
+        dragPointer = null;
+        this._releaseTouchButton(action, true);
       });
+      button.addEventListener('lostpointercapture', (event) => {
+        if (event.pointerId !== actionPointer) return;
+        actionPointer = null; dragPointer = null;
+        this._releaseTouchButton(action, true);
+      });
+      const cancelButton = () => {
+        actionPointer = null; dragPointer = null;
+        this._releaseTouchButton(action, true);
+      };
+      window.addEventListener('blur', cancelButton);
+      window.addEventListener('orientationchange', cancelButton);
+      document.addEventListener('solatel:cancel-touch', cancelButton);
     }
     let lookId = null;
     let x = 0; let y = 0;
@@ -218,8 +234,8 @@ export class Input {
     this.canvas.addEventListener('pointermove', (event) => {
       if (this._touchEditing) return;
       if (event.pointerId !== lookId) return;
-      this._dx += (event.clientX - x) * 1.8;
-      this._dy += (event.clientY - y) * 1.8;
+      this._touchDx += event.clientX - x;
+      this._touchDy += event.clientY - y;
       x = event.clientX; y = event.clientY;
     });
     const stopLook = (event) => { if (event.pointerId === lookId) lookId = null; };
@@ -227,24 +243,60 @@ export class Input {
     this.canvas.addEventListener('pointercancel', stopLook);
     this.touchLayout = installTouchLayout(layer, (editing) => {
       this._touchEditing = editing;
+      document.dispatchEvent(new Event('solatel:cancel-touch'));
+      this._touchDx = this._touchDy = 0;
       this._fire = this._aim = false;
       this._grenadeReleased = this._padThrow = false;
       this._tapped.clear();
       this._touch.forward = this._touch.right = 0;
+      this._touch.stickActive = false;
       for (const action of ['fire', 'aim', 'jump', 'reload', 'grenade', 'throw', 'sprint']) this._touch[action] = false;
       thumb.style.transform = '';
       stickId = null; lookId = null;
+    }, {
+      get: () => this.touchOptions,
+      change: (patch) => this.setTouchOptions(patch),
+      reset: () => this.setTouchOptions(TOUCH_OPTION_DEFAULTS),
     });
     this._touchLayer = layer;
     const cancelTouches = () => {
       stickId = null; lookId = null;
       this._touch.stickActive = false;
       this._touch.forward = this._touch.right = 0;
+      this._touchDx = this._touchDy = 0;
       for (const action of ['fire', 'aim', 'jump', 'reload', 'grenade', 'throw', 'sprint']) this._touch[action] = false;
       thumb.style.transform = '';
     };
     window.addEventListener('blur', cancelTouches);
     window.addEventListener('orientationchange', cancelTouches);
+  }
+
+  /** Phone preferences are separate from mouse sensitivity and keyboard sprint. */
+  setTouchOptions(patch) {
+    const previous = this.touchOptions;
+    this.touchOptions = normalizeTouchOptions({ ...previous, ...patch });
+    for (const action of ['aim', 'crouch', 'sprint']) {
+      if (previous[action] !== this.touchOptions[action]) this._touch[action] = false;
+    }
+    writeTouchOptions(this.touchOptions);
+  }
+
+  _pressTouchButton(action) {
+    if (action === 'swap') { this._sidearm = !this._sidearm; return; }
+    if (['aim', 'crouch', 'sprint'].includes(action)) {
+      this._touch[action] = this.touchOptions[action] === 'hold' ? true : !this._touch[action];
+    } else this._touch[action] = true;
+    if (action === 'sprint') { this._touch.crouch = false; this._touch.aim = false; }
+    if (action === 'jump') { this._touch.crouch = false; this._tapped.add('Space'); }
+    if (action === 'reload') this._tapped.add('KeyR');
+  }
+
+  _releaseTouchButton(action, cancelled = false) {
+    if (action === 'swap') return;
+    if (action === 'grenade' && this._touch.grenade && !cancelled) this._touch.throw = true;
+    if (cancelled || !['aim', 'crouch', 'sprint'].includes(action) || this.touchOptions[action] === 'hold') {
+      this._touch[action] = false;
+    }
   }
 
   _bind() {
@@ -343,6 +395,7 @@ export class Input {
       this._tapped.clear();
       this._fire = false;
       this._aim = false;
+      this._touchDx = this._touchDy = 0;
       Object.assign(this._touch, { forward: 0, right: 0, fire: false, aim: false,
         jump: false, reload: false, grenade: false, throw: false, sprint: false });
     });
@@ -539,9 +592,12 @@ export class Input {
   updateLook() {
     const dx = this._dx;
     const dy = this._dy;
+    const touchDx = this._touchDx;
+    const touchDy = this._touchDy;
     this._dx = 0;
     this._dy = 0;
-    this.lastDelta = Math.round(Math.hypot(dx, dy));
+    this._touchDx = this._touchDy = 0;
+    this.lastDelta = Math.round(Math.hypot(dx + touchDx, dy + touchDy));
 
     if (this._touchEditing) return;
 
@@ -549,8 +605,9 @@ export class Input {
     if (this.requireLock && !this.locked && !pad) return;
 
     const turn = this.sensitivity * this.lookScale;
-    this.yaw = wrapAngle(this.yaw - dx * turn);
-    this.pitch -= dy * turn;
+    const touchTurn = DEFAULT_SENSITIVITY * 1.8 * this.touchOptions.sensitivity / 100 * this.lookScale;
+    this.yaw = wrapAngle(this.yaw - dx * turn - touchDx * touchTurn);
+    this.pitch -= dy * turn + touchDy * touchTurn;
     const limit = SIM.maxPitch;
     this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
     if (pad) {

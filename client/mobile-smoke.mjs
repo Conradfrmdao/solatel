@@ -28,10 +28,44 @@ try {
  await page.tap('[data-touch=aim]');assert.equal(await page.evaluate(()=>testInput.aiming),true);
  await page.tap('[data-touch=aim]');
  await page.tap('[data-touch=jump]');assert.equal(await page.evaluate(()=>testInput.sample().jump),true,'short jump tap lost');
+ const grenade=await page.$eval('[data-touch=grenade]',e=>e.getBoundingClientRect().toJSON());
+ const left=await page.touchscreen.touchStart(stick.x+stick.width/2,stick.y+stick.height/2);
+ await left.move(stick.x+stick.width/2,stick.y+stick.height*.05);
+ const right=await page.touchscreen.touchStart(grenade.x+grenade.width/2,grenade.y+grenade.height/2);
+ let command=await page.evaluate(()=>testInput.sample());
+ assert.ok(command.forward>0&&command.grenadeHeld&&!command.throw,'left-thumb movement must continue while the right thumb holds a grenade');
+ const beforeAim=await page.evaluate(()=>({yaw:testInput.yaw,pitch:testInput.pitch}));
+ await right.move(grenade.x+grenade.width/2+18,grenade.y+grenade.height/2-12);
+ await page.waitForFunction(()=>Math.abs(testInput._touchDx)>0,{timeout:2000});
+ const afterAim=await page.evaluate(()=>{testInput.updateLook();return {yaw:testInput.yaw,pitch:testInput.pitch,command:testInput.sample()};});
+ assert.notEqual(afterAim.yaw,beforeAim.yaw,'dragging the held grenade must turn the view');
+ assert.ok(afterAim.command.forward>0&&afterAim.command.grenadeHeld&&!afterAim.command.throw,'drag aiming cannot release the grenade or cancel movement');
+ await right.end(); command=await page.evaluate(()=>testInput.sample());
+ assert.ok(command.forward>0&&!command.grenadeHeld&&command.throw,'releasing the right thumb throws immediately while movement stays held');
+ assert.equal(await page.evaluate(()=>testInput.sample().throw),false,'a release sends only one throw');
+ await left.end();assert.equal(await page.evaluate(()=>testInput.sample().forward),0);
+ await page.evaluate(()=>testInput.setTouchOptions({aim:'hold',crouch:'hold',sprint:'hold'}));
+ for(const action of ['aim','crouch','sprint']){
+  const r=await page.$eval(`[data-touch=${action}]`,e=>e.getBoundingClientRect().toJSON());
+  const finger=await page.touchscreen.touchStart(r.x+r.width/2,r.y+r.height/2);
+  assert.equal(await page.evaluate(name=>name==='aim'?testInput.aiming:testInput.sample()[name],action),true,`${action} hold did not activate`);
+  await finger.end();assert.equal(await page.evaluate(name=>name==='aim'?testInput.aiming:testInput.sample()[name],action),false,`${action} hold stayed locked after release`);
+ }
+ await page.evaluate(()=>testInput.setTouchOptions({aim:'toggle',crouch:'toggle',sprint:'toggle'}));
  const rects=await page.evaluate(()=>({buttons:[...document.querySelectorAll('#touch-controls button')].map(e=>({action:e.dataset.touch||'settings',r:e.getBoundingClientRect().toJSON()})),weapon:document.querySelector('#weapon').getBoundingClientRect().toJSON()}));
  for(const {action,r}of rects.buttons)assert.ok(r.left>=0&&r.right<=width&&r.top>=0&&r.bottom<=height,`${action} clipped at ${width}`);
  assert.ok(rects.weapon.height<65,'weapon HUD too large');
- await page.screenshot({path:`.artifacts/asset-research/mobile-v2-${width}.png`});console.log({width,height,input:'neutral touch, forward drag, sprint toggle and ADS passed',weapon:rects.weapon});await page.close();
+ await page.screenshot({path:`.artifacts/asset-research/mobile-v2-${width}.png`});console.log({width,height,input:'neutral touch, sprint/ADS, hold modes and simultaneous movement/grenade drag/release passed',weapon:rects.weapon});
+ if(width===844){
+  await page.click('#touch-customize');await page.$eval('.touch-editor-options',e=>e.open=true);
+  await page.select('#touch-mode-aim','hold');await page.select('#touch-mode-crouch','hold');await page.select('#touch-mode-sprint','hold');
+  await page.$eval('#touch-sensitivity',e=>{e.value='130';e.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.click('#touch-done');await page.reload();await page.waitForFunction(()=>window.testInput);
+  assert.deepEqual(await page.evaluate(()=>testInput.touchOptions),{sensitivity:130,aim:'hold',crouch:'hold',sprint:'hold'},'editor preferences must survive a page reload');
+  await page.evaluate(()=>testInput.setTouchOptions({sensitivity:115,aim:'toggle',crouch:'toggle',sprint:'toggle'}));
+  console.log('Touch editor sensitivity and hold/toggle preferences persist after reload');
+ }
+ await page.close();
  }
  const page=await browser.newPage();await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true});await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1');await page.evaluateOnNewDocument(()=>window.addEventListener('beforeinstallprompt',e=>{if(e.isTrusted){e.preventDefault();e.stopImmediatePropagation();}}));await page.goto('http://127.0.0.1:8128/?pwa');await page.waitForSelector('#pwa-install');assert.equal(await page.$eval('#pwa-install',e=>e.hidden),false);
  await page.click('#pwa-add');assert.equal(await page.$eval('#pwa-guide',e=>e.hidden),false);assert.ok(await page.$eval('#pwa-guide',e=>e.textContent.includes('Open as Web App')));await page.click('#pwa-dismiss');await page.reload();assert.equal(await page.$eval('#pwa-install',e=>e.hidden),true);

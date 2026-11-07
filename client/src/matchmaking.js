@@ -171,18 +171,22 @@ function escapeHtml(text) {
 
 const TEMPLATE = `
   <div class="mm-card" data-phase="">
-    <div class="mm-radar"><span></span><span></span><span></span><i></i></div>
-    <div class="mm-head">
-      <div class="mm-title"></div>
-      <div class="mm-clock"></div>
+    <div class="mm-content">
+      <div class="mm-radar"><span></span><span></span><span></span><i></i></div>
+      <div class="mm-head">
+        <div class="mm-title"></div>
+        <div class="mm-clock"></div>
+      </div>
+      <div class="mm-table"></div>
+      <div class="mm-bar"><span class="fill"></span></div>
+      <div class="mm-seats"></div>
+      <div class="mm-status"></div>
+      <div class="mm-fine"></div>
+      <div class="mm-download"></div>
     </div>
-    <div class="mm-table"></div>
-    <div class="mm-bar"><span class="fill"></span></div>
-    <div class="mm-seats"></div>
-    <div class="mm-status"></div>
-    <div class="mm-fine"></div>
-    <div class="mm-download"></div>
-    <button class="mm-leave" type="button">leave the line</button>
+    <div class="mm-footer">
+      <button class="mm-leave" type="button">leave the line</button>
+    </div>
   </div>
 `;
 

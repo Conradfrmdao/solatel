@@ -224,6 +224,50 @@ export class Audio {
     this.cried = new Map();
   }
 
+  /** Register before the player enters a match. iPhone does not consistently
+   *  grant audio activation on touch pointerdown; completed taps and clicks
+   *  must reach resume synchronously too, including on our touch buttons. */
+  bindUnlockEvents() {
+    if (this._unbindUnlockEvents) return this._unbindUnlockEvents;
+    const options = { capture: true, passive: true };
+    const unlock = () => this.resume();
+    const restore = () => {
+      // A lifecycle event is a retry, not permission to create a new device
+      // before the player has interacted with the game.
+      if (this.context && !document.hidden && !this.ready) this.resume();
+    };
+    const gestures = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'];
+    for (const type of gestures) document.addEventListener(type, unlock, options);
+    document.addEventListener('visibilitychange', restore);
+    window.addEventListener('pageshow', restore);
+    window.addEventListener('focus', restore);
+    this._unbindUnlockEvents = () => {
+      for (const type of gestures) document.removeEventListener(type, unlock, options);
+      document.removeEventListener('visibilitychange', restore);
+      window.removeEventListener('pageshow', restore);
+      window.removeEventListener('focus', restore);
+      this._unbindUnlockEvents = null;
+    };
+    return this._unbindUnlockEvents;
+  }
+
+  _configureSession() {
+    try {
+      const session = typeof navigator !== 'undefined' ? navigator.audioSession : null;
+      if (!session) return;
+      // Web Audio's default ambient category can be ringer-muted on iPhone.
+      // Intentional game playback should use media volume, as its video/audio
+      // counterpart does. The master gain remains the player's mute control.
+      if (this.volume > 0 && session.type !== 'playback') {
+        session.type = 'playback';
+        this._ownsPlaybackSession = true;
+      } else if (this.volume === 0 && this._ownsPlaybackSession && session.type === 'playback') {
+        session.type = 'auto';
+        this._ownsPlaybackSession = false;
+      }
+    } catch { /* Experimental API; plain Web Audio remains available. */ }
+  }
+
   /**
    * Fetches every recording, so they are in hand by the time anything is
    * fired. Called at boot; nothing waits on it. Decoding needs the audio
@@ -272,15 +316,18 @@ export class Audio {
    * who has not started.
    */
   resume() {
-    if (this.failed) return;
+    if (this.failed) return false;
     try {
-      if (!this.context) {
+      this._configureSession();
+      if (!this.context || this.context.state === 'closed') {
         const Ctor = window.AudioContext ?? window.webkitAudioContext;
         if (!Ctor) {
           this.failed = true;
-          return;
+          return false;
         }
-        this.context = new Ctor();
+        this.context = new Ctor({ latencyHint: 'interactive' });
+        this.voices.clear();
+        this.rewardVoice = null;
         this.master = this.context.createGain();
         this.master.gain.value = MASTER_GAIN * this.volume;
         // Recorded gunshots peak at full scale, and a firefight is several at
@@ -302,11 +349,28 @@ export class Audio {
         this.noise = whiteNoise(this.context);
         for (const name of [...this.raw.keys()]) this._decode(name);
       }
-      if (this.context.state === 'suspended') this.context.resume();
+      const context = this.context;
+      // Prime a zero-valued source in the same gesture as resume. A rejected
+      // pointerdown is retried at touchend/click instead of being cached as a
+      // successful unlock. No audible test tone is introduced.
+      if (this._primedContext !== context || context.state !== 'running') {
+        const source = context.createBufferSource();
+        source.buffer = context.createBuffer(1, 1, context.sampleRate);
+        source.connect(context.destination);
+        source.onended = () => source.disconnect();
+        source.start(0);
+        this._primedContext = context;
+      }
+      if (context.state === 'suspended' || context.state === 'interrupted') {
+        // Do not memoise an in-flight promise: a policy-blocked resume can
+        // remain pending until another gesture, which needs its own call.
+        return Promise.resolve(context.resume()).then(() => this.ready, () => false);
+      }
+      return this.ready;
     } catch {
-      // No audio device, or a policy that will not allow one. The game is
-      // entirely playable without it, so this is not worth failing over.
-      this.failed = true;
+      // Device interruptions and activation refusals are transient. Keep the
+      // next completed tap able to retry; only an absent API is permanent.
+      return false;
     }
   }
 
@@ -387,6 +451,7 @@ export class Audio {
       this.rewardVoice=null;
     }
     if (this.master) this.master.gain.value = MASTER_GAIN * this.volume;
+    if (this.context) this._configureSession();
     try {
       window.localStorage.setItem(VOLUME_KEY, String(this.volume));
     } catch {

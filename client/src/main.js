@@ -225,15 +225,20 @@ async function boot() {
   const soldier = await remotes.load(soldierUrl);
   // And the same soldier's arms in first person, in the same pose.
   viewmodel.setArms(soldier, remotes.clips.aim);
-  // Authored operators download behind the menu so they do not hold up the
-  // first frame. Portrait generation waits for them to render matching cards.
-  const operatorLoading = [
-    remotes.loadOperator(5, asset('assets/characters/ranger.glb'))
-      .catch((error) => console.warn('Ranger model unavailable; using soldier fallback', error)),
-    remotes.loadOperator(8, asset('assets/characters/ghost.glb'))
-      .catch((error) => console.warn('Ghost model unavailable; using soldier fallback', error)),
-  ];
-  if (options.has('portraits')) await Promise.all(operatorLoading);
+  // Fetch authored models only when a selected or actual match skin uses
+  // them. Default-soldier matches must not wait for 13 MB of unused operators.
+  const operatorLoading = new Map();
+  const operatorFiles = new Map([[5, 'ranger'], [8, 'ghost']]);
+  const ensureOperator = (skin) => {
+    const name = operatorFiles.get(skin);
+    if (!name) return null;
+    if (!operatorLoading.has(skin)) operatorLoading.set(skin,
+      remotes.loadOperator(skin, asset(`assets/characters/${name}.glb`))
+        .then((model) => { remotes.refreshProfiles(); return model; })
+        .catch((error) => console.warn(`${name} model unavailable; using soldier fallback`, error)));
+    return operatorLoading.get(skin);
+  };
+  if (options.has('portraits')) await Promise.all([5, 8].map(ensureOperator));
 
   const local = new LocalPlayer(link, input);
   // The menu is built before the HUD, because the settings controls live in
@@ -267,6 +272,7 @@ async function boot() {
   const hud = new Hud(hudRoot);
   hud.stats.hidden = input.touchMode && !options.has('debug');
   const audio = new Audio();
+  audio.bindUnlockEvents();
   // Every recording, fetched now so it is decoded by the first shot; nothing
   // waits on it.
   audio.preload();
@@ -338,6 +344,7 @@ async function boot() {
       // sound can be started: the match-found chime has to be heard by
       // somebody who has not clicked the world yet.
       audio.resume();
+      ensureOperator(skin);
       local.queue(mapName, dollars, loadout, skin);
       // The map's files, into the cache while the line forms.
       prefetchMap(mapName);
@@ -418,9 +425,8 @@ async function boot() {
     viewmodel.setSkin(local.skin ?? 0);
     armedWith = local.loadout;
     await world.load(mapName);
-    // Finish the background operator downloads behind the match loading
-    // card, then compile their shaders before the first combat frame.
-    await Promise.all(operatorLoading);
+    // Only models worn in this match join the first-frame readiness barrier.
+    await Promise.all([local.skin, ...remotes.skins.values()].map(ensureOperator).filter(Boolean));
     remotes.refreshProfiles();
     // The gun in hand reflects the same sky as everything else.
     viewmodel.setEnvironment(scene.environment, scene.environmentIntensity);
@@ -479,11 +485,7 @@ async function boot() {
     }
   }
 
-  // Browsers will not start an audio device except from a real gesture, so it
-  // is started by the same click that captures the mouse. A player who has not
-  // clicked has not started playing.
-  canvas.addEventListener('mousedown', () => audio.resume());
-  document.addEventListener('pointerdown', (event) => { if (event.pointerType === 'touch') audio.resume(); });
+  // Audio owns its unlock/recovery handlers, including iPhone touchend/click.
 
   // A handle on the client's own state, for the browser console and for the
   // automated smoke test. Deliberately behind a flag: none of it lets anyone
@@ -770,6 +772,7 @@ async function boot() {
         hud.setScores(message.entries);
         // Who is dressed how: the board is what says.
         remotes.dress(message.entries);
+        for (const entry of message.entries ?? []) ensureOperator(entry.skin);
       } else if (message.t === 'match_found') {
         audio.matchFound();
       } else if (message.t === 'exploded') {

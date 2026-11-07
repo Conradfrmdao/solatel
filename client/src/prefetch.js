@@ -18,7 +18,7 @@ import { photoFiles } from './photo.js';
 import { lightFiles } from './light.js';
 import { scatterFiles } from './scatter.js';
 import { natureFiles } from './nature.js';
-import { PROP_SETS } from './props.js';
+import { propPhotoSets } from './props.js';
 import { skyFiles } from './world.js';
 
 const running = new Map();
@@ -60,7 +60,7 @@ class Prefetch {
 
   async _run(mapName) {
     const map = await this._get(asset(`assets/maps/${mapName}.glb`), true);
-    const { materials, extras } = readGlb(map);
+    const { materials, extras, nodeNames } = readGlb(map);
     const urls = [
       ...skyFiles(mapName),
       ...lightFiles(mapName),
@@ -68,8 +68,8 @@ class Prefetch {
       ...[...new Set((extras.terminal_props ?? []).map(p => p.model))].map(name => asset(`assets/props/${name}.glb`)),
       ...(extras.indoor ? [asset('assets/props/smooth_concrete_floor.glb')] : []),
       ...photoFiles(materials),
-      ...PROP_SETS.flatMap((set) => photoFiles([], [set])),
-      ...photoFiles([], ['concrete_wall', 'brick']),
+      ...photoFiles([], propPhotoSets(nodeNames)),
+      ...(extras.indoor ? [] : photoFiles([], ['concrete_wall', 'brick'])),
       ...natureFiles(extras),
     ];
     await Promise.all([...new Set(urls)].map((url) => this._get(url, false)));
@@ -113,6 +113,7 @@ function readGlb(bytes) {
   const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length)));
   return {
     materials: (json.materials ?? []).map((m) => m.name ?? ''),
+    nodeNames: (json.nodes ?? []).map((node) => node.name ?? ''),
     extras: json.scenes?.[json.scene ?? 0]?.extras ?? {},
   };
 }

@@ -646,6 +646,16 @@ const SKIES = {
   arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
 
+// Linear paint colours for Yard's light concrete and painted cargo steel.
+// The scanned surface grain and the dark trim remain in the original maps.
+const YARD_PAINT = {
+  terminal_wall: [0.55, 0.56, 0.51],
+  terminal_roof_concrete: [0.34, 0.37, 0.37],
+  terminal_frame: [0.06, 0.081, 0.095],
+  terminal_roof_steel: [0.185, 0.22, 0.243],
+  terminal_teal: [0.032, 0.122, 0.137],
+};
+
 /** How wet the open ground is - from the map's sky, `wet` in `SKIES` - as a
  *  uniform every ground material shares. */
 const WETNESS = { value: 0 };
@@ -1407,13 +1417,21 @@ export class World {
     const loader = new GLTFLoader();
     const gltf = await loader.loadAsync(url);
     arena = gltf.scene;
-    const floor = arena.userData.indoor ? await terminalFloor() : null;
+    // The floor scan and the structural photographs are independent. Start
+    // both together instead of holding every photo request behind floor GLB
+    // decode and its calibration readback on the mobile main thread.
+    const floorLoading = arena.userData.indoor ? terminalFloor() : Promise.resolve(null);
     const names = [];
     arena.traverse((node) => {
       if (!node.isMesh) return;
       for (const material of [node.material].flat()) if (material?.name) names.push(material.name);
     });
-    const [photos, light] = await Promise.all([loadPhotos(names), lighting]);
+    const [photos, bakedLight, floor] = await Promise.all([loadPhotos(names), lighting, floorLoading]);
+    // Lift the indirect light on Yard's covered routes while preserving the
+    // sun patches, materials and exposure across graphics presets.
+    const light = mapName === 'yard' && bakedLight
+      ? { ...bakedLight, lightVolumeFloor: bakedLight.lightVolumeFloor.clone().multiplyScalar(1.65) }
+      : bakedLight;
     // Kept with the map, to be put back up when it is shown again.
     arena.userData.light = light;
     useLight(light);
@@ -1447,7 +1465,11 @@ export class World {
       const materials = Array.isArray(node.material) ? node.material : [node.material];
       for (const material of materials) {
         if (!material) continue;
-        if (mapName === 'yard') material.defines = { ...material.defines, BAKED_STATIC_SUN: 1 };
+        if (mapName === 'yard') {
+          material.defines = { ...material.defines, BAKED_STATIC_SUN: 1 };
+          const paint = YARD_PAINT[material.name];
+          if (paint) material.color.setRGB(...paint);
+        }
         // Left at the default these read as wet plastic, and at fully rough
         // they read as paper. This is closer to the painted metal and concrete
         // the shapes are meant to be, and leaves enough sheen for the key
@@ -1462,7 +1484,10 @@ export class World {
         // makes each facet read as a separate plane catching its own light.
         material.flatShading = true;
         if (/^terminal_(teal|amber|frame|alloy|roof_steel|roof_liner)$/.test(material.name)) {
-          material.metalness = material.name === 'terminal_alloy' ? 0.75 : material.name === 'terminal_roof_steel' || material.name === 'terminal_roof_liner' ? .68 : 0.25;
+          material.metalness = material.name === 'terminal_alloy' ? 0.75
+            : material.name === 'terminal_roof_steel' ? 0.52
+            : material.name === 'terminal_roof_liner' ? 0.68
+            : 0.25;
           material.roughness = material.name === 'terminal_alloy' ? 0.3 : material.name === 'terminal_roof_steel' || material.name === 'terminal_roof_liner' ? .48 : 0.42;
         }
         if (material.name === 'terminal_mirror') {

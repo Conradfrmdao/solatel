@@ -39,6 +39,19 @@ const KINDS = [
   { kind: 'cylinder', test: /^Cylinder\d*$/, yard: true },
 ];
 
+function standInKind(name, yard) {
+  return KINDS.find(({ test, yard: yardOnly }) => (!yardOnly || yard) && test.test(name));
+}
+
+/** Only maps containing procedural stand-ins need this material kit. The
+ *  indoor terminal uses authored PBR props and must not prefetch this kit. */
+export function propPhotoSets(nodeNames) {
+  // GLTFLoader sanitises dots/spaces before dressProps sees object names.
+  const names = nodeNames.map((name) => THREE.PropertyBinding.sanitizeNodeName(name));
+  const yard = names.some((name) => /^CAR\d+$/.test(name));
+  return names.some((name) => standInKind(name, yard)) ? PROP_SETS : [];
+}
+
 /** What a yard cylinder is, from its materials and its shape. */
 function cylinderKind(node, map) {
   let names = '';
@@ -505,14 +518,10 @@ export async function dressProps(map) {
   });
   map.traverse((node) => {
     if (node === map || !node.name) return;
-    for (const { kind, test, yard: yardOnly } of KINDS) {
-      if (yardOnly && !yard) continue;
-      if (test.test(node.name)) {
-        const what = kind === 'cylinder' ? cylinderKind(node, map) : kind;
-        if (what) found[what].push(node);
-        return;
-      }
-    }
+    const standIn = standInKind(node.name, yard);
+    if (!standIn) return;
+    const what = standIn.kind === 'cylinder' ? cylinderKind(node, map) : standIn.kind;
+    if (what) found[what].push(node);
   });
   const total = Object.values(found).reduce((n, list) => n + list.length, 0);
   if (!total) return {};
