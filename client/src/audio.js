@@ -145,6 +145,9 @@ const OWN_WEAPON = Symbol('own weapon');
 
 const VOLUME_KEY = 'solatel.volume';
 
+/** Give the browser a chance to resume after an OS audio interruption. */
+const INTERRUPTED_RETRY_MS = 750;
+
 /** Loud enough to be information rather than decoration, for a player who has
  *  never opened the settings. */
 const DEFAULT_VOLUME = 0.7;
@@ -230,20 +233,22 @@ export class Audio {
   bindUnlockEvents() {
     if (this._unbindUnlockEvents) return this._unbindUnlockEvents;
     const options = { capture: true, passive: true };
-    const unlock = () => this.resume();
+    const unlock = () => this.resume({ gesture: true });
+    const releaseSession = () => this._configureSession(false);
     const restore = () => {
-      // A lifecycle event is a retry, not permission to create a new device
-      // before the player has interacted with the game.
-      if (this.context && !document.hidden && !this.ready) this.resume();
+      if (document.hidden) releaseSession();
+      else if (this.context) this.resume();
     };
     const gestures = ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'];
     for (const type of gestures) document.addEventListener(type, unlock, options);
     document.addEventListener('visibilitychange', restore);
+    window.addEventListener('pagehide', releaseSession);
     window.addEventListener('pageshow', restore);
     window.addEventListener('focus', restore);
     this._unbindUnlockEvents = () => {
       for (const type of gestures) document.removeEventListener(type, unlock, options);
       document.removeEventListener('visibilitychange', restore);
+      window.removeEventListener('pagehide', releaseSession);
       window.removeEventListener('pageshow', restore);
       window.removeEventListener('focus', restore);
       this._unbindUnlockEvents = null;
@@ -251,19 +256,24 @@ export class Audio {
     return this._unbindUnlockEvents;
   }
 
-  _configureSession() {
+  _configureSession(playing = true) {
     try {
       const session = typeof navigator !== 'undefined' ? navigator.audioSession : null;
       if (!session) return;
       // Web Audio's default ambient category can be ringer-muted on iPhone.
       // Intentional game playback should use media volume, as its video/audio
       // counterpart does. The master gain remains the player's mute control.
-      if (this.volume > 0 && session.type !== 'playback') {
-        session.type = 'playback';
-        this._ownsPlaybackSession = true;
-      } else if (this.volume === 0 && this._ownsPlaybackSession && session.type === 'playback') {
-        session.type = 'auto';
-        this._ownsPlaybackSession = false;
+      if (playing && !globalThis.document?.hidden && this.volume > 0) {
+        if (session.type !== 'playback') {
+          const previous = session.type;
+          session.type = 'playback';
+          this._priorSessionType = previous;
+        }
+      } else if (this._priorSessionType !== undefined) {
+        // Restore our foreground route when returning even if WebKit still
+        // reports a running context after changing the OS audio session.
+        if (session.type === 'playback') session.type = this._priorSessionType;
+        this._priorSessionType = undefined;
       }
     } catch { /* Experimental API; plain Web Audio remains available. */ }
   }
@@ -315,10 +325,24 @@ export class Audio {
    * lock is the natural place - a player who has not clicked yet is a player
    * who has not started.
    */
-  resume() {
+  resume({ gesture = false } = {}) {
     if (this.failed) return false;
     try {
       this._configureSession();
+      if (this.context?.state === 'interrupted') {
+        const now = performance.now();
+        this._interruptedSince ??= now;
+        // Some WebKit interruptions leave resume pending indefinitely. A
+        // later tap can open a fresh output without fetching sounds again.
+        if (gesture && now - this._interruptedSince >= INTERRUPTED_RETRY_MS) {
+          const interrupted = this.context;
+          this.context = null;
+          this._interruptedSince = null;
+          Promise.resolve(interrupted.close()).catch(() => {});
+        }
+      } else {
+        this._interruptedSince = null;
+      }
       if (!this.context || this.context.state === 'closed') {
         const Ctor = window.AudioContext ?? window.webkitAudioContext;
         if (!Ctor) {
@@ -364,7 +388,7 @@ export class Audio {
       if (context.state === 'suspended' || context.state === 'interrupted') {
         // Do not memoise an in-flight promise: a policy-blocked resume can
         // remain pending until another gesture, which needs its own call.
-        return Promise.resolve(context.resume()).then(() => this.ready, () => false);
+        return Promise.resolve(context.resume()).then(() => this.context === context && this.ready, () => false);
       }
       return this.ready;
     } catch {

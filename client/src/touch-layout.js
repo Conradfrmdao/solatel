@@ -39,11 +39,12 @@ export function installTouchLayout(layer, onEditingChange, preferences) {
         <label>Opacity <input id="touch-opacity" type="range" min="35" max="100" value="100"></label>
       </div>
       <details class="touch-editor-options"><summary>Sensitivity &amp; button behavior</summary>
-        <label>Touch sensitivity <input id="touch-sensitivity" type="range" min="50" max="250" step="5"><output id="touch-sensitivity-value"></output></label>
+        <label>Camera <input id="touch-sensitivity" type="range" min="50" max="250"><output for="touch-sensitivity"></output></label>
+        <label>Aim down sights <input id="touch-ads-sensitivity" type="range" min="50" max="250"><output for="touch-ads-sensitivity"></output></label>
+        <label>Move stick <input id="touch-move-sensitivity" type="range" min="50" max="250"><output for="touch-move-sensitivity"></output></label>
         <label>Aim <select id="touch-mode-aim"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
         <label>Crouch <select id="touch-mode-crouch"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
         <label>Sprint <select id="touch-mode-sprint"><option value="toggle">Toggle</option><option value="hold">Hold</option></select></label>
-        <p>Hold: active while pressed. Toggle: tap to lock, tap again to release. Combat or moving backward stops sprint.</p>
       </details>
     </div>
     <div class="touch-editor-actions"><button type="button" id="touch-reset">RESET</button>
@@ -52,13 +53,18 @@ export function installTouchLayout(layer, onEditingChange, preferences) {
   document.body.append(editor);
   const size = editor.querySelector('#touch-size');
   const opacity = editor.querySelector('#touch-opacity');
-  const sensitivity = editor.querySelector('#touch-sensitivity');
-  const sensitivityValue = editor.querySelector('#touch-sensitivity-value');
+  const sliders = {
+    sensitivity: editor.querySelector('#touch-sensitivity'),
+    adsSensitivity: editor.querySelector('#touch-ads-sensitivity'),
+    moveSensitivity: editor.querySelector('#touch-move-sensitivity'),
+  };
   const modes = Object.fromEntries(['aim', 'crouch', 'sprint'].map((name) => [name, editor.querySelector(`#touch-mode-${name}`)]));
   const syncPreferences = () => {
     const values = preferences.get();
-    sensitivity.value = String(values.sensitivity);
-    sensitivityValue.value = `${values.sensitivity}%`;
+    for (const [name, slider] of Object.entries(sliders)) {
+      slider.value = String(values[name]);
+      slider.nextElementSibling.value = `${values[name]}%`;
+    }
     for (const [name, select] of Object.entries(modes)) select.value = values[name];
   };
   const save = () => {
@@ -142,10 +148,12 @@ export function installTouchLayout(layer, onEditingChange, preferences) {
     layout.opacity = Number(opacity.value) / 100;
     layer.style.opacity = String(layout.opacity); save();
   });
-  sensitivity.addEventListener('input', () => {
-    preferences.change({ sensitivity: Number(sensitivity.value) });
-    syncPreferences();
-  });
+  for (const [name, slider] of Object.entries(sliders)) {
+    slider.addEventListener('input', () => {
+      preferences.change({ [name]: Number(slider.value) });
+      slider.nextElementSibling.value = `${preferences.get()[name]}%`;
+    });
+  }
   for (const [name, select] of Object.entries(modes)) {
     select.addEventListener('change', () => {
       preferences.change({ [name]: select.value });

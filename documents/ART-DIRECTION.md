@@ -47,11 +47,14 @@ appear for each skin. Their silhouettes and clothing are much closer to the
 approved lineup than the recolored soldier, though the generated facial
 detail and material definition still fall short of the reference art.
 
-Breacher and Engineer generation produced damaged facial geometry and
-textures. Those results are only in ignored `.artifacts/character-pipeline/`;
-skins 6 and 7 still use the previous in-game implementation until usable
-replacement heads, helmet/visor details, rigs and animations are ready.
-Do not present these two as faithful 3D versions of the approved concepts.
+Breacher and Engineer now have their own textured meshes and portraits for
+skins 6 and 7. Their generated meshes supplied the outfits. New face
+geometry uses the individual reference textures, and Breacher has a raised
+visor. Both use the 52-joint Ghost rig with weights fitted to their armor
+and clothing. Browser previews checked the rifle grip, idle, run, crouch,
+jump and reload using the match renderer. Each GLB is about 2.1 MB, with a
+single 1280 × 1024 color texture atlas. Each operator loads when a match or
+selected outfit uses it.
 The first-person view still uses the original hand rig, with sleeves tinted
 to the selected operator palette. Directly cutting arms from the generated
 Ranger and Ghost meshes caused detached wrists and malformed forearms in
@@ -64,12 +67,9 @@ Make-It-Animatable projects publish MIT licenses, and the source Ch15 motion
 clips are used under Adobe Mixamo's game-use permission. Check these terms
 again before a paid asset redistribution outside the game.
 
-Exact production outfits still require detailed garment and equipment
-modeling, retopology, UVs, PBR textures, first-person arm integration, and
-animation QA against the supplied lineup. No automated image-to-3D result
-here guarantees exact likeness. The rejected Breacher and Engineer models
-need manually fitted, properly textured heads and helmet details before they
-can replace the current game models.
+The shipped operators approximate the approved lineup. Fine garment folds,
+hardware, side profiles, and material detail still differ, and the first-person
+arms are documented above.
 
 Fixed regressions to preserve: the aim transition now hides the gun when
 the scope overlay becomes visible. The Arena screenshot at (-13.6, 0.9, 15)

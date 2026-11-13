@@ -23,7 +23,7 @@ import { initViewport } from './viewport.js';
 
 import * as THREE from 'three';
 import { buildPost } from './post.js';
-import { Quality } from './quality.js';
+import { PRESETS, Quality, renderRatio } from './quality.js';
 import { Impacts } from './impacts.js';
 import { Blood } from './blood.js';
 import { DEATH_TIME_SCALE, Death } from './death.js';
@@ -44,7 +44,7 @@ import { Menu } from './menu.js';
 import { Matchmaking } from './matchmaking.js';
 import { Viewmodel } from './viewmodel.js';
 import { World } from './world.js';
-import { initPhotos } from './photo.js';
+import { initPhotos, setPhotoAnisotropy } from './photo.js';
 import { prefetchMap } from './prefetch.js';
 import { lightHere } from './light.js';
 import { asset, clientBuild } from './assets.js';
@@ -139,6 +139,9 @@ async function boot() {
   const canvas = document.getElementById('solatel-canvas');
   const hudRoot = document.getElementById('hud');
   const status = document.getElementById('boot-status');
+  // The first mobile tap may be on the landscape prompt while assets load.
+  const audio = new Audio();
+  audio.bindUnlockEvents();
 
   const say = (text) => {
     if (status) status.textContent = text;
@@ -152,12 +155,9 @@ async function boot() {
     antialias: true,
     powerPreference: 'high-performance',
   });
-  // The pixel ratio is the quality setting's (quality.js): capped at 2 even at
-  // ultra, because a 4K display would otherwise ask the GPU for four times
-  // the pixels for a difference nobody is looking for during a firefight.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Filmic tonemapping is most of the difference between "flat coloured
   // shapes" and "a lit place". Without it, bright surfaces clip to their raw
   // material colour and the whole scene reads as a diagram.
@@ -228,7 +228,7 @@ async function boot() {
   // Fetch authored models only when a selected or actual match skin uses
   // them. Default-soldier matches must not wait for 13 MB of unused operators.
   const operatorLoading = new Map();
-  const operatorFiles = new Map([[5, 'ranger'], [8, 'ghost']]);
+  const operatorFiles = new Map([[5, 'ranger'], [6, 'breacher'], [7, 'engineer'], [8, 'ghost']]);
   const ensureOperator = (skin) => {
     const name = operatorFiles.get(skin);
     if (!name) return null;
@@ -238,7 +238,7 @@ async function boot() {
         .catch((error) => console.warn(`${name} model unavailable; using soldier fallback`, error)));
     return operatorLoading.get(skin);
   };
-  if (options.has('portraits')) await Promise.all([5, 8].map(ensureOperator));
+  if (options.has('portraits')) await Promise.all([...operatorFiles.keys()].map(ensureOperator));
 
   const local = new LocalPlayer(link, input);
   // The menu is built before the HUD, because the settings controls live in
@@ -271,8 +271,6 @@ async function boot() {
   }
   const hud = new Hud(hudRoot);
   hud.stats.hidden = input.touchMode && !options.has('debug');
-  const audio = new Audio();
-  audio.bindUnlockEvents();
   // Every recording, fetched now so it is decoded by the first shot; nothing
   // waits on it.
   audio.preload();
@@ -343,7 +341,7 @@ async function boot() {
       // The click on play is a real gesture, so it is also where the
       // sound can be started: the match-found chime has to be heard by
       // somebody who has not clicked the world yet.
-      audio.resume();
+      audio.resume({ gesture: true });
       ensureOperator(skin);
       local.queue(mapName, dollars, loadout, skin);
       // The map's files, into the cache while the line forms.
@@ -473,8 +471,7 @@ async function boot() {
       await renderer.compileAsync(scene, camera);
       await renderer.compileAsync(viewmodel.scene, viewmodel.camera);
       renderer.clear();
-      if (composer) composer.render();
-      else renderer.render(scene, camera);
+      renderWorld();
       renderer.clearDepth();
       renderer.render(viewmodel.scene, viewmodel.camera);
     } catch (error) {
@@ -520,10 +517,10 @@ async function boot() {
         return [...(prefetchMap(name)?.files.keys() ?? [])];
       },
       setComposer(on) {
-        composer = on ? builtComposer : null;
+        setPostSamples(on ? renderPreset.samples || 4 : 0);
       },
       setAo(on) {
-        if (aoPass) aoPass.enabled = on;
+        aoOverride = on;
       },
       stats() {
         const info = renderer.info;
@@ -542,39 +539,60 @@ async function boot() {
     };
   }
 
-  /**
-   * The post-processing chain, built once and switched by the quality
-   * setting (quality.js) rather than rebuilt.
-   *
-   * Ambient occlusion is the best-looking thing in it, and measured on an
-   * Intel Iris Xe the difference between 60 fps and 23 - so only ultra has
-   * it, and nothing picks ultra for a player. A smooth 60 beats a prettier
-   * 23 every time in a shooter. `perf.mjs` measures every level.
-   */
+  // Direct rendering keeps hardware canvas AA without the extra HDR buffers
+  // and passes. The few presets that use them share one composer.
   const post = buildPost(renderer, scene, camera);
-  const builtComposer = post?.composer ?? null;
-  const aoPass = post?.aoPass ?? null;
-  const bloomPass = post?.bloomPass ?? null;
-  let composer = builtComposer;
-  // `?ao` turns ambient occlusion on at any level, for measuring it.
+  let composer = null;
+  let renderPreset = PRESETS.low;
+  let aoOverride;
   const forceAo = options.has('ao');
+  const renderSize = new THREE.Vector2();
+  let composerWidth = 0;
+  let composerHeight = 0;
+  let composerRatio = 0;
+
+  function renderWorld() {
+    if (!composer) {
+      renderer.render(scene, camera);
+      return;
+    }
+    // Yard has baked occlusion. Screen-space AO combs its close rails, and
+    // the stylized outdoor grade makes its covered concrete too dark.
+    const indoor = world.arena?.userData.indoor;
+    post.aoPass.enabled = (aoOverride ?? (forceAo || renderPreset.ao)) && !indoor;
+    post.gradePass.enabled = !indoor;
+    composer.render();
+  }
 
   const resize = () => {
     const bounds = canvas.getBoundingClientRect();
     const width = Math.max(1, Math.round(bounds.width));
     const height = Math.max(1, Math.round(bounds.height));
     const aspect = width / height;
-    renderer.setSize(width, height, false);
-    if (composer) composer.setSize(width, height);
+    const ratio = renderRatio(renderPreset, window.devicePixelRatio, width, height);
+    renderer.getSize(renderSize);
+    if (renderSize.x !== width || renderSize.y !== height || renderer.getPixelRatio() !== ratio) {
+      renderer.setDrawingBufferSize(width, height, ratio);
+    }
+    if (composer) {
+      if (composerRatio !== ratio) composer.setPixelRatio(ratio);
+      if (composerWidth !== width || composerHeight !== height) composer.setSize(width, height);
+      composerWidth = width;
+      composerHeight = height;
+      composerRatio = ratio;
+    }
     camera.aspect = aspect;
     camera.fov = verticalFov(horizontalFov, aspect);
     camera.updateProjectionMatrix();
     // The weapon has a view of its own (`WEAPON_HORIZONTAL_FOV`).
     viewmodel.setView(aspect, verticalFov(WEAPON_HORIZONTAL_FOV, aspect, viewmodel.weaponZoom));
   };
+  function setPostSamples(samples) {
+    composer = post?.setSamples(samples) ? post.composer : null;
+    resize();
+  }
   window.addEventListener('resize', resize);
   window.addEventListener('solatel:viewport', resize);
-  resize();
 
   // The old box for ambient occlusion becomes the level that has it.
   try {
@@ -588,15 +606,13 @@ async function boot() {
   const quality = new Quality(
     renderer,
     (level, preset) => {
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.ratio) * (input.touchMode ? 1 : preset.scale));
-      builtComposer?.setPixelRatio(renderer.getPixelRatio());
-      composer = preset.post ? builtComposer : null;
-      if (bloomPass) bloomPass.enabled = preset.bloom;
-      if (aoPass) aoPass.enabled = preset.ao || forceAo;
-      world.setShadowSize(preset.shadows);
-      world.setFloorReflections(level === 'ultra');
-      setNatureDetail({ grass: preset.grass, sky: preset.sky });
-      resize();
+      renderPreset = input.touchMode ? { ...preset, ...preset.mobile } : preset;
+      setPostSamples(renderPreset.samples || (forceAo ? 4 : 0));
+      if (post) post.bloomPass.enabled = renderPreset.bloom;
+      world.setShadowSize(Math.min(renderPreset.shadows, renderer.capabilities.maxTextureSize));
+      world.setFloorReflections(level === 'ultra' && !input.touchMode);
+      setPhotoAnisotropy(renderPreset.anisotropy);
+      setNatureDetail({ grass: renderPreset.grass, sky: renderPreset.sky });
     },
     { forced: options.get('quality') },
   );
@@ -1085,8 +1101,7 @@ async function boot() {
       }
       renderer.info.reset();
       renderer.clear();
-      if (composer) composer.render();
-      else renderer.render(scene, camera);
+      renderWorld();
       clips.capture(renderer.domElement, now);
       return;
     }
@@ -1166,13 +1181,9 @@ async function boot() {
     // A diagnostic that cannot see the expensive half of the frame is worse
     // than none, because it is believed.
     const drawStart = performance.now();
-    // The hall's closely spaced stair guards alias into comb-like dark bars
-    // in screen-space AO. Its baked occlusion already supplies that depth.
-    if (aoPass) aoPass.enabled = (quality.level === 'ultra' || forceAo) && !world.arena?.userData.indoor;
     renderer.info.reset();
     renderer.clear();
-    if (composer) composer.render();
-    else renderer.render(scene, camera);
+    renderWorld();
     // The weapon is drawn last over a cleared depth buffer, which is what
     // stops a wall the player is standing against cutting through it. It is
     // outside the composer deliberately: a weapon held at arm's length has no

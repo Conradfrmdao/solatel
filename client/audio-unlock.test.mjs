@@ -11,6 +11,7 @@ function device() {
   const created = [];
   const node = () => ({ connect(to) { return to; }, disconnect() {} });
   let allowResume = false;
+  let stuck = null;
   class Context {
     constructor() {
       this.state = 'suspended'; this.sampleRate = 8; this.destination = node();
@@ -29,9 +30,11 @@ function device() {
     resume() {
       this.resumes += 1;
       if (!allowResume) return Promise.reject(new Error('NotAllowedError'));
+      if (stuck === this) return new Promise(() => {});
       this.state = 'running';
       return Promise.resolve();
     }
+    close() { this.state = 'closed'; return Promise.resolve(); }
   }
   const window = new EventTarget();
   window.AudioContext = Context;
@@ -46,6 +49,7 @@ function device() {
   return {
     window, document, session, created,
     allow: () => { allowResume = true; },
+    blockResume: (context) => { stuck = context; },
     restore() {
       for (const [key, descriptor] of Object.entries(previous)) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -98,10 +102,12 @@ test('iOS interruption resumes on return and a closed device can be recreated', 
     browser.document.hidden = true;
     browser.document.dispatchEvent(new Event('visibilitychange'));
     assert.equal(first.state, 'interrupted', 'hidden audio is not restarted');
+    assert.equal(browser.session.type, 'auto');
     browser.document.hidden = false;
     browser.document.dispatchEvent(new Event('visibilitychange'));
     await Promise.resolve();
     assert.equal(audio.ready, true);
+    assert.equal(browser.session.type, 'playback');
     audio.setVolume(.2);
     audio.buffers.set('recording', { buffer: {} });
     first.state = 'closed';
@@ -115,5 +121,52 @@ test('iOS interruption resumes on return and a closed device can be recreated', 
     audio.context.state = 'interrupted';
     browser.document.dispatchEvent(new Event('click'));
     assert.equal(audio.ready, false, 'disposal removes activation listeners');
+  } finally { browser.restore(); }
+});
+
+test('foreground restoration refreshes the route when the context still reports running', () => {
+  const browser = device();
+  try {
+    browser.allow();
+    browser.session.type = 'ambient';
+    const audio = new Audio();
+    audio.bindUnlockEvents();
+    browser.document.dispatchEvent(new Event('click'));
+    assert.equal(browser.session.type, 'playback');
+    browser.window.dispatchEvent(new Event('pagehide'));
+    assert.equal(browser.session.type, 'ambient');
+    assert.equal(audio.ready, true);
+    browser.window.dispatchEvent(new Event('pageshow'));
+    assert.equal(browser.session.type, 'playback');
+    assert.equal(browser.created.length, 1);
+  } finally { browser.restore(); }
+});
+
+test('a stuck interrupted context is replaced on a later tap', async (t) => {
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
+  const browser = device();
+  try {
+    browser.allow();
+    const audio = new Audio();
+    audio.bindUnlockEvents();
+    browser.document.dispatchEvent(new Event('click'));
+    const first = audio.context;
+    audio.buffers.set('recording', { buffer: {} });
+    first.state = 'interrupted';
+    browser.blockResume(first);
+    browser.window.dispatchEvent(new Event('focus'));
+    now = 100;
+    browser.document.dispatchEvent(new Event('pointerup'));
+    assert.equal(audio.context, first, 'allow recovery in the same gesture');
+    now = 1000;
+    browser.window.dispatchEvent(new Event('focus'));
+    assert.equal(audio.context, first, 'lifecycle events cannot replace the audio context');
+    browser.document.dispatchEvent(new Event('click'));
+    await Promise.resolve();
+    assert.equal(first.state, 'closed');
+    assert.notEqual(audio.context, first);
+    assert.equal(audio.ready, true);
+    assert.equal(audio.buffers.has('recording'), true);
   } finally { browser.restore(); }
 });

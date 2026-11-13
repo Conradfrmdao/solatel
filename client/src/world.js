@@ -429,14 +429,18 @@ function addSurfaceDetail(material, photo = null) {
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          // Two octaves: the coarse one is the patchiness of a weathered
-          // surface, the fine one is its tooth.
-          float coarse = grainNoise(vGrainPosition / GRAIN_COARSE);
-          float fine = grainNoise(vGrainPosition / GRAIN_FINE);
-          float grain = (coarse - 0.5) * 0.7 + (fine - 0.5) * 0.3;
           float fade = 1.0 - smoothstep(
             grainRange * 0.45, grainRange, distance(vGrainPosition, cameraPosition));
-          diffuseColor.rgb *= 1.0 + grain * grainDepth * 2.0 * fade;
+          #ifndef PHOTO
+          // Filter by pixel footprint so grazing angles and low render
+          // scales can't turn procedural surface detail into noise.
+          float footprint = max(length(dFdx(vGrainPosition)), length(dFdy(vGrainPosition)));
+          float coarse = (grainNoise(vGrainPosition / GRAIN_COARSE) - 0.5)
+            * (1.0 - smoothstep(0.25, 0.8, footprint / GRAIN_COARSE));
+          float fine = (grainNoise(vGrainPosition / GRAIN_FINE) - 0.5)
+            * (1.0 - smoothstep(0.25, 0.8, footprint / GRAIN_FINE));
+          diffuseColor.rgb *= 1.0 + (coarse * 0.7 + fine * 0.3) * grainDepth * 2.0 * fade;
+          #endif
 
           #ifdef SURFACE_KIND
           vec3 P = vGrainPosition;
@@ -588,8 +592,8 @@ function addSurfaceDetail(material, photo = null) {
         normal = normalize(mix(normal, nonPerturbedNormal, surfacePuddle * 0.75));
         #endif`,
       )
-      .replace('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
-      .replace('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
+      .replaceAll('GRAIN_COARSE', GRAIN_SCALE.toFixed(2))
+      .replaceAll('GRAIN_FINE', (GRAIN_SCALE * 0.28).toFixed(2));
   };
 
   // Three.js caches compiled programs per material configuration and does not
@@ -635,14 +639,14 @@ const SUN_OFFSET = { x: 18, y: 34, z: 12 };
  * (`assets/sky/<file>`), how strong and what colour its sun, how much the
  * sky itself lights, and how wet it has left the ground (puddles and damp,
  * from 0 to 1, in the open only). The sun and sky strengths are baked into
- * the map's light: change them and run `scripts/bake-light.py`. The yard is under cloud, so its sun is weak and its
- * shadows soft; the arena has a late sun, low and warm. Weather is the same
+ * the map's light: change them and run `scripts/bake-light.py`. Yard has
+ * daylight through the skylights and Arena has a low, warm sun. Weather is the same
  * for everybody on a map, which is all the fairness it needs - a darker sky
  * is a harder map for every player on it alike.
  */
 const SKIES = {
   facility: { file: 'partly', sun: 5.0, sunColour: 0xfff0dc, sky: 1.5, wet: 0.5 },
-  yard: { file: 'partly', sun: 5.2, sunColour: 0xffd5a0, sky: 1.2, wet: 0.0 },
+  yard: { file: 'partly', sun: 4.0, sunColour: 0xffe4c5, sky: 1.65, wet: 0.0 },
   arena: { file: 'afternoon', sun: 7.0, sunColour: 0xffd9ab, sky: 4.5, wet: 0.35 },
 };
 
@@ -959,14 +963,12 @@ export class World {
    */
   async useSky(mapName) {
     const spec = SKIES[mapName] ?? SKIES[DEFAULT_SKY];
-    // Expose the sunlit terminal for its interior, keeping covered routes
-    // legible while the skylights retain their bright daylight contrast.
-    if(this.renderer)this.renderer.toneMappingExposure=mapName==='yard'?1.02:.9;
+    if (this.renderer) this.renderer.toneMappingExposure = mapName === 'yard' ? 0.96 : 0.9;
     this._skies = this._skies ?? new Map();
     if (!this._skies.has(spec.file)) this._skies.set(spec.file, this._loadSky(spec.file));
     // Only the latest request goes up: the sky read at startup may still be
     // arriving after the map's own.
-    this._wantSky = spec.file;
+    this._wantSky = mapName;
     let sky;
     try {
       sky = await this._skies.get(spec.file);
@@ -975,7 +977,7 @@ export class World {
       console.warn('sky unavailable:', err);
       return;
     }
-    if (this._wantSky !== spec.file) return;
+    if (this._wantSky !== mapName) return;
     this.scene.environment = sky.environment;
     this.scene.environmentIntensity = spec.sky;
     WETNESS.value = spec.wet ?? 0;
@@ -990,6 +992,9 @@ export class World {
     this._fill.ambient.intensity = 0.0;
     this.sun.intensity = spec.sun;
     this.sun.color.set(spec.sunColour);
+    // The tighter PCF kernel keeps realtime shadows on Yard props and
+    // characters readable. Static architecture uses the baked sun.
+    this.sun.shadow.radius = mapName === 'yard' ? 1.1 : 2.5;
     if (this.sunSprite) this.sunSprite.visible = false;
   }
 
@@ -1103,7 +1108,7 @@ export class World {
     // It is no longer big enough to hold a map, and is not meant to be: the
     // arena is 102 m across now and the yard 252 m long, and a box that
     // covered either would be spreading 2048 texels over it. It follows the
-    // player instead, in `positionSky`, so the texels stay where they are
+    // player instead, in `followWithShadows`, so the texels stay where they are
     // being looked at.
     const extent = SHADOW_EXTENT;
     sun.shadow.camera.left = -extent;
@@ -1293,7 +1298,7 @@ export class World {
     // Along the key light, so the sun is where the shadows say it is. Nothing
     // gives away a painted-on sky faster than shadows pointing elsewhere.
     const toSun = this._sunDirection ??= new THREE.Vector3();
-    toSun.copy(this.sun.position).sub(this.sun.target.position).normalize();
+    toSun.copy(this.sunOffset).normalize();
 
     const distance = range * SKY_DISTANCE;
     this.sunSprite.position.copy(eye).addScaledVector(toSun, distance);
@@ -1302,21 +1307,6 @@ export class World {
     this.water.position.set(eye.x, this.waterLevel ?? WATER_DEPTH, eye.z);
     this.arena?.userData.nature?.update();
     this.water.scale.setScalar(range * 3);
-
-    // Carry the shadow camera along with the player, keeping the sun's
-    // direction fixed so the shadows do not swing as they walk.
-    //
-    // Snapped to whole shadow-map texels first. Without that the projection
-    // slides by a fraction of a texel every frame and every shadow edge
-    // crawls and fizzes as you move - the classic artefact of a moving
-    // directional shadow, and far more distracting than the shadows simply
-    // ending would have been.
-    const texel = (SHADOW_EXTENT * 2) / this.sun.shadow.mapSize.x;
-    const atX = Math.round(eye.x / texel) * texel;
-    const atZ = Math.round(eye.z / texel) * texel;
-    this.sun.position.set(atX + this.sunOffset.x, this.sunOffset.y, atZ + this.sunOffset.z);
-    this.sun.target.position.set(atX, 0, atZ);
-    this.sun.target.updateMatrixWorld();
   }
 
   /**
@@ -1427,10 +1417,10 @@ export class World {
       for (const material of [node.material].flat()) if (material?.name) names.push(material.name);
     });
     const [photos, bakedLight, floor] = await Promise.all([loadPhotos(names), lighting, floorLoading]);
-    // Lift the indirect light on Yard's covered routes while preserving the
-    // sun patches, materials and exposure across graphics presets.
+    // A small minimum bounce for covered routes. Most fill comes from the
+    // rebaked sky and the surfaces that can actually see it.
     const light = mapName === 'yard' && bakedLight
-      ? { ...bakedLight, lightVolumeFloor: bakedLight.lightVolumeFloor.clone().multiplyScalar(1.65) }
+      ? { ...bakedLight, lightVolumeFloor: bakedLight.lightVolumeFloor.clone().multiplyScalar(1.35) }
       : bakedLight;
     // Kept with the map, to be put back up when it is shown again.
     arena.userData.light = light;
@@ -1711,11 +1701,22 @@ export class World {
    */
   followWithShadows(target) {
     if (!this.sun) return;
-    this.sun.position.set(target.x + 18, target.y + 34, target.z + 12);
-    this.sun.target.position.copy(target);
+    // World X/Z snapping still slides the texels when the sun is angled.
+    // Align the centre to the texels on the orthographic camera's own axes.
+    const texel = (SHADOW_EXTENT * 2) / this.sun.shadow.mapSize.x;
+    const right = this._shadowRight ??= new THREE.Vector3();
+    const up = this._shadowUp ??= new THREE.Vector3();
+    right.crossVectors(this.sun.shadow.camera.up, this.sunOffset).normalize();
+    up.crossVectors(this.sunOffset, right).normalize();
+    const centre = this.sun.target.position.set(target.x, 0, target.z);
+    const horizontal = centre.dot(right);
+    const vertical = centre.dot(up);
+    centre.addScaledVector(right, Math.round(horizontal / texel) * texel - horizontal);
+    centre.addScaledVector(up, Math.round(vertical / texel) * texel - vertical);
+    this.sun.position.copy(centre).add(this.sunOffset);
     this.sun.target.updateMatrixWorld();
     // Past the shadow map's reach from here, the baked sun takes over.
-    SHADOW_CENTRE.value.copy(target);
+    SHADOW_CENTRE.value.copy(centre);
   }
 }
 

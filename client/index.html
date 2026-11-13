@@ -1497,7 +1497,7 @@
         background: linear-gradient(90deg, #c47c12, var(--amber-hot));
         transition: width 0.3s ease;
       }
-      .map .fetch .what { font: 600 12px/1.2 var(--shout); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-hot); }
+      .map .fetch .what { font: 600 12px/1.2 var(--shout); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-hot); overflow-wrap: anywhere; }
       .map .fetch.done i { background: var(--money); }
       .map .fetch.done .what { color: var(--money); }
 
@@ -1530,19 +1530,21 @@
       }
       .gear-box .note { font: 400 13px/1.35 var(--read); letter-spacing: 0; text-transform: none; color: var(--dim); }
       .gear-box p.note { margin: -4px 0 0; }
-      .gear #menu-guns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .gear #menu-guns { grid-template-columns: repeat(auto-fit, minmax(min(100%, 154px), 1fr)); gap: 10px; }
       .gear .gun { gap: 4px; padding: 8px 10px 10px; }
       .gear .gun .art { aspect-ratio: auto; height: clamp(40px, 9vh, 104px); }
       .gear .gun .name { font-size: 19px; }
       .gear .gun .blurb { display: none; }
       .gear .gun .stats { gap: 2px; }
-      .gear .gun .stat { grid-template-columns: 62px 1fr auto; gap: 6px; font-size: 11px; }
+      .gear .gun .stat { grid-template-columns: max-content minmax(0, 1fr); gap: 3px 6px; font-size: 11px; }
+      .gear .gun .stat .track { grid-row: 2; grid-column: 1 / -1; }
+      .gear .gun .stat .value { white-space: normal; text-align: right; }
       .gear #menu-optics { gap: 8px; }
       .gear .optic { padding: 7px 12px; }
       .gear .optic b { font-size: 16px; }
-      .gear #menu-skins { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; align-content: start; }
+      .gear #menu-skins { grid-template-columns: repeat(auto-fill, minmax(min(100%, 74px), 1fr)); gap: 8px; align-content: start; }
       .gear .skin { gap: 2px; padding: 4px 4px 6px; }
-      .gear .skin .name { font-size: 11px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .gear .skin .name { font-size: 11px; text-align: center; overflow-wrap: anywhere; }
       .gear #menu-tables { grid-template-columns: minmax(0, 1fr); gap: 10px; }
       .gear .table {
         grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1552,7 +1554,7 @@
       }
       .gear .table .stake { grid-area: stake; font-size: 36px; }
       .gear .table .pays { grid-area: pays; align-self: end; }
-      .gear .table .busy { grid-area: busy; align-self: start; margin: 0; white-space: nowrap; }
+      .gear .table .busy { grid-area: busy; align-self: start; margin: 0; }
       .gear .table .go {
         grid-area: go;
         padding: 13px 22px;
@@ -1569,6 +1571,7 @@
       .gear .table:disabled .go { box-shadow: none; }
       .gear .table.on::after { display: none; }
       .gear #menu-carrying { margin-top: auto; }
+      .menu-quick-play { display: none; }
 
       /* What has been won lately, under the maps while they are the choice. */
       .battle > .activity { padding: 12px 18px; gap: 8px; }
@@ -1577,7 +1580,7 @@
 
       /* A tall window has room for the outfits at a size worth looking at. */
       @media (min-height: 860px) {
-        .gear #menu-skins { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .gear #menu-skins { grid-template-columns: repeat(auto-fill, minmax(min(100%, 86px), 1fr)); gap: 10px; }
         .gear .skin .name { font-size: 13px; }
       }
       /* A short window - a laptop's - keeps the essentials. */
@@ -1593,10 +1596,12 @@
       }
       /* A narrow one stacks the gear and scrolls. */
       @media (max-width: 1000px) {
-        #menu[data-pane='play'] > .menu-shell { flex: none; }
+        #menu[data-pane='play'] > .menu-shell { flex: none; min-height: 0; grid-template-rows: auto; }
+        .battle, .pane[data-pane='play'] { flex: none; }
+        .battle[data-phase='pick'], .battle[data-phase='gear'] { grid-template-rows: auto; }
         .gear { grid-template-columns: minmax(0, 1fr); }
         .battle #menu-maps { grid-template-columns: minmax(0, 1fr); }
-        .battle[data-phase='pick'] .map { min-height: 200px; }
+        .battle[data-phase='pick'] .map { min-height: 200px; height: auto; }
         .battle > .activity ul.feed { grid-template-columns: minmax(0, 1fr); }
       }
 
@@ -1728,7 +1733,7 @@
         .battle[data-phase='pick'], .battle[data-phase='gear'] { grid-template-rows: auto auto; }
         .battle #menu-maps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
         .battle[data-phase='pick'] .map { min-height: 132px; height: 132px; }
-        .battle[data-phase='gear'] #menu-maps { grid-auto-rows: 76px; }
+        .battle[data-phase='gear'] #menu-maps { grid-auto-rows: minmax(76px, auto); }
         .battle[data-phase='gear'] .map { min-height: 76px; }
         .battle .map { padding: 9px; }
         .battle .map .name { font-size: clamp(21px, 3.4vw, 32px); }
@@ -2121,14 +2126,48 @@
         .db-board td.rank { width: 24px; }
         .db-board td.name { width: 36%; }
         .db-board td.state { font-size: 10px; }
+        #menu { overflow: hidden; }
         #menu .topbar .bar {
           padding-left: var(--ui-left); padding-right: var(--ui-right);
           padding-top: max(3px, var(--ui-safe-top));
         }
+        #menu-status { width: min(calc(100% - var(--ui-left) - var(--ui-right)), 1240px); }
         #menu .menu-shell, #menu[data-pane='play'] > .menu-shell {
+          flex: 1 1 0; min-height: 0; overflow: auto;
+          grid-template-rows: auto; align-content: start;
           padding-left: var(--ui-left); padding-right: var(--ui-right);
           padding-bottom: var(--ui-bottom); min-width: 0;
         }
+        .pane[data-pane='play'], .battle { min-height: auto; flex: none; }
+        .battle[data-phase='pick'], .battle[data-phase='gear'] { grid-template-rows: auto; }
+        .battle[data-phase='pick'] .map { height: auto; }
+        #menu[data-pane='play'] .menu-quick-play:not([hidden]) {
+          display: block;
+          padding: 7px var(--ui-right) max(7px, var(--ui-safe-bottom)) var(--ui-left);
+          background: #0c1119;
+          border-top: 1px solid #374456;
+          box-shadow: 0 -7px 22px #05080d66;
+        }
+        .menu-quick-inner {
+          width: min(100%, 1240px); margin: 0 auto;
+          display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+          gap: 10px; align-items: center;
+        }
+        .menu-quick-map { display: grid; gap: 1px; }
+        .menu-quick-map strong { font: 800 20px/1.1 var(--shout); color: var(--chalk); text-transform: uppercase; }
+        .menu-quick-map small { font-size: 11px; line-height: 1.2; color: var(--dim); }
+        .menu-quick-entry { display: flex; align-items: center; gap: 6px; }
+        .menu-quick-entry span { font: 600 13px/1 var(--shout); color: var(--dim); text-transform: uppercase; }
+        #menu-quick-stake, #menu-quick-join {
+          min-height: 44px; border: 1px solid #5b6779; border-radius: 6px;
+          padding: 6px 10px;
+        }
+        #menu-quick-stake { font: 700 16px/1 var(--shout); color: var(--chalk); background: var(--well); }
+        #menu #menu-quick-join {
+          min-width: 94px; font: 800 21px/1 var(--shout); text-transform: uppercase;
+          color: var(--amber-ink); background: linear-gradient(180deg, var(--amber-hot), var(--amber)); border-color: var(--amber);
+        }
+        #menu-quick-join:disabled, #menu-quick-stake:disabled { opacity: .6; }
         .touch-stick { left: var(--ui-left); bottom: max(28px, var(--ui-bottom)); }
         body.running #touch-controls, body.editing-controls #touch-controls {
           padding: var(--ui-top) var(--ui-right) var(--ui-bottom) var(--ui-left);
@@ -2198,12 +2237,36 @@
         #touch-controls [data-touch='grenade'] { right: calc(var(--ui-right) + 160px); bottom: 37%; width: 44px; height: 44px; }
         #touch-controls [data-touch='swap'] { width: 100px; }
       }
+      @media (pointer: coarse) and (orientation: landscape) {
+        /* Keep the right-edge stack separate even when browser bars reduce
+           the usable height by another row. */
+        #touch-controls [data-touch='jump'] { bottom: max(30%, calc(max(22px, var(--ui-bottom)) + 54px)); }
+        #touch-controls [data-touch='aim'] { bottom: max(51%, calc(max(22px, var(--ui-bottom)) + 108px)); }
+        #touch-controls [data-touch='fire'] { bottom: max(29%, calc(max(18px, var(--ui-bottom)) + 55px)); }
+      }
       @media (pointer: coarse) and (orientation: portrait) {
+        #menu .topbar .bar { min-height: 0; gap: 2px 6px; justify-content: space-between; }
+        #menu .topbar .brand { padding: 5px 0; }
+        #menu .brand img { height: 20px; }
+        #menu .brand .motto, #menu .me, #purse .plus { display: none; }
+        #menu #menu-tabs { order: 3; flex: 0 0 100%; width: 100%; margin: 0; }
+        #menu .battle > .hero { padding-top: 14px; padding-bottom: 14px; }
+        #menu .battle[data-phase='pick'] .map { min-height: 146px; }
+        #menu .battle[data-phase='gear'] #menu-maps { grid-auto-rows: minmax(80px, auto); }
+        #menu .battle .map .name { font-size: 27px; }
+        #menu .battle .map .seats { display: none; }
         .db-money { grid-template-columns: minmax(0, 1fr); }
         .touch-editor-bar { width: calc(100% - var(--ui-left) - var(--ui-right)); }
         #touch-controls [data-touch='grenade'] { right: calc(var(--ui-right) + 135px); bottom: 27%; }
         #touch-controls [data-touch='fire'] { bottom: 38%; }
         #touch-controls [data-touch='reload'] { bottom: 17%; }
+      }
+      @media (pointer: coarse) and (max-width: 820px) {
+        #menu #menu-tabs { min-width: 0; align-items: stretch; overflow: visible; }
+        #menu-tabs button { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 2px; padding: 0; }
+        #menu-tabs button svg, #menu-tabs .gear svg { width: 18px; height: 18px; }
+        #menu-tabs button span { display: none; }
+        #menu-tabs button::after { content: attr(data-label); font: 600 10px/1 var(--shout); letter-spacing: 0; }
       }
 
       /* Form controls in the menu's colours rather than the browser's. */
@@ -2429,6 +2492,23 @@
       }
       #settings .settings-note { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--dim); max-width: 60ch; }
       #menu-profile input[type='text'] { width: 140px; }
+      @media (pointer: coarse) {
+        #menu .pane:not([data-pane='play']) { padding: clamp(12px, 3vw, 24px); }
+        #settings button {
+          min-height: 42px;
+          padding: 5px 8px;
+          color: var(--chalk);
+          background: var(--well);
+          border: 1px solid var(--rule);
+          border-radius: 6px;
+        }
+        #settings input, #settings select, #menu-profile input[type='text'] { min-width: 0; max-width: 100%; }
+        #settings select { min-height: 42px; }
+      }
+      @media (pointer: coarse) and (max-width: 560px) {
+        #settings label, #menu-profile label { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 8px; }
+        #settings label > span { grid-column: 1 / -1; font-size: 12px; }
+      }
 
       .hidden { display: none !important; }
 

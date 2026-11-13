@@ -6,6 +6,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { asset } from './assets.js';
 import { lightMaterial } from './light.js';
+import { applyPhotoFiltering } from './photo.js';
 
 // Separate draw bounds let the renderer skip off-camera sections of the
 // terminal. Geometry/materials are still shared, and no props are removed.
@@ -41,7 +42,7 @@ export async function terminalFloor() {
   for(const key of ['map','normalMap','roughnessMap','metalnessMap','aoMap']) {
     const texture=material[key];if(!texture)continue;
     texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
-    texture.anisotropy=8;
+    applyPhotoFiltering(texture);
     texture.needsUpdate=true;
   }
   lightMaterial(material);
@@ -103,7 +104,7 @@ export async function dressTerminal(map) {
         if (paintLift !== 1) material.color.multiplyScalar(paintLift);
         lightMaterial(material);
         for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
-          if (material[key]) material[key].anisotropy = 4;
+          if (material[key]) applyPhotoFiltering(material[key]);
         }
       }
       const geometry = part.geometry.clone().applyMatrix4(part.matrixWorld);

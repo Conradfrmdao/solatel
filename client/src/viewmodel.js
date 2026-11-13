@@ -59,6 +59,8 @@ const FILL_LIGHT = 1.15;
  *  the guns are photographed metal and wood, and without it their steel
  *  is black. */
 const ENVIRONMENT_LIGHT = 0.95;
+/** Broad bounce keeps the dark receiver and gloves readable under a roof. */
+const SHADE_BOUNCE = 0.55;
 
 /** Frame-rate independent approach: the same curve at 30 fps as at 240. */
 function damp(current, target, rate, dt) {
@@ -545,18 +547,22 @@ export class Viewmodel {
   setLight(dt, sky, sun, sunDirection, sunColor, viewQuaternion) {
     const lights = this.lights;
     const ease = 1 - Math.exp(-dt / 0.25);
-    lights.sky += (Math.min(Math.max(sky, 0.35), 1.15) - lights.sky) * ease;
+    const bounce = THREE.MathUtils.lerp(SHADE_BOUNCE, 1, THREE.MathUtils.clamp(sky, 0, 1.15));
+    lights.sky += (bounce - lights.sky) * ease;
     lights.sun += (sun - lights.sun) * ease;
-    lights.key.intensity = KEY_LIGHT * (0.28 + 0.72 * lights.sun) * Math.min(1, 0.4 + 0.6 * lights.sky);
+    lights.key.intensity = KEY_LIGHT * lights.sun;
     lights.fill.intensity = FILL_LIGHT * lights.sky;
     this.scene.environmentIntensity = (this.environmentBase ?? 1) * ENVIRONMENT_LIGHT * lights.sky;
-    // A fixed white studio lamp makes every gun look pale and unrelated to
-    // the hall. Rotate the real map sun into view space so the same side of
-    // the weapon catches the same warm light as the wall behind it.
-    if (sunDirection && viewQuaternion) {
+    // Keep the sky, bounce and sunlight fixed in the map as the player
+    // turns. They all need the same world-to-view rotation in this scene.
+    if (viewQuaternion) {
       _viewInverse.copy(viewQuaternion).invert();
-      _viewSun.copy(sunDirection).normalize().applyQuaternion(_viewInverse);
-      lights.key.position.copy(_viewSun).multiplyScalar(3);
+      this.scene.environmentRotation.setFromQuaternion(_viewInverse);
+      lights.fill.position.set(0, 1, 0).applyQuaternion(_viewInverse);
+      if (sunDirection) {
+        _viewSun.copy(sunDirection).normalize().applyQuaternion(_viewInverse);
+        lights.key.position.copy(_viewSun).multiplyScalar(3);
+      }
     }
     if (sunColor) lights.key.color.copy(sunColor);
   }

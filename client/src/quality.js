@@ -21,22 +21,37 @@ export const LEVELS = ['low', 'medium', 'high', 'ultra'];
 /**
  * What each level spends.
  *
- * `ratio` caps the device pixel ratio and `scale` multiplies the result, so
- * low draws three quarters of a CSS pixel's worth and a 4K screen at ultra is
- * still capped at two. `post` is the whole composer (multisampled target,
- * grade); without it the frame is drawn straight to the canvas. `bloom` and
- * `ao` are its two expensive passes - ambient occlusion alone measured 60 fps
- * against 23 on an Intel Iris Xe. `shadows` is the shadow map's size in
- * texels over the same area at every level. `grass` is the share of the
- * map's tufts planted - fewer everywhere, never nearer - and `sky` whether
- * birds and chimney smoke are drawn.
+ * `ratio` caps the device pixel ratio and `scale` multiplies the result.
+ * Mobile presets budget the additional pixels above CSS resolution so a
+ * Retina phone gets finer edges without drawing its entire native buffer.
+ * `samples` caps MSAA for the HDR composer. Zero uses the canvas's own AA
+ * and skips the post-processing passes. `shadows` budgets texels over the
+ * same area at every level. `grass` sets ground tuft density and `sky`
+ * enables decorative birds and chimney smoke.
  */
 export const PRESETS = {
-  low: { ratio: 1, scale: 0.75, post: false, bloom: false, ao: false, shadows: 1024, grass: 0.55, sky: false },
-  medium: { ratio: 1, scale: 1, post: true, bloom: false, ao: false, shadows: 1024, grass: 0.8, sky: true },
-  high: { ratio: 1.5, scale: 1, post: true, bloom: true, ao: false, shadows: 2048, grass: 1, sky: true },
-  ultra: { ratio: 2, scale: 1, post: true, bloom: true, ao: true, shadows: 4096, grass: 1, sky: true },
+  low: {
+    ratio: 1, scale: 0.75, samples: 0, bloom: false, ao: false, shadows: 1024, anisotropy: 4, grass: 0.55, sky: false,
+    mobile: { ratio: 1.15, scale: 1, pixels: 550_000 },
+  },
+  medium: {
+    ratio: 1, scale: 1, samples: 4, bloom: false, ao: false, shadows: 1024, anisotropy: 4, grass: 0.8, sky: true,
+    mobile: { ratio: 1.4, pixels: 830_000, samples: 0, shadows: 1536 },
+  },
+  high: {
+    ratio: 1.5, scale: 1, samples: 4, bloom: true, ao: false, shadows: 2048, anisotropy: 8, grass: 1, sky: true,
+    mobile: { ratio: 1.65, pixels: 1_200_000, samples: 0, bloom: false },
+  },
+  ultra: {
+    ratio: 2, scale: 1, samples: 4, bloom: true, ao: true, shadows: 4096, anisotropy: 16, grass: 1, sky: true,
+    mobile: { pixels: 1_550_000, samples: 2, ao: false, shadows: 3072 },
+  },
 };
+
+export function renderRatio(preset, deviceRatio, width, height) {
+  const budget = preset.pixels ? Math.max(1, Math.sqrt(preset.pixels / (width * height))) : Infinity;
+  return Math.min(deviceRatio || 1, preset.ratio, budget) * preset.scale;
+}
 
 const CHOICE_KEY = 'solatel.quality';
 const AUTO_KEY = 'solatel.quality.auto';

@@ -23,11 +23,51 @@ try {
  await touch('touchMove',stick.x+stick.width/2,stick.y+stick.height*.2);
  assert.ok(await page.evaluate(()=>testInput.sample().forward>0),'upward drag must move forward');
  await touch('touchEnd');assert.equal(await page.evaluate(()=>testInput.sample().forward),0);
+ const stickTravel = async sensitivity => {
+  await page.evaluate(moveSensitivity=>testInput.setTouchOptions({moveSensitivity}),sensitivity);
+  const x=stick.x+stick.width/2,y=stick.y+stick.height/2;
+  const finger=await page.touchscreen.touchStart(x,y);
+  await finger.move(x,y-14);
+  await page.waitForFunction(()=>testInput._touch.forward>0,{timeout:2000});
+  const forward=await page.evaluate(()=>testInput.sample().forward);
+  await finger.end();
+  return forward;
+ };
+ assert.ok(await stickTravel(160)>await stickTravel(80),'short joystick travel must respond more at higher sensitivity');
+ await page.evaluate(()=>testInput.setTouchOptions({moveSensitivity:125}));
  await page.tap('[data-touch=sprint]');assert.deepEqual(await page.evaluate(()=>{const c=testInput.sample();return [c.forward,c.sprint]}),[1,true]);
  await page.tap('[data-touch=sprint]');assert.equal(await page.evaluate(()=>testInput.sample().forward),0);
  await page.tap('[data-touch=aim]');assert.equal(await page.evaluate(()=>testInput.aiming),true);
  await page.tap('[data-touch=aim]');
  await page.tap('[data-touch=jump]');assert.equal(await page.evaluate(()=>testInput.sample().jump),true,'short jump tap lost');
+ const swipeTurn=async (x,y,travel)=>{
+  await page.evaluate(()=>{testInput.yaw=0;testInput.updateLook();});
+  const finger=await page.touchscreen.touchStart(x,y);
+  await finger.move(x+travel,y);
+  await page.waitForFunction(()=>Math.abs(testInput._touchDx)>0,{timeout:2000});
+  await finger.end();
+  return page.evaluate(()=>{testInput.updateLook();return Math.abs(testInput.yaw);});
+ };
+ const hipTurn=await swipeTurn(Math.round(width*.5),Math.round(height*.27),Math.round(width*.15));
+ assert.ok(Math.abs(hipTurn-2*Math.PI*1.15*.15)<.03,'a 15%-width swipe should turn 62 degrees on each phone');
+ const fire=await page.$eval('[data-touch=fire]',e=>e.getBoundingClientRect().toJSON());
+ const fireTurn=await swipeTurn(fire.x+fire.width/2,fire.y+fire.height/2,24);
+ assert.ok(Math.abs(fireTurn-2*Math.PI*1.15*24/width)<.02,'Fire drag should use regular camera sensitivity');
+ assert.equal(await page.evaluate(()=>testInput.sample().fire),true,'short touch Fire was lost');
+ const ads=await page.$eval('[data-touch=aim]',e=>e.getBoundingClientRect().toJSON());
+ await page.evaluate(()=>{testInput.lookScale=.25;});
+ const adsTurn=await swipeTurn(ads.x+ads.width/2,ads.y+ads.height/2,-24);
+ assert.ok(Math.abs(adsTurn-2*Math.PI*.9*.5*24/width)<.02,'ADS drag should use the dedicated ADS sensitivity');
+ await page.tap('[data-touch=aim]');
+ await page.evaluate(()=>{testInput.setTouchOptions({aim:'hold'});testInput.yaw=0;});
+ const heldAim=await page.touchscreen.touchStart(ads.x+ads.width/2,ads.y+ads.height/2);
+ const lookThumb=await page.touchscreen.touchStart(Math.round(width*.5),Math.round(height*.27));
+ await lookThumb.move(Math.round(width*.5)+45,Math.round(height*.27));
+ await page.waitForFunction(()=>Math.abs(testInput._touchDx)>0,{timeout:2000});
+ assert.ok(await page.evaluate(()=>{testInput.updateLook();return testInput.aiming && Math.abs(testInput.yaw)>.12;}),'a stationary hold on ADS must allow another finger to aim');
+ await lookThumb.end();
+ await heldAim.end();
+ await page.evaluate(()=>{testInput.lookScale=1;});
  const grenade=await page.$eval('[data-touch=grenade]',e=>e.getBoundingClientRect().toJSON());
  const left=await page.touchscreen.touchStart(stick.x+stick.width/2,stick.y+stick.height/2);
  await left.move(stick.x+stick.width/2,stick.y+stick.height*.05);
@@ -59,10 +99,12 @@ try {
  if(width===844){
   await page.click('#touch-customize');await page.$eval('.touch-editor-options',e=>e.open=true);
   await page.select('#touch-mode-aim','hold');await page.select('#touch-mode-crouch','hold');await page.select('#touch-mode-sprint','hold');
-  await page.$eval('#touch-sensitivity',e=>{e.value='130';e.dispatchEvent(new Event('input',{bubbles:true}));});
+  for(const [id,value] of [['touch-sensitivity',130],['touch-ads-sensitivity',105],['touch-move-sensitivity',145]]){
+   await page.$eval(`#${id}`,(e,n)=>{e.value=String(n);e.dispatchEvent(new Event('input',{bubbles:true}));},value);
+  }
   await page.click('#touch-done');await page.reload();await page.waitForFunction(()=>window.testInput);
-  assert.deepEqual(await page.evaluate(()=>testInput.touchOptions),{sensitivity:130,aim:'hold',crouch:'hold',sprint:'hold'},'editor preferences must survive a page reload');
-  await page.evaluate(()=>testInput.setTouchOptions({sensitivity:115,aim:'toggle',crouch:'toggle',sprint:'toggle'}));
+  assert.deepEqual(await page.evaluate(()=>testInput.touchOptions),{sensitivity:130,adsSensitivity:105,moveSensitivity:145,aim:'hold',crouch:'hold',sprint:'hold'},'editor preferences must survive a page reload');
+  await page.evaluate(()=>testInput.setTouchOptions({sensitivity:115,adsSensitivity:90,moveSensitivity:125,aim:'toggle',crouch:'toggle',sprint:'toggle'}));
   console.log('Touch editor sensitivity and hold/toggle preferences persist after reload');
  }
  await page.close();

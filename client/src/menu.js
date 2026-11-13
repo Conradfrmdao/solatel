@@ -152,6 +152,11 @@ export class Menu {
     this.maps = root.querySelector('#menu-maps');
     this.tables = root.querySelector('#menu-tables');
     this.battle = root.querySelector('#battle');
+    this.shell = root.querySelector('.menu-shell');
+    this.quickPlay = root.querySelector('.menu-quick-play');
+    this.quickMap = root.querySelector('#menu-quick-map');
+    this.quickStake = root.querySelector('#menu-quick-stake');
+    this.quickJoin = root.querySelector('#menu-quick-join');
     // The whole screen: the button in the top bar, and whether play takes it.
     const fullscreen = root.querySelector('#fullscreen');
     fullscreen.addEventListener('click', () => toggleFullscreen());
@@ -274,20 +279,10 @@ export class Menu {
     this.tables.addEventListener('click', (event) => {
       const button = event.target.closest('[data-stake]');
       if (!button || button.disabled) return;
-      this.chosenStake = Number(button.dataset.stake);
-      try {
-        window.localStorage.setItem(STAKE_KEY, String(this.chosenStake));
-      } catch {
-        /* private browsing */
-      }
-      this._drawTables();
-      if (this.chosenMap && this._onQueue) {
-        // The whole screen for the match, asked for here because a browser
-        // gives it only in answer to a click (`fullscreen.js`).
-        if (fullscreenWanted() || window.matchMedia?.('(pointer: coarse)').matches) enterFullscreen();
-        this._onQueue(this.chosenMap, this.chosenStake, { ...this.loadout }, this.skin);
-      }
+      this._playStake(Number(button.dataset.stake));
     });
+    this.quickStake.addEventListener('change', () => this._selectStake(Number(this.quickStake.value)));
+    this.quickJoin.addEventListener('click', () => this._playStake(Number(this.quickStake.value)));
   }
 
   /** What the server said it offers, from the `Welcome`. */
@@ -795,6 +790,7 @@ export class Menu {
       button.classList.toggle('on', button.dataset.pane === name);
     }
     this.root.scrollTop = 0;
+    this.shell.scrollTop = 0;
   }
 
   /**
@@ -1006,6 +1002,7 @@ export class Menu {
     prefetchMap(name);
     this._drawMaps();
     this._drawTables();
+    this.shell.scrollTop = 0;
   }
 
   /** How far the chosen map's files have come, on its card. */
@@ -1038,6 +1035,25 @@ export class Menu {
     return `${waiting} waiting · ${running} playing`;
   }
 
+  _selectStake(dollars) {
+    if (dollars === this.chosenStake) return;
+    this.chosenStake = dollars;
+    try {
+      window.localStorage.setItem(STAKE_KEY, String(dollars));
+    } catch {
+      /* private browsing */
+    }
+    this._drawTables();
+  }
+
+  _playStake(dollars) {
+    if (!this.chosenMap || this._queued || !this._onQueue) return;
+    this._selectStake(dollars);
+    // Fullscreen and audio activation both rely on the original click.
+    if (fullscreenWanted() || window.matchMedia?.('(pointer: coarse)').matches) enterFullscreen();
+    this._onQueue(this.chosenMap, dollars, { ...this.loadout }, this.skin);
+  }
+
   _drawTables() {
     const rows = (this._tables ?? []).filter((t) => t.map === this.chosenMap);
     // Before the first lobby message there is nothing to say about the
@@ -1065,6 +1081,13 @@ export class Menu {
         );
       })
       .join('');
+    const stakeOptions = stakes.map(({ dollars }) => `<option value="${dollars}">$${dollars}</option>`).join('');
+    if (this._quickStakeOptions !== stakeOptions) {
+      this._quickStakeOptions = stakeOptions;
+      this.quickStake.innerHTML = stakeOptions;
+    }
+    this.quickStake.value = String(stakes.some((tier) => tier.dollars === this.chosenStake)
+      ? this.chosenStake : stakes[0]?.dollars ?? '');
     this._drawPlay();
   }
 
@@ -1083,6 +1106,15 @@ export class Menu {
       if (go.textContent !== text) go.textContent = text;
       button.disabled = !this.chosenMap || Boolean(queued);
     }
+    this.quickPlay.hidden = !this.quickStake.value;
+    this.quickMap.textContent = this.chosenMap ?? 'Choose a map';
+    this.quickStake.disabled = Boolean(queued);
+    this.quickJoin.disabled = !this.chosenMap || Boolean(queued);
+    const quickLabel = queued ? 'In line…' : 'Play';
+    this.quickJoin.textContent = quickLabel;
+    this.quickJoin.setAttribute('aria-label', this.chosenMap
+      ? `${quickLabel} · ${this.chosenMap} · $${this.quickStake.value}`
+      : quickLabel);
     const gun = WEAPONS[this.loadout.primary];
     const carrying = gun
       ? `You carry the ${gun.name.toLowerCase()} with ${this.loadout.optic === 'red_dot' ? 'a red dot' : `a ${OPTIC_NAMES[this.loadout.optic]} scope`}, and a pistol.`
@@ -1225,13 +1257,13 @@ const TEMPLATE = `
         <span class="motto"><i></i>Play <b>Kill</b> Earn<i></i></span>
       </button>
       <nav id="menu-tabs" aria-label="menu">
-        <button type="button" data-pane="play" class="on">${ICON.play}<span>Play</span></button>
-        <button type="button" data-pane="wallet">${ICON.wallet}<span>Deposit</span></button>
-        <button type="button" data-pane="board">${ICON.trophy}<span>Leaderboard</span></button>
-        <button type="button" data-pane="profile">${ICON.person}<span>Profile</span></button>
-        <button type="button" data-pane="fair">${ICON.shield}<span>Fair play</span></button>
-        <button type="button" data-pane="settings" class="gear" title="settings" aria-label="settings">${ICON.gear}</button>
-        <button type="button" id="fullscreen" class="gear" title="full screen" aria-label="full screen">${ICON.expand}</button>
+        <button type="button" data-pane="play" data-label="Play" class="on" aria-label="Play">${ICON.play}<span>Play</span></button>
+        <button type="button" data-pane="wallet" data-label="Deposit" aria-label="Deposit">${ICON.wallet}<span>Deposit</span></button>
+        <button type="button" data-pane="board" data-label="Board" aria-label="Leaderboard">${ICON.trophy}<span>Leaderboard</span></button>
+        <button type="button" data-pane="profile" data-label="Profile" aria-label="Profile">${ICON.person}<span>Profile</span></button>
+        <button type="button" data-pane="fair" data-label="Rules" aria-label="Fair play">${ICON.shield}<span>Fair play</span></button>
+        <button type="button" data-pane="settings" data-label="Settings" class="gear" title="settings" aria-label="settings">${ICON.gear}</button>
+        <button type="button" id="fullscreen" data-label="Screen" class="gear" title="full screen" aria-label="full screen">${ICON.expand}</button>
       </nav>
       <div class="me">
         <span class="avatar" id="me-avatar" aria-hidden="true"></span>
@@ -1259,7 +1291,7 @@ const TEMPLATE = `
 
         <div class="gear">
           <section class="gear-box weapon">
-            <h3>Weapon <span class="note">and a pistol: <kbd>Q</kbd> to swap</span></h3>
+            <h3>Weapon <span class="note">Pistol included <span class="desktop-only">· <kbd>Q</kbd> to swap</span></span></h3>
             <div id="menu-guns"></div>
             <h3>Sight</h3>
             <div id="menu-optics"></div>
@@ -1511,8 +1543,8 @@ const TEMPLATE = `
 
     <section class="pane hidden" data-pane="settings">
       <div id="settings">
-        <label>
-          sensitivity
+        <label class="desktop-only">
+          mouse sensitivity
           <input id="sensitivity" type="range" min="5" max="80" step="1" />
           <span id="sensitivity-value"></span>
         </label>
@@ -1533,22 +1565,22 @@ const TEMPLATE = `
         </label>
         <label class="mobile-only">
           mobile controls
-          <button id="edit-touch-controls" type="button">customize buttons</button>
-          <span>drag, resize and adjust opacity; saved on this phone</span>
+          <button id="edit-touch-controls" type="button">Customize controls</button>
+          <span>Adjust aim, movement and button layout</span>
         </label>
         <label class="mobile-only pwa-settings">install Solatel<button id="install-solatel" type="button">installation guide</button><span>home screen setup for your phone</span></label>
         <p class="mobile-browser-tip">For a screen without Safari tabs, use Share, Add to Home Screen, then open Solatel from its icon.</p>
-        <label class="check">
+        <label class="check desktop-only">
           raw mouse
           <input id="rawmouse" type="checkbox" />
           <span>turn off if aim sticks after switching windows</span>
         </label>
-        <label class="check">
+        <label class="check desktop-only">
           toggle sprint
           <input id="sprint-toggle" type="checkbox" />
           <span>press Shift to sprint; aiming, firing or stopping ends it</span>
         </label>
-        <label class="check">
+        <label class="check desktop-only">
           clips
           <input id="clips" type="checkbox" />
           <span id="clips-note">F8 saves the last 20 seconds as a video</span>
@@ -1564,15 +1596,11 @@ const TEMPLATE = `
           </select>
           <span id="quality-note"></span>
         </label>
-        <p class="fine settings-note">
-          Every level shows the same world: fog, distance, trees and players
-          are identical, so nobody sees more by turning it down. Lower levels
-          draw fewer pixels and cheaper effects. Ultra adds ambient occlusion,
-          which roughly halves the frame rate on laptop graphics.
-        </p>
+        <p class="fine settings-note">Lower presets reduce resolution and effects to improve frame rate.</p>
       </div>
       <div class="label">controls</div>
-      <div class="keys">
+      <p class="fine mobile-only">Use the left stick to move and drag the right side to look. Hold Grenade to aim, then release to throw.</p>
+      <div class="keys desktop-only">
         <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
         <span><kbd>mouse</kbd> look</span>
         <span><kbd>left click</kbd> shoot</span>
@@ -1586,10 +1614,12 @@ const TEMPLATE = `
         <span><kbd>G</kbd> hold to aim grenade / release to throw</span>
         <span><kbd>tab</kbd> scores</span>
         <span><kbd>esc</kbd> free the mouse</span>
+      </div>
+      <div class="keys">
         <span><kbd>controller</kbd> left stick move · right stick look · LT aim · RT fire</span>
         <span><kbd>controller</kbd> A jump · B crouch · X reload · Y swap · LB grenade · L3 sprint</span>
       </div>
-      <div class="devices">
+      <div class="devices desktop-only">
         <div class="device best">
           <b>mouse <em>recommended</em></b>
           <span class="pro">Fastest, most precise aim</span>
@@ -1606,5 +1636,12 @@ const TEMPLATE = `
       </div>
     </section>
 
+  </div>
+  <div class="menu-quick-play" hidden>
+    <div class="menu-quick-inner">
+      <div class="menu-quick-map"><strong id="menu-quick-map"></strong><small>Charged when the match forms</small></div>
+      <label class="menu-quick-entry"><span>Entry fee</span><select id="menu-quick-stake"></select></label>
+      <button id="menu-quick-join" type="button">Play</button>
+    </div>
   </div>
 `;

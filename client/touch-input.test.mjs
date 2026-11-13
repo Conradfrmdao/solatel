@@ -53,3 +53,26 @@ test('a sprint tap starts forward running, and backing up or combat cancels it',
   assert.equal(input.sample().forward, 0);
   delete globalThis.window; delete globalThis.document;
 });
+
+test('a Fire tap still fires when released before the next simulation tick', () => {
+  globalThis.window = new EventTarget();
+  window.localStorage = { getItem: () => null };
+  globalThis.document = new EventTarget();
+  const input = new Input(new EventTarget(), { requireLock: false });
+  try {
+    input._pressTouchButton('fire');
+    input._releaseTouchButton('fire');
+    assert.equal(input.sample().fire, true);
+    assert.equal(input.sample().fire, false);
+    input._pressTouchButton('fire');
+    input._releaseTouchButton('fire', true);
+    assert.equal(input.sample().fire, false, 'cancelling Fire must not leave a queued shot');
+    input._pressTouchButton('fire');
+    input._releaseTouchButton('fire');
+    input._pressTouchButton('grenade');
+    assert.equal(input.sample().fire, false, 'grenade handling must cancel any queued shot');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.document;
+  }
+});

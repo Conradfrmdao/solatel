@@ -273,6 +273,11 @@ original Solatel geometry. PBR crates, lamps, tool chests, plants and the
 concrete floor scan are CC0 Poly Haven assets; individual sources and the
 packing procedure are listed in [assets/props/TERMINAL.md](assets/props/TERMINAL.md).
 
+Breacher and Engineer use [TRELLIS output from three.ws Forge](https://github.com/nirholas/three.ws/blob/main/docs/image-to-3d.md)
+generated from Solatel's individual [operator references](documents/art-reference).
+Solatel fitted and textured their faces, modeled Breacher's visor, and
+transferred the weights and Mixamo motion from the Ghost character.
+
 `assets/sounds/rewards/*.mp3` contains original Solatel dialogue generated
 with [Qwen3-TTS CustomVoice 1.7B](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice),
 the Apache-2.0 model, using its `Ryan` synthetic voice and explicit shouted

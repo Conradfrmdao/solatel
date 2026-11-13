@@ -235,6 +235,12 @@ export const LIGHT_BEFORE_LIGHTS = `
   {
     vec3 n = normalize(inverseTransformDirection(normal, viewMatrix));
     vec3 face = normalize(inverseTransformDirection(nonPerturbedNormal, viewMatrix));
+    #ifdef BAKED_STATIC_SUN
+    // The half-metre irradiance field describes broad surface orientation.
+    // Let the scan normals shape direct light and reflections without
+    // multiplying fine texture noise through the low-frequency bounce too.
+    n = face;
+    #endif
     // A cell out, and a cell and a half from anything facing up: the texture
     // is filtered between cells, so a read any nearer takes in the cells
     // behind the surface too - the sealed attic under a pitched roof, the

@@ -26,8 +26,12 @@ const fixture = await build({
       const hud = new Hud(document.querySelector('#hud'));
       hud.stats.hidden = true;
       const menu = new Menu(document.querySelector('#menu'));
-      menu.setOffer([{name:'arena',seats:20},{name:'yard',seats:20}], [{dollars:1,kill_reward_micro_usd:900000}]);
+      menu.setOffer([{name:'arena',seats:20},{name:'yard',seats:20}], [
+        {dollars:1,kill_reward_micro_usd:900000},{dollars:5,kill_reward_micro_usd:4500000},
+      ]);
       menu.setName('Player mobile');
+      const queues = [];
+      menu.bindPlay((...entry) => queues.push(entry), () => {});
       const debrief = new Debrief();
       let leaves = 0;
       const mm = new Matchmaking(document.querySelector('#matchmaking'), {onLeave:()=>{leaves++;mm.update({phase:null});}});
@@ -61,7 +65,7 @@ const fixture = await build({
           if (name === 'editor') input.touchLayout.open();
         }
       };
-      window.mobileScreens = {show,input,menu,mm,debrief,get leaves(){return leaves;}};
+      window.mobileScreens = {show,input,menu,mm,debrief,queues,get leaves(){return leaves;}};
       show('boot');
     `,
   },
@@ -119,6 +123,77 @@ async function reachable(page, selector) {
   });
 }
 
+async function checkCombatControls(page, label, safe) {
+  const controls = await page.$$eval('#touch-controls button,.touch-stick', (elements) =>
+    elements.map((element) => ({
+      name: element.dataset.touch || element.id || 'joystick',
+      rect: element.getBoundingClientRect().toJSON(),
+    })));
+  for (const [index, { name, rect }] of controls.entries()) {
+    check(within(rect, safe), `${label} gameplay: ${name} outside safe region`);
+    for (const next of controls.slice(index + 1)) {
+      const x = Math.min(rect.right, next.rect.right) - Math.max(rect.left, next.rect.left);
+      const y = Math.min(rect.bottom, next.rect.bottom) - Math.max(rect.top, next.rect.top);
+      check(x <= 1 || y <= 1, `${label} gameplay: ${name} overlaps ${next.name}`);
+    }
+  }
+}
+
+async function checkGear(page, label, touch = false) {
+  if (touch) {
+    const initialPlay = await safeRect(page, '#menu-quick-join');
+    check(within(initialPlay.rect, initialPlay.safe), `${label} menu: Play outside first screen`);
+    check(await page.$eval('#menu-quick-join', (e) => e.disabled), `${label} menu: Play must require a map`);
+  }
+  await page.click(".map[data-map='yard']");
+  await page.$eval('.map.on .fetch .what', (e) => { e.textContent = 'Downloading the map · 44.8 of 46.8 MB'; });
+  await settle(page);
+  const problems = await page.evaluate(() => {
+    const errors = [];
+    const fits = (outer, inner) => inner.left >= outer.left - 1 && inner.right <= outer.right + 1 &&
+      inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+    const textBounds = (element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getBoundingClientRect();
+    };
+    for (const stat of document.querySelectorAll('#menu-guns .stat')) {
+      if (!stat.getClientRects().length) continue;
+      const card = stat.closest('.gun').getBoundingClientRect();
+      const label = textBounds(stat.querySelector('.label'));
+      const value = textBounds(stat.querySelector('.value'));
+      const track = stat.querySelector('.track').getBoundingClientRect();
+      if (!fits(card, label) || !fits(card, value) || !fits(card, track) || label.right > value.left ||
+          track.top < Math.max(label.bottom, value.bottom) - 1 || track.width < 1) {
+        errors.push(`weapon stat ${stat.textContent} overlaps or overflows`);
+      }
+    }
+    const selected = document.querySelector('.map.on');
+    const card = selected.getBoundingClientRect();
+    for (const selector of ['.name', '.fetch .what']) {
+      if (!fits(card, textBounds(selected.querySelector(selector)))) errors.push(`map ${selector} clipped`);
+    }
+    for (const name of document.querySelectorAll('#menu-skins .name')) {
+      if (!fits(name.closest('.skin').getBoundingClientRect(), textBounds(name))) errors.push(`outfit ${name.textContent} clipped`);
+    }
+    return errors;
+  });
+  for (const problem of problems) check(false, `${label} gear: ${problem}`);
+  await page.screenshot({path:`${output}/${label}-gear.png`});
+  if (!touch) return;
+  for (const selector of ['#menu-quick-stake', '#menu-quick-join']) {
+    const control = await safeRect(page, selector);
+    check(within(control.rect, control.safe) && control.rect.height >= 44,
+      `${label} gear: ${selector} must be reachable without scrolling`);
+  }
+  await page.$eval('.menu-shell', (e) => { e.scrollTop = e.scrollHeight; });
+  await page.select('#menu-quick-stake', '5');
+  await page.tap('#menu-quick-join');
+  const queued = await page.evaluate(() => mobileScreens.queues.at(-1)?.slice(0, 2));
+  check(queued?.[0] === 'yard' && queued?.[1] === 5, `${label} gear: footer queued a different map or stake`);
+  await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
+}
+
 try {
   for (const [width,height] of sizes) {
     const page=await browser.newPage();
@@ -155,14 +230,27 @@ try {
         check(await page.evaluate((name)=>name==='debrief'?!mobileScreens.debrief.open:mobileScreens.leaves>0,state),`${width} ${state}: button did not activate`);
       }
       if(state==='gameplay'){
-        const controls=await page.$$eval('#touch-controls button,.touch-stick',(elements)=>elements.map(e=>({name:e.dataset.touch||e.id||'joystick',rect:e.getBoundingClientRect().toJSON()})));
         const safe={left:insets.left,right:width-insets.right,top:insets.top,bottom:height-insets.bottom};
-        for(const control of controls)check(within(control.rect,safe),`${width} gameplay: ${control.name} outside safe region`);
+        await checkCombatControls(page, `${width}x${height}`, safe);
       }
       if(state==='menu'){
         for(const selector of ['.brand','#purse',".map[data-map='arena']",".map[data-map='yard']"]){
           const target=await safeRect(page,selector);
           check(within(target.rect,target.safe,false),`${width} menu: ${selector} outside horizontal safe region`);
+        }
+        await checkGear(page, `${width}x${height}`, true);
+        for (const panel of ['wallet','board','profile','fair','settings']) {
+          const tab = await safeRect(page, `#menu-tabs [data-pane='${panel}']`);
+          check(within(tab.rect,tab.safe),`${width} menu: ${panel} tab outside safe region`);
+          await page.tap(`#menu-tabs [data-pane='${panel}']`);
+          const open = await page.$eval('#menu', (e) => ({
+            pane: e.dataset.pane,
+            footer: getComputedStyle(e.querySelector('.menu-quick-play')).display,
+            innerWidth: e.querySelector('.menu-shell').clientWidth,
+            scrollWidth: e.querySelector('.menu-shell').scrollWidth,
+          }));
+          check(open.pane === panel && open.footer === 'none' && open.scrollWidth <= open.innerWidth + 1,
+            `${width} menu: ${panel} panel overflows or its Play footer stays visible`);
         }
       }
       if(state==='editor'){
@@ -175,7 +263,8 @@ try {
         await page.screenshot({path:`${prefix}-editor-expanded.png`});
         const expanded=await safeRect(page,'.touch-editor-bar');
         check(within(expanded.rect,expanded.safe),`${width} expanded editor: toolbar clipped`);
-        for(const selector of ['#touch-sensitivity','#touch-mode-aim','#touch-mode-crouch','#touch-mode-sprint']){
+        for(const selector of ['#touch-sensitivity','#touch-ads-sensitivity','#touch-move-sensitivity',
+          '#touch-mode-aim','#touch-mode-crouch','#touch-mode-sprint']){
           const option=await reachable(page,selector);
           check(option.hits&&within(option.rect,expanded.safe),`${width} expanded editor: ${selector} inaccessible`);
         }
@@ -191,8 +280,13 @@ try {
       }
     }
     // Model browser bars reducing the current page, then an orientation change.
+    const shortHeight = Math.max(240,height-60);
+    await page.setViewport({width,height:shortHeight,isMobile:true,hasTouch:true,deviceScaleFactor:2});
+    await page.evaluate(()=>mobileScreens.show('gameplay'));
+    await settle(page);
+    await checkCombatControls(page, `${width}x${shortHeight}`,
+      {left:insets.left,right:width-insets.right,top:insets.top,bottom:shortHeight-insets.bottom});
     await page.evaluate(()=>mobileScreens.show('matchmaking'));
-    await page.setViewport({width,height:Math.max(240,height-60),isMobile:true,hasTouch:true,deviceScaleFactor:2});
     await settle(page);
     const shrunk=await page.$eval('#matchmaking',(e)=>e.getBoundingClientRect().toJSON());
     check(shrunk.bottom<=Math.max(240,height-60)+1,`${width} toolbar resize: overlay exceeds viewport`);
@@ -205,6 +299,13 @@ try {
     console.log(`${width}x${height}: captured boot, menu, matchmaking, debrief, gameplay, editor and settings`);
     await page.close();
   }
+  const desktop = await browser.newPage();
+  await desktop.setViewport({width: 1024, height: 768});
+  await desktop.goto('http://127.0.0.1:8130/', {waitUntil:'domcontentloaded'});
+  await desktop.waitForFunction(() => window.mobileScreens);
+  await desktop.evaluate(() => mobileScreens.show('menu'));
+  await checkGear(desktop, '1024x768');
+  await desktop.close();
   console.log(JSON.stringify({failures,screenshots:output},null,2));
   if(failures.length)process.exitCode=1;
 } finally {await browser.close();await new Promise((done)=>server.close(done));}

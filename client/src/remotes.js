@@ -494,7 +494,7 @@ export class Remotes {
       .applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()).invert());
     template.traverse((node) => {
       if (!node.isMesh && !node.isSkinnedMesh) return;
-      node.castShadow = true;
+      node.castShadow = [node.material].flat().some((material) => !material.transparent);
       node.receiveShadow = true;
       // Ranger's generated mesh is indexed but omits normals. glTFLoader
       // otherwise forces flat shading on every triangle, giving cloth and
@@ -508,6 +508,10 @@ export class Remotes {
       }
       detailed(node.geometry);
       for (const material of [node.material].flat()) {
+        if (authored && material.transparent) {
+          lightMaterial(material);
+          continue;
+        }
         // Both the FBX conversion and the generated operators arrive with
         // one material for cloth, skin and armor. Their all-metal defaults
         // make faces and sleeves look like polished metal under map lights.

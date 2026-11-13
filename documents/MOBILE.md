@@ -9,17 +9,20 @@ to move forward. Tap Sprint to run forward in the direction the camera faces;
 tap again to stop. Moving the stick overrides automatic forward movement.
 Backing up, aiming, firing, grenades and crouching stop sprint. The authoritative
 server's existing movement speeds and sprint restrictions are unchanged.
-ADS is a toggle. Fire supports dragging to look while held. Short jump/reload
-taps survive until the next input sample. Blur and rotation clear held touch
-actions. The existing layout editor still saves per-device positions and sizes.
+ADS, crouch and sprint support hold or toggle. Drag the screen or a combat
+button to turn the camera. The first finger to drag controls the view until
+it lifts. Short fire, jump and reload taps survive until the next input
+sample. Blur and rotation clear held touch actions. The layout editor saves
+positions and sizes on the current device.
 
 Phone controls use safe areas and the visual viewport. The renderer and camera
 resize from the canvas bounds when the browser toolbars or orientation change.
 Health is small at top left; weapon/ammo is at bottom centre. Normal mobile play
 hides diagnostics. Add `?debug=1` to show them for troubleshooting.
-The low mobile preset renders at one CSS pixel per canvas pixel, rather than
-the old 0.75 scale. This improves sharpness but increases GPU pixel work; real
-device frame rate and thermals must be checked before raising this further.
+Low, Medium, High and Ultra cap mobile resolution at 1.15×, 1.4×, 1.65× and
+2× the viewport, respectively, subject to the screen and preset pixel budgets.
+Canvas antialiasing covers the direct render path. Mobile Ultra uses an HDR
+bloom pass when the GPU supports its multisampling budget.
 
 ## Installation
 
@@ -83,14 +86,16 @@ On a physical Android phone and iPhone:
 
 ## Phone layout, audio and Yard follow-up
 
-The control editor's **Sensitivity & button behavior** panel saves a separate
-touch multiplier and Hold or Toggle for Aim, Crouch and Sprint. The default
-swipe sensitivity is 115% of the previous speed. Hold Grenade with the right
-thumb, drag to aim and release to throw. The left thumb can steer throughout.
+The control editor's **Sensitivity & button behavior** panel saves separate
+Camera, Aim Down Sights and Move Stick settings. At the default Camera setting,
+a horizontal swipe across 15% of the viewport turns the view about 62 degrees.
+Hold Grenade with the right thumb, drag to aim and release to throw. The left
+thumb can steer throughout.
 
 The lobby, editor and gameplay controls apply the device safe insets plus an
 inward margin. The canvas still fills the viewport. The matchmaking and results
-cards have scrollable details and pinned action buttons. The phone splash uses
+cards have scrollable details and pinned action buttons. Play and the entry fee
+stay visible on the mobile lobby screen while the loadout scrolls. The phone splash uses
 a fitted logo over the scenic artwork. Rotation no longer feeds a measured
 width back into the root layout width.
 
@@ -100,10 +105,11 @@ that support it and respects the in-game volume. Test sound on a physical iPhone
 and Android device, including Home Screen mode, the Ring/Silent switch, and
 leaving and returning to the app.
 
-Yard uses brighter concrete and cargo paint with a higher indirect light floor
-across graphics presets. First match preparation overlaps the floor scan and
-wall texture loads. Its map prefetch is about 7.6 MB smaller in source asset
-bytes. Ranger and Ghost models load when a selected or match skin uses them.
+Yard uses baked skylight and bounced fill with a softer direct sun. Its concrete
+and painted metal use their scan normals without synthetic grit. First match
+preparation overlaps the floor scan and wall texture loads. Map prefetch is about
+7.6 MB smaller in source asset bytes than before the mobile loading pass. The
+four operator models load when a selected or match skin uses them.
 Actual time saved depends on which skins are present, the network, and the GPU.
 
 After building, run `node client/mobile-screens-smoke.mjs` for the phone screen

@@ -100,8 +100,39 @@ export const PHOTO = {
 
 
 const cache = new Map();
+const filteredTextures = new Set();
 
 let ktx2 = null;
+let maxAnisotropy = 1;
+let photoAnisotropy = 4;
+let pendingFilters = [];
+let filterFrame = 0;
+
+export function applyPhotoFiltering(texture) {
+  if (!filteredTextures.has(texture)) {
+    filteredTextures.add(texture);
+    texture.addEventListener('dispose', () => filteredTextures.delete(texture));
+  }
+  const anisotropy = Math.min(maxAnisotropy, photoAnisotropy);
+  if (texture.anisotropy === anisotropy) return;
+  texture.anisotropy = anisotropy;
+  texture.needsUpdate = true;
+}
+
+function refreshPhotoFiltering() {
+  const texture = pendingFilters.pop();
+  if (filteredTextures.has(texture)) applyPhotoFiltering(texture);
+  filterFrame = pendingFilters.length ? requestAnimationFrame(refreshPhotoFiltering) : 0;
+}
+
+export function setPhotoAnisotropy(value) {
+  if (Math.min(value, maxAnisotropy) === Math.min(photoAnisotropy, maxAnisotropy)) return;
+  photoAnisotropy = value;
+  // Changing a sampler setting can trigger a fresh texture upload. Spread
+  // these over frames when a player switches quality with a map loaded.
+  pendingFilters = [...filteredTextures];
+  if (pendingFilters.length && !filterFrame) filterFrame = requestAnimationFrame(refreshPhotoFiltering);
+}
 
 /**
  * Readies the loader. Called once with the renderer, before any photograph
@@ -109,6 +140,7 @@ let ktx2 = null;
  * format this GPU takes (BC7 on a desktop, ASTC or ETC2 on a phone).
  */
 export function initPhotos(renderer) {
+  maxAnisotropy = renderer.capabilities.getMaxAnisotropy() || 1;
   const manager = new THREE.LoadingManager();
   // The transcoder fetches its two files by plain name. They are published,
   // like everything else, under names hashed from their contents.
@@ -128,8 +160,8 @@ async function loadCompressed(url, colorSpace) {
   const texture = await ktx2.loadAsync(url);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.anisotropy = 8;
   texture.colorSpace = colorSpace;
+  applyPhotoFiltering(texture);
   return texture;
 }
 
@@ -140,8 +172,8 @@ function loadTexture(url, srgb) {
       (texture) => {
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
-        texture.anisotropy = 8;
         texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        applyPhotoFiltering(texture);
         resolve(texture);
       },
       undefined,
@@ -430,12 +462,9 @@ export const PHOTO_ROUGHNESS = `
 `;
 
 /**
- * Replaces the flat face normal with the photograph's, in view space - and,
- * up close on a surface with no pattern to keep, adds a grain finer than
- * any photograph holds: a millimetre of grit a few millimetres across, so a
- * wall a player is pressed against still has tooth when the photograph's
- * own texels are the size of a fingernail. Bump mapping without tangents
- * (Mikkelsen, 2010): the height's change across the pixel tilts the normal.
+ * Replaces the flat face normal with the mipmapped photograph's. Yard's
+ * finished surfaces use the scan alone; synthetic millimetre grit was
+ * aliasing into dots as the camera moved across walls and stairs.
  */
 export const PHOTO_NORMAL = `
   #include <normal_fragment_maps>
@@ -448,6 +477,7 @@ export const PHOTO_NORMAL = `
     float near = 1.0 - smoothstep(35.0, 90.0, distanceToEye);
     vec3 bumped = normalize(mix(faceWorld, photoNormalOut, near));
 
+    #ifndef BAKED_STATIC_SUN
     // The grain, laid along the face like the photograph, and taken with its
     // rate of change before anything branches.
     vec3 axis = abs(faceWorld);
@@ -472,6 +502,7 @@ export const PHOTO_NORMAL = `
       vec3 gradient = sign(det) * ((dh.x / lx) * r1 + (dh.y / ly) * r2) * 0.0007 * grit;
       bumped = normalize(abs(det) * bumped - gradient);
     }
+    #endif
     normal = normalize((viewMatrix * vec4(bumped, 0.0)).xyz);
   }
 `;

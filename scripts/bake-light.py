@@ -79,8 +79,6 @@ import sys
 import time
 
 import numpy as np
-from embreex import rtcore_scene as rtcs
-from embreex.mesh_construction import TriangleMesh
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -365,6 +363,9 @@ def init_trace_worker(state):
 
 def _scene():
     if 'scene' not in G:
+        # Cached light transport can be relit without the tracing dependency.
+        from embreex import rtcore_scene as rtcs
+        from embreex.mesh_construction import TriangleMesh
         G['scene'] = rtcs.EmbreeScene()
         TriangleMesh(G['scene'], G['triangles'])
     return G['scene']

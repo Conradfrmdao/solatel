@@ -53,12 +53,16 @@ export const GRADE = {
  */
 export function buildPost(renderer, scene, camera) {
   try {
+    const gl = renderer.getContext();
+    if (!renderer.extensions.has('EXT_color_buffer_float')
+        && !renderer.extensions.has('EXT_color_buffer_half_float')) return null;
+    // MAX_SAMPLES also includes LDR formats. Ask for the sample counts this
+    // GPU actually accepts on the HDR color attachment used by the composer.
+    const sampleCounts = [...gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA16F, gl.SAMPLES)];
+    if (!sampleCounts.some((count) => count >= 2)) return null;
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const target = new THREE.WebGLRenderTarget(width, height, {
-      type: THREE.HalfFloatType,
-      samples: 4,
-    });
+    const target = new THREE.WebGLRenderTarget(width, height, { type: THREE.HalfFloatType });
     const composer = new EffectComposer(renderer, target);
     composer.addPass(new RenderPass(scene, camera));
     const ao = new GTAOPass(scene, camera, width, height);
@@ -86,8 +90,18 @@ export function buildPost(renderer, scene, camera) {
     // Tonemapping and colour space are applied once, here: a composer
     // bypasses the renderer's own output stage.
     composer.addPass(new OutputPass());
-    composer.addPass(new ShaderPass(GRADE));
-    return { composer, aoPass: ao, bloomPass: bloom };
+    const grade = new ShaderPass(GRADE);
+    composer.addPass(grade);
+    function setSamples(requested) {
+      const samples = Math.max(0, ...sampleCounts.filter((count) => count >= 2 && count <= requested));
+      for (const buffer of [composer.renderTarget1, composer.renderTarget2]) {
+        if (buffer.samples === samples) continue;
+        buffer.samples = samples;
+        buffer.dispose();
+      }
+      return samples > 0;
+    }
+    return { composer, aoPass: ao, bloomPass: bloom, gradePass: grade, setSamples };
   } catch (err) {
     console.warn('post-processing unavailable:', err);
     return null;

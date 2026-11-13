@@ -2,6 +2,8 @@ const KEY = 'solatel.touchOptions.v1';
 
 export const TOUCH_OPTION_DEFAULTS = Object.freeze({
   sensitivity: 115,
+  adsSensitivity: 90,
+  moveSensitivity: 125,
   aim: 'toggle',
   crouch: 'toggle',
   sprint: 'toggle',
@@ -9,12 +11,13 @@ export const TOUCH_OPTION_DEFAULTS = Object.freeze({
 
 export function normalizeTouchOptions(value) {
   const source = value && typeof value === 'object' ? value : {};
-  const sensitivity = Number(source.sensitivity);
-  const options = {
-    sensitivity: Number.isFinite(sensitivity) && sensitivity > 0
-      ? Math.round(Math.max(50, Math.min(250, sensitivity)))
-      : TOUCH_OPTION_DEFAULTS.sensitivity,
-  };
+  const options = {};
+  for (const name of ['sensitivity', 'adsSensitivity', 'moveSensitivity']) {
+    const value = Number(source[name]);
+    options[name] = Number.isFinite(value) && value > 0
+      ? Math.round(Math.max(50, Math.min(250, value)))
+      : TOUCH_OPTION_DEFAULTS[name];
+  }
   for (const action of ['aim', 'crouch', 'sprint']) {
     options[action] = source[action] === 'hold' || source[action] === 'toggle'
       ? source[action] : TOUCH_OPTION_DEFAULTS[action];
