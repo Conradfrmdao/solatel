@@ -1420,7 +1420,11 @@ export class World {
     // A small minimum bounce for covered routes. Most fill comes from the
     // rebaked sky and the surfaces that can actually see it.
     const light = mapName === 'yard' && bakedLight
-      ? { ...bakedLight, lightVolumeFloor: bakedLight.lightVolumeFloor.clone().multiplyScalar(1.35) }
+      ? { ...bakedLight,
+          // Lift diffuse skylight/bounce on walls, cover and operators while
+          // preserving the direct sun, exposure, reflections and shadow shape.
+          lightVolumeBrightest: bakedLight.lightVolumeBrightest * 1.22,
+          lightVolumeFloor: bakedLight.lightVolumeFloor.clone().multiplyScalar(1.7) }
       : bakedLight;
     // Kept with the map, to be put back up when it is shown again.
     arena.userData.light = light;

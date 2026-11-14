@@ -190,6 +190,27 @@ export class Link {
     this.inflight = new Map();
     this.nextPingAt = 0;
     this.reconnectAt = 0;
+    this.lastReceivedAt = performance.now();
+    this.openedAt = this.lastReceivedAt;
+    this.hiddenAt = null;
+    // Mobile browsers can freeze a TCP connection without dispatching close.
+    // Reconnect through the existing resume token instead of trusting OPEN.
+    const resume = () => {
+      if (document.hidden) {
+        this.hiddenAt ??= performance.now();
+        return;
+      }
+      if (this.hiddenAt === null) return;
+      const elapsed = performance.now() - this.hiddenAt;
+      this.hiddenAt = null;
+      if (elapsed > 1500 && !this.parked) this.recover('resuming connection', performance.now());
+    };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('pagehide', () => { this.hiddenAt ??= performance.now(); });
+    window.addEventListener('pageshow', resume);
+    window.addEventListener('online', () => {
+      if (!this.parked && this.state === LinkState.Down) this.reconnectAt = 0;
+    });
 
     // Settles when the server has accepted this client and said which map is
     // being played. Boot waits on it, because until the handshake lands there
@@ -210,6 +231,8 @@ export class Link {
   }
 
   open(now) {
+    this.openedAt = now;
+    this.lastReceivedAt = now;
     this.sessionId = null;
     this.playerId = null;
     this.rttMs = null;
@@ -228,6 +251,7 @@ export class Link {
     this.note = 'connecting';
 
     socket.addEventListener('open', () => {
+      if (socket !== this.socket) return;
       this.state = LinkState.Handshaking;
       this.note = 'socket open, sending hello';
       this.send({
@@ -253,15 +277,18 @@ export class Link {
     });
 
     socket.addEventListener('message', (event) => {
+      if (socket !== this.socket) return;
       if (typeof event.data !== 'string') return;
       this.handleServerMessage(event.data, performance.now());
     });
 
     socket.addEventListener('error', () => {
+      if (socket !== this.socket) return;
       this.dropLink('link error', performance.now());
     });
 
     socket.addEventListener('close', () => {
+      if (socket !== this.socket) return;
       // A close during handshaking is usually a rejection the server sent
       // immediately before hanging up, so keep whatever note we already have.
       const why = this.note.startsWith('rejected')
@@ -311,7 +338,19 @@ export class Link {
 
   send(message) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    // Never queue seconds of obsolete movement behind a stalled uplink.
+    if (message.t === 'inputs' && this.socket.bufferedAmount > 64 * 1024) {
+      this.recover('connection stalled', performance.now());
+      return;
+    }
     this.socket.send(JSON.stringify(message));
+  }
+
+  recover(why, now) {
+    if (this.parked) return;
+    this.inbox.length = 0;
+    this.dropLink(why, now);
+    this.reconnectAt = now;
   }
 
   handleServerMessage(raw, now) {
@@ -323,6 +362,7 @@ export class Link {
       this.note = 'undecodable server message';
       return;
     }
+    this.lastReceivedAt = now;
 
     switch (message.t) {
       case 'welcome': {
@@ -408,6 +448,11 @@ export class Link {
 
   /** Called once per frame, before anything reads `inbox`. */
   pump(now) {
+    if (document.hidden) return;
+    if ((this.state === LinkState.Ready && now - this.lastReceivedAt > 6000) ||
+        ((this.state === LinkState.Connecting || this.state === LinkState.Handshaking) && now - this.openedAt > 12000)) {
+      this.recover('connection timed out', now);
+    }
     if (this.state === LinkState.Ready && now >= this.nextPingAt) {
       const seq = this.nextPingSeq;
       this.nextPingSeq = (this.nextPingSeq + 1) >>> 0;
@@ -427,7 +472,15 @@ export class Link {
     if (this.inbox.length === 0) return EMPTY;
     const messages = this.inbox;
     this.inbox = [];
-    return messages;
+    // A slow frame can collect many complete world states. Replaying the
+    // same prediction history for every obsolete state makes the next frame
+    // slow too. Keep the newest state per match, with every reliable event
+    // still in its original order (hits, kills, payouts and transitions).
+    const latest = new Map();
+    for (let i = 0; i < messages.length; i += 1) {
+      if (messages[i].t === 'snapshot') latest.set(messages[i].match_id, i);
+    }
+    return messages.filter((message, index) => message.t !== 'snapshot' || latest.get(message.match_id) === index);
   }
 }
 

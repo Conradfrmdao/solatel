@@ -113,7 +113,8 @@ try {
  await page.click('#pwa-add');assert.equal(await page.$eval('#pwa-guide',e=>e.hidden),false);assert.ok(await page.$eval('#pwa-guide',e=>e.textContent.includes('Open as Web App')));await page.click('#pwa-dismiss');await page.reload();assert.equal(await page.$eval('#pwa-install',e=>e.hidden),true);
  await page.evaluate(()=>document.dispatchEvent(new Event('solatel:install')));assert.equal(await page.$eval('#pwa-install',e=>e.hidden),false);
  await page.evaluate(()=>{window.promptCalls=0;const e=new Event('beforeinstallprompt',{cancelable:true});e.prompt=async()=>{window.promptCalls++};e.userChoice=Promise.resolve({outcome:'dismissed'});window.dispatchEvent(e);});
- await page.click('#pwa-add');assert.equal(await page.evaluate(()=>window.promptCalls),1);assert.equal(await page.$eval('#pwa-install',e=>e.hidden),true);
+ await page.click('#pwa-add');assert.equal(await page.evaluate(()=>window.promptCalls),1);assert.equal(await page.$eval('#pwa-install',e=>e.hidden),false);assert.ok(await page.$eval('#pwa-note',e=>e.textContent.includes('continue in your browser')));
+ await page.click('#pwa-dismiss');assert.equal(await page.$eval('#pwa-install',e=>e.hidden),true);
  await page.evaluate(()=>document.dispatchEvent(new Event('solatel:install')));await page.evaluate(()=>document.body.classList.add('running'));await page.waitForFunction(()=>document.querySelector('#pwa-install').hidden);
  await page.evaluate(()=>{document.body.classList.remove('running');window.dispatchEvent(new Event('appinstalled'));document.dispatchEvent(new Event('solatel:install'));});assert.equal(await page.$eval('#pwa-install',e=>e.hidden),true);
  console.log('PWA manual guide, session dismissal, native prompt invocation, confirmed installation, settings reopen and match suppression passed');

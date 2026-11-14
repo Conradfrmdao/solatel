@@ -38,16 +38,18 @@ pub const PROTOCOL_VERSION: u16 = 25;
 /// clock of the game; the client renders between ticks.
 pub const TICK_HZ: u32 = 64;
 
-/// How many ways a soldier can be dressed: 0 is the soldier as he came, and
-/// 1 to 10 are Solatel's own (`skins.js` draws them). Cosmetic and nothing
-/// else - a skin decides nothing the server decides - so the server only
-/// keeps the number honest and passes it on.
-pub const SKINS: u8 = 11;
+/// Four authored operators. Stable IDs preserve existing account selections.
+pub const SKINS: u8 = 4;
+pub const OPERATOR_SKINS: [u8; 4] = [5, 6, 7, 8];
 
 /// A skin a client asked for, as the game allows it: one there is, or the
-/// soldier as he came.
+/// default Ranger. Retired palette-only outfits migrate here as well.
 pub fn skin(asked: u8) -> u8 {
-    if asked < SKINS { asked } else { 0 }
+    if OPERATOR_SKINS.contains(&asked) {
+        asked
+    } else {
+        5
+    }
 }
 
 /// Length of one server tick, in seconds.
@@ -1175,9 +1177,13 @@ mod tests {
             panic!("a queue without a skin did not decode");
         };
         assert_eq!(skin, 0);
-        assert_eq!(super::skin(SKINS - 1), SKINS - 1);
-        assert_eq!(super::skin(SKINS), 0);
-        assert_eq!(super::skin(255), 0);
+        for id in super::OPERATOR_SKINS {
+            assert_eq!(super::skin(id), id);
+        }
+        for id in [0, 1, 2, 3, 4, 9, 10, 255] {
+            assert_eq!(super::skin(id), 5);
+        }
+        assert_eq!(super::skin(255), 5);
 
         let plain = ScoreEntry {
             id: PlayerId::new(),

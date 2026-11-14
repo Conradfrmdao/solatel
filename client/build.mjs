@@ -199,6 +199,10 @@ async function publishFiles() {
   // publish its world, baked light or scatter data to every browser build.
   const unpublished = new Set([
     'maps/facility.glb', 'light/facility.bin', 'scatter/facility.bin',
+    // Historical source rig is kept for reproducible arm extraction only.
+    // No retired full-body soldier or palette portrait ships to players.
+    'characters/soldier.glb',
+    ...[0, 1, 2, 3, 4, 9, 10].map(id => `menu/skins/${id}.webp`),
   ]);
   for await (const file of walk(assets)) {
     // URLs, so `/` whatever this machine's separator is.

@@ -1830,6 +1830,14 @@
 
       #touch-controls { display: none; }
       #touch-editor { display: none; }
+      #match-recovery {
+        position: fixed; z-index: 115; left: 50%; top: 20%; transform: translateX(-50%);
+        width: min(340px, 80vw); padding: 14px 18px; border: 1px solid #536070;
+        border-radius: 8px; background: #101824f5; color: #fff; text-align: center;
+        font: 600 15px/1.4 var(--read);
+      }
+      #match-recovery[hidden], #match-recovery button[hidden] { display: none; }
+      #match-recovery button { display: block; margin: 10px auto 0; min-height: 42px; padding: 8px 18px; background: var(--amber); border: 0; border-radius: 6px; font: 800 15px var(--shout); }
       #mobile-landscape { display: none; }
       .mobile-only { display: none !important; }
       body.installed-app .pwa-settings { display: none !important; }

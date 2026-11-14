@@ -22,6 +22,7 @@ import { initViewport } from './viewport.js';
 // turning while moving fight itself.
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildPost } from './post.js';
 import { PRESETS, Quality, renderRatio } from './quality.js';
 import { Impacts } from './impacts.js';
@@ -155,6 +156,19 @@ async function boot() {
     antialias: true,
     powerPreference: 'high-performance',
   });
+  let graphicsLost = false;
+  let graphicsRestored = false;
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    graphicsLost = true;
+    document.dispatchEvent(new Event('solatel:cancel-touch'));
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    graphicsLost = false;
+    // Three restores GPU resources; invalidate the readiness barrier so the
+    // map and weapon are warmed again before touch gameplay resumes.
+    graphicsRestored = true;
+  });
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -213,7 +227,8 @@ async function boot() {
   // soldier is put together after them, because everybody is drawn holding
   // one, but its download need not wait.
   say('loading the weapons…');
-  const soldierUrl = asset('assets/characters/soldier.glb');
+  const soldierUrl = asset('assets/characters/ranger.glb');
+  const armsLoading = new GLTFLoader().loadAsync(asset('assets/characters/firstperson-arms.glb'));
   const soldierFetched = fetch(soldierUrl).then((r) => r.arrayBuffer()).catch(() => null);
   await loadGuns();
   await viewmodel.load();
@@ -223,11 +238,15 @@ async function boot() {
   say('loading the soldier…');
   await soldierFetched;
   const soldier = await remotes.load(soldierUrl);
-  // And the same soldier's arms in first person, in the same pose.
-  viewmodel.setArms(soldier, remotes.clips.aim);
+  // Independent first-person arms preserve the grip without shipping the
+  // retired third-person soldier body.
+  const arms = await armsLoading;
+  const armPose = THREE.AnimationUtils.subclip(THREE.AnimationClip.findByName(arms.animations, 'fire'), 'aim', 0, 1, 30);
+  viewmodel.setArms(arms.scene, armPose);
   // Fetch authored models only when a selected or actual match skin uses
-  // them. Default-soldier matches must not wait for 13 MB of unused operators.
+  // them. Ranger matches must not wait for unused operator downloads.
   const operatorLoading = new Map();
+  operatorLoading.set(5, Promise.resolve(soldier));
   const operatorFiles = new Map([[5, 'ranger'], [6, 'breacher'], [7, 'engineer'], [8, 'ghost']]);
   const ensureOperator = (skin) => {
     const name = operatorFiles.get(skin);
@@ -235,7 +254,7 @@ async function boot() {
     if (!operatorLoading.has(skin)) operatorLoading.set(skin,
       remotes.loadOperator(skin, asset(`assets/characters/${name}.glb`))
         .then((model) => { remotes.refreshProfiles(); return model; })
-        .catch((error) => console.warn(`${name} model unavailable; using soldier fallback`, error)));
+        .catch((error) => { operatorLoading.delete(skin); console.warn(`${name} model unavailable; using Ranger temporarily`, error); }));
     return operatorLoading.get(skin);
   };
   if (options.has('portraits')) await Promise.all([...operatorFiles.keys()].map(ensureOperator));
@@ -346,6 +365,8 @@ async function boot() {
       local.queue(mapName, dollars, loadout, skin);
       // The map's files, into the cache while the line forms.
       prefetchMap(mapName);
+      // Decode, upload and compile while the table forms, not after it starts.
+      warmMatch(mapName, loadout, skin).catch(error => console.warn('map warm-up failed', error));
     },
     () => local.leaveQueue(),
   );
@@ -409,7 +430,44 @@ async function boot() {
   let preparedFor = null;
   /** Whether the map is in and being compiled, for the card to say so. */
   let preparing = false;
+  let entryError = false;
+  const recovery = document.createElement('div');
+  recovery.id = 'match-recovery';
+  recovery.hidden = true;
+  recovery.innerHTML = '<span role="status"></span><button type="button">RECONNECT</button>';
+  recovery.querySelector('button').addEventListener('click', () => window.location.reload());
+  document.body.append(recovery);
+  let warmJob = null;
+  let warmKey = null;
+  let warmChain = Promise.resolve();
+  const loadingTimings = [];
+  function warmMatch(mapName, loadout, skin) {
+    const key = JSON.stringify([mapName, loadout?.primary, loadout?.optic, skin ?? 5]);
+    if (warmKey === key && warmJob) return warmJob;
+    warmKey = key;
+    warmJob = warmChain.catch(() => {}).then(async () => {
+      const started = performance.now();
+      await prefetchMap(mapName)?.ready;
+      if (!selectMap(mapName)) throw new Error(`unknown map ${mapName}`);
+      viewmodel.setLoadout(loadout);
+      viewmodel.setSkin(skin ?? 5);
+      armedWith = loadout;
+      await Promise.all([world.load(mapName), ensureOperator(skin)]);
+      remotes.refreshProfiles();
+      viewmodel.setEnvironment(scene.environment, scene.environmentIntensity);
+      camera.far = Math.hypot(SIM.arenaHalfX, SIM.arenaHalfZ) * 2.2;
+      camera.updateProjectionMatrix();
+      const loaded = performance.now();
+      preparing = true;
+      try { await prepareToDraw(); } finally { preparing = false; }
+      loadingTimings.push({ map: mapName, loadMs: loaded - started, prepareMs: performance.now() - loaded });
+    });
+    warmChain = warmJob;
+    warmJob.catch(() => { if (warmKey === key) warmKey = null; });
+    return warmJob;
+  }
   async function enterMatch(mapName, matchId) {
+    entryError = false;
     if (!selectMap(mapName)) {
       link.dropLink(`this build has no map called "${mapName}". Reload the page.`, 0);
       return;
@@ -419,10 +477,7 @@ async function boot() {
     document.body.classList.remove('running');
     // The guns this life is played with, in hand before the first frame,
     // and the sleeves of the skin it is played in.
-    viewmodel.setLoadout(local.loadout);
-    viewmodel.setSkin(local.skin ?? 0);
-    armedWith = local.loadout;
-    await world.load(mapName);
+    await warmMatch(mapName, local.loadout, local.skin);
     // Only models worn in this match join the first-frame readiness barrier.
     await Promise.all([local.skin, ...remotes.skins.values()].map(ensureOperator).filter(Boolean));
     remotes.refreshProfiles();
@@ -437,12 +492,6 @@ async function boot() {
     camera.far = Math.hypot(SIM.arenaHalfX, SIM.arenaHalfZ) * 2.2;
     camera.updateProjectionMatrix();
 
-    preparing = true;
-    try {
-      await prepareToDraw();
-    } finally {
-      preparing = false;
-    }
     preparedFor = matchId;
     // The server holds the countdown until everybody has said this.
     link.send({ t: 'loaded', match_id: matchId });
@@ -468,8 +517,10 @@ async function boot() {
     world.blasts.prime();
     for (const object of extras) scene.add(object);
     try {
-      await renderer.compileAsync(scene, camera);
-      await renderer.compileAsync(viewmodel.scene, viewmodel.camera);
+      await Promise.all([
+        renderer.compileAsync(scene, camera),
+        renderer.compileAsync(viewmodel.scene, viewmodel.camera),
+      ]);
       renderer.clear();
       renderWorld();
       renderer.clearDepth();
@@ -534,6 +585,8 @@ async function boot() {
           updateMs: cpu.update,
           drawMs: cpu.draw,
           players: remotes.players.size,
+          loadingTimings,
+          snapshotAgeMs: remotes.history.length ? performance.now() - remotes.lastReceivedAt : null,
         };
       },
     };
@@ -671,6 +724,12 @@ async function boot() {
 
   function frame(now) {
     requestAnimationFrame(frame);
+    if (graphicsRestored) {
+      graphicsRestored = false;
+      warmKey = null;
+      preparedFor = null;
+      enteredMatch = null;
+    }
     const frameStart = performance.now();
 
     const dt = Math.min((now - previous) / 1000, 0.25);
@@ -772,6 +831,9 @@ async function boot() {
       ) {
         menu.walletEvent(message);
       } else if (message.t === 'welcome') {
+        remotes.resetHistory();
+        accumulator = 0;
+        if (preparedFor && preparedFor === local.matchId) link.send({ t: 'loaded', match_id: preparedFor });
         // A reconnection. The server may have restarted with a different
         // wallet, and a new account may have been made.
         menu.setPlayer(link.playerId, link.inviteCode);
@@ -835,6 +897,14 @@ async function boot() {
     }
 
     // 2. Aim, before the ticks that will carry it.
+    const recovering = Boolean(local.inMatch && (graphicsLost || !link.isReady || entryError));
+    recovery.hidden = !recovering;
+    if (recovering) {
+      recovery.querySelector('span').textContent = graphicsLost ? 'Restoring graphics…'
+        : entryError ? 'Could not prepare the match.' : link.parked ? 'This player is active on another device.' : 'Reconnecting to your match…';
+      recovery.querySelector('button').hidden = link.parked || (!entryError && !graphicsLost);
+    }
+    if (graphicsLost) return;
     input.checkForSilence(now);
     input.updateLook();
 
@@ -856,7 +926,7 @@ async function boot() {
     // The guns this life carries, and which is in hand: a change is drawn
     // as the old one going down and the new one coming up, over the time
     // the server makes the player wait to fire it.
-    if (local.loadout !== armedWith) {
+    if (local.matchId === preparedFor && local.matchId && local.loadout !== armedWith) {
       viewmodel.setLoadout(local.loadout);
       armedWith = local.loadout;
     }
@@ -887,7 +957,7 @@ async function boot() {
     viewmodel.setGrenadeHeld(local.grenadeHeld);
     if (local.grenadeHeld) {
       if (!world._aimPreviewAt || performance.now() - world._aimPreviewAt > 100) {
-        world.setGrenadeAim(local.predictor.grenade_path().slice(0, 3 * 65));
+        world.setGrenadeAim(local.predictor.grenade_preview_path());
         world._aimPreviewAt = performance.now();
       }
     } else if (world._grenadeAim?.visible) world.setGrenadeAim(null);
@@ -935,7 +1005,12 @@ async function boot() {
       // Loading a map compiles shaders for seconds; none of that is a
       // judgement on the machine.
       quality.reset(now);
-      entering = enterMatch(local.mapName, local.matchId).finally(() => {
+      entering = enterMatch(local.mapName, local.matchId).catch((error) => {
+        console.error('could not prepare match', error);
+        // Keep the message actionable instead of leaving a failed promise
+        // behind an endless loading card. Reload retains the resume token.
+        entryError = true;
+      }).finally(() => {
         entering = null;
       });
     }

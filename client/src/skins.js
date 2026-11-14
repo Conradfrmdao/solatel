@@ -1,9 +1,7 @@
 // Skins: how a soldier is dressed.
 //
-// Eleven of them. The first is the soldier as he came - Mixamo's grey digital
-// camouflage. The other ten are Solatel's own: patterns drawn in the shader,
-// in colours of our own, on the soldier's cloth, with his gear (plate carrier,
-// helmet, pads, straps, boots) tinted to go with them.
+// Four authored operators. Stable IDs preserve saved loadouts and replays.
+// The palette shader below now colors only the shared first-person sleeves.
 //
 // # How a pattern is drawn
 //
@@ -55,27 +53,6 @@ const HEX = 6;
  * `palette`.
  */
 export const SKINS = [
-  { id: 0, name: 'Issue', blurb: 'The soldier as he came: grey digital camouflage.' },
-  {
-    id: 1, name: 'Sunstrike', blurb: 'Sand and burnt orange, blotched like dry ground at noon.',
-    pattern: BLOTS, colours: ['#b49a6e', '#93723f', '#8a4a26', '#4a3a2a'],
-    scale: 4.2, gear: '#7a6648',
-  },
-  {
-    id: 2, name: 'Tidewater', blurb: 'Navy, steel and sea-glass, cut into squares.',
-    pattern: PIXELS, colours: ['#4c5d72', '#6c7f92', '#2f3e52', '#43666b'],
-    scale: 3.4, gear: '#2a3340',
-  },
-  {
-    id: 3, name: 'Ember', blurb: 'Charcoal and ash, with stripes of a fire banked down.',
-    pattern: STRIPES, colours: ['#4a4643', '#635d57', '#7e2c1f', '#2f2c2a'],
-    scale: 4.2, gear: '#2a2726',
-  },
-  {
-    id: 4, name: 'Reef', blurb: 'Teal water over sand and coral.',
-    pattern: BLOTS, colours: ['#3f6e69', '#a39270', '#a05d4b', '#2f4a40'],
-    scale: 3.6, gear: '#4b5244',
-  },
   {
     id: 5, name: 'Ranger', blurb: 'Olive field uniform, patrol cap, headset and light carrier.',
     pattern: BLOTS, colours: ['#5d604c', '#616350', '#565b47', '#5a5d49'],
@@ -96,16 +73,6 @@ export const SKINS = [
     pattern: BLOTS, colours: ['#55565a', '#606165', '#4b4d52', '#56585d'],
     scale: 3.4, gear: '#2c2a33',
   },
-  {
-    id: 9, name: 'Basalt', blurb: 'Black rock and grey ash with the glow still in the cracks.',
-    pattern: MOTTLE, colours: ['#55524f', '#75716c', '#a3501f', '#3a3836'],
-    scale: 3.4, gear: '#2d2b2a',
-  },
-  {
-    id: 10, name: 'Jade', blurb: 'Green stone cut into a honeycomb.',
-    pattern: HEX, colours: ['#507a66', '#3a5c4c', '#6f977f', '#2e4a3c'],
-    scale: 9.0, gear: '#34413a',
-  },
 ];
 
 const SKIN_KEY = 'solatel.skin';
@@ -114,11 +81,11 @@ const SKIN_KEY = 'solatel.skin';
 export function storedSkin() {
   try {
     const value = Number(window.localStorage.getItem(SKIN_KEY));
-    if (Number.isInteger(value) && value >= 0 && value < SKINS.length) return value;
+    if (SKINS.some(skin => skin.id === value)) return value;
   } catch {
     /* private browsing */
   }
-  return 0;
+  return 5;
 }
 
 export function storeSkin(id) {
@@ -161,7 +128,7 @@ const ON_SCREEN = 1.18;
 
 /** How bright a skin's cloth averages, as drawn: for its test. */
 export function clothBrightness(id) {
-  const skin = SKINS[id];
+  const skin = SKINS.find(skin => skin.id === id);
   if (!skin?.colours) return CLOTH_MEAN;
   return meanBrightness(skin, palette(skin));
 }
@@ -454,7 +421,7 @@ const UNBAKED = new WeakMap();
  * their hands instead (`viewmodel.setLight`).
  */
 export function dressed(material, id, { unit, cloth, baked = true }) {
-  const skin = SKINS[id];
+  const skin = SKINS.find(skin => skin.id === id);
   if (!skin?.pattern || !mask) {
     if (baked) return material;
     if (!UNBAKED.has(material)) UNBAKED.set(material, material.clone());

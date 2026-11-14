@@ -268,6 +268,12 @@ that list too.
 
 ## Daybreak Terminal additions — October 16, 2026
 
+The November 14 roster release excludes the retired full-body `soldier.glb`
+from browser assets. `firstperson-arms.glb` is a derivative of that existing
+Mixamo soldier: arm triangles, their rig, textures and gripping animation
+are extracted with `scripts/extract-firstperson-arms.py`. Existing Mixamo
+credits still apply. The source body is kept for reproducible asset builds.
+
 The new indoor Yard architecture, freight layout and operator equipment are
 original Solatel geometry. PBR crates, lamps, tool chests, plants and the
 concrete floor scan are CC0 Poly Haven assets; individual sources and the

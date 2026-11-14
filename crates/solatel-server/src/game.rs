@@ -3527,6 +3527,11 @@ pub fn spawn(
             tokio::time::Instant::now(),
             std::time::Duration::from_secs_f32(TICK_DT),
         );
+        let mut metrics_at = std::time::Instant::now();
+        let mut metric_ticks = 0_u64;
+        let mut step_total_ms = 0.0_f64;
+        let mut step_worst_ms = 0.0_f64;
+        let mut late_worst_ms = 0.0_f64;
 
         loop {
             tokio::select! {
@@ -3534,13 +3539,33 @@ pub fn spawn(
                 // arrived during the last tick are available to this one.
                 Some(command) = rx.recv() => {
                     lobby.handle(command);
-                    while let Ok(next) = rx.try_recv() {
+                    // A busy input stream must not starve the simulation tick.
+                    for _ in 0..255 {
+                        let Ok(next) = rx.try_recv() else { break };
                         lobby.handle(next);
                     }
                 }
                 () = tokio::time::sleep_until(clock.due()) => {
+                    let started = tokio::time::Instant::now();
+                    late_worst_ms = late_worst_ms.max(started.saturating_duration_since(clock.due()).as_secs_f64() * 1000.0);
                     lobby.step();
+                    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    metric_ticks += 1;
+                    step_total_ms += elapsed_ms;
+                    step_worst_ms = step_worst_ms.max(elapsed_ms);
                     clock.advance(tokio::time::Instant::now());
+                    if metrics_at.elapsed().as_secs() >= 30 {
+                        tracing::info!(matches = lobby.matches.len(), ticks = metric_ticks,
+                            tick_hz = metric_ticks as f64 / metrics_at.elapsed().as_secs_f64(),
+                            mean_step_ms = step_total_ms / metric_ticks as f64,
+                            worst_step_ms = step_worst_ms, worst_lateness_ms = late_worst_ms,
+                            "authoritative game timing");
+                        metrics_at = std::time::Instant::now();
+                        metric_ticks = 0;
+                        step_total_ms = 0.0;
+                        step_worst_ms = 0.0;
+                        late_worst_ms = 0.0;
+                    }
                 }
             }
         }

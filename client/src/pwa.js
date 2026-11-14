@@ -16,11 +16,11 @@ export function initInstallation() {
   const panel = document.createElement('div');
   panel.id = 'pwa-install'; panel.hidden = true;
   panel.innerHTML = `<section role="dialog" aria-modal="true" aria-labelledby="pwa-title">
-    <p class="pwa-brand">SOLATEL</p><h2 id="pwa-title">GET THE BEST SOLATEL EXPERIENCE</h2>
-    <div id="pwa-overview"><p>Install Solatel on your home screen for more room to play.</p>
+    <p class="pwa-brand">SOLATEL</p><h2 id="pwa-title">${ios ? 'PLAY FROM YOUR HOME SCREEN' : 'INSTALL SOLATEL'}</h2>
+    <div id="pwa-overview"><p>${ios ? 'In Safari, tap Share, then Add to Home Screen. Open the Solatel icon to play with more screen space.' : 'Add Solatel to your home screen for more room to play. No app-store download is needed.'}</p>
     <ul><li>More screen space for gameplay</li><li>A layout made for landscape</li><li>Quick access from your home screen</li></ul></div>
     <div id="pwa-guide" hidden></div><p id="pwa-note" aria-live="polite"></p>
-    <div class="pwa-actions"><button id="pwa-add" type="button">ADD TO HOME SCREEN</button>
+    <div class="pwa-actions"><button id="pwa-add" type="button">${ios ? 'SHOW INSTALL STEPS' : 'ADD TO HOME SCREEN'}</button>
     <button id="pwa-dismiss" type="button">CONTINUE IN BROWSER</button></div></section>`;
   document.body.append(panel);
   const add = panel.querySelector('#pwa-add');
@@ -32,8 +32,8 @@ export function initInstallation() {
     try { sessionStorage.setItem('solatel.install.dismissed', '1'); } catch { /* private mode */ }
   };
   const show = (manual = false) => {
-    if (installed || isInstalled() || activeMatch() || document.body.classList.contains('booting')) return;
-    if (!manual && (dismissed || !document.body.classList.contains('in-menu'))) return;
+    if (installed || isInstalled() || activeMatch()) return;
+    if (!manual && dismissed) return;
     if (!panel.hidden) return;
     guide.hidden = true; add.hidden = false; note.textContent = '';
     panel.querySelector('#pwa-overview').hidden = false;
@@ -43,7 +43,7 @@ export function initInstallation() {
     panel.querySelector('#pwa-overview').hidden = true;
     guide.hidden = false; add.hidden = true;
     guide.innerHTML = ios
-      ? `<h3>Install Solatel on iPhone</h3><ol><li>Open Solatel in Safari if you are using another browser.</li><li>Open Safari's Share menu.</li><li>Choose <b>Add to Home Screen</b>.</li><li>Enable <b>Open as Web App</b> where available.</li><li>Tap <b>Add</b>, then launch the new Solatel icon.</li></ol><p>Turn your phone sideways. iOS may still show its status bar and may not lock rotation.</p>`
+      ? `<h3>Three steps in Safari</h3><ol><li>Tap <b>Share</b> in Safari's toolbar. If it is inside the browser menu, open that menu first.</li><li>Scroll through the actions and choose <b>Add to Home Screen</b>. Leave <b>Open as Web App</b> enabled if shown.</li><li>Tap <b>Add</b>, then open <b>Solatel</b> from your home screen.</li></ol><p>Turn your phone sideways when you enter a match. If it will not turn, switch off Portrait Orientation Lock in Control Center.</p>`
       : `<h3>Install from your browser</h3><ol><li>Open the browser menu.</li><li>Choose <b>Install app</b> or <b>Add to Home Screen</b>, if offered.</li><li>Confirm, then launch Solatel from the new icon.</li></ol>`;
   };
   add.addEventListener('click', async () => {
@@ -51,8 +51,9 @@ export function initInstallation() {
     const prompt = nativePrompt; nativePrompt = null;
     try {
       await prompt.prompt();
-      await prompt.userChoice;
-      close(); // Only appinstalled confirms installation; accepting a prompt does not.
+      const choice = await prompt.userChoice;
+      if (choice.outcome === 'accepted') close();
+      else note.textContent = 'You can install later from Settings, or continue in your browser.';
     } catch { showGuide(); }
   });
   panel.querySelector('#pwa-dismiss').addEventListener('click', close);

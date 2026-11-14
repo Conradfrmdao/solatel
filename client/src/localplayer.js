@@ -458,6 +458,21 @@ export class LocalPlayer {
         this.predictionError = 0;
         this.clearCorrection();
         this.name = message.name ?? this.name;
+        if (!message.resumed) {
+          // The server no longer owns the old body (for example after its
+          // resume window expired). A live socket is not a live match.
+          this.matchId = null;
+          this.inMatch = false;
+          this.mapName = null;
+          this.warmingUp = false;
+          this.seenSnapshot = false;
+          this.faceSpawn = false;
+          this.grenadeHeld = false;
+          this.queueRequested = this.queuedAt = this.queuedMap = this.queuedFor = null;
+          this.found = this.report = this.finalBoard = null;
+          this.eliminated = false;
+          this.input.resetCrouch?.();
+        }
         return true;
 
       case 'snapshot':

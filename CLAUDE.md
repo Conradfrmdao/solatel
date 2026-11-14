@@ -2972,3 +2972,30 @@ Apple's Home Screen icon and web-app-capable metadata are published. The
 landscape phone lobby uses a compact header and three map cards across so
 browser bars do not push the map choices below the first screen. Physical
 iPhone testing remains necessary; browser emulation is not Safari hardware QA.
+
+## November 14 mobile recovery and four-operator roster
+
+See `documents/MOBILE-RECOVERY-PASS.md` for the measured findings and test
+limits. Only Ranger (default, ID 5), Breacher (6), Engineer (7) and Ghost (8)
+are selectable and accepted on new queues. Retired IDs migrate to Ranger.
+The full old soldier and its palette portraits are excluded by the web
+builder. Do not delete the source soldier until the reproducible extraction
+pipeline is replaced: `scripts/extract-firstperson-arms.py` derives the
+separate `firstperson-arms.glb` from it, preserving the working gun grip.
+
+Map preparation begins while matchmaking and is shared with match entry.
+Mobile return replaces stale sockets using the resume token; an expired
+resume clears the old match, without requeueing or changing wallet rules.
+Graphics context recovery invalidates preparation. Snapshot backlogs collapse
+to the newest full state, preserving reliable events. Server socket writes
+have a timeout and the actual game loop logs its timing every 30 seconds.
+Grenade previews compute only their displayed 65 points. Yard indirect fill
+is brighter without extra render passes. Mobile installation guidance now
+appears during first boot, with Safari steps and the native Android prompt
+where supported. Browser play remains available.
+
+Verification covered local two-client delayed-network simulation, app return,
+forced graphics loss/recovery, all four operator rigs, touch controls and
+four responsive viewport sizes. These are desktop browser emulation checks,
+not certification for old phones. The available VPS SSH login was rejected;
+production CPU/load remains unmeasured. Uganda payments remain deferred.

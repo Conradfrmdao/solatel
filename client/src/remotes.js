@@ -441,7 +441,8 @@ export class Remotes {
     const soldier = await new GLTFLoader().loadAsync(soldierUrl);
     this.template = soldier.scene;
     await MeshoptSimplifier.ready;
-    this.profile = this._profile(soldier, false);
+    this.profile = this._profile(soldier, true);
+    this.operatorProfiles.set(5, this.profile);
     this.face = this.profile.face;
     this.clips = this.profile.clips;
     this.fall = this.profile.fall;
@@ -611,6 +612,7 @@ export class Remotes {
    * rather than when it arrived (see `snapclock.js`).
    */
   record(snapshot, nowMs) {
+    this.lastReceivedAt = nowMs;
     // The server restarted: what was kept is on a clock that no longer runs.
     if (this.clock.note(snapshot.server_time_ms, nowMs)) this.history.length = 0;
     const at = snapshot.server_time_ms;
@@ -651,6 +653,11 @@ export class Remotes {
     while (this.history.length > 0 && at - this.history[0].at > HISTORY_MS) {
       this.history.shift();
     }
+  }
+
+  resetHistory() {
+    this.history.length = 0;
+    this.clock = new SnapshotClock(SIM.interpolationDelayMs);
   }
 
   /** The server says this player fired. */

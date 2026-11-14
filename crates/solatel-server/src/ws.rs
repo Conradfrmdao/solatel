@@ -176,9 +176,12 @@ async fn run_session(
     .await?;
 
     let (sink, mut stream) = socket.split();
-    let writer = tokio::spawn(write_loop(sink, outbound_rx, state.clone()));
+    let mut writer = tokio::spawn(write_loop(sink, outbound_rx, state.clone()));
 
-    let result = read_loop(&mut stream, state, session_id, player_id, domain).await;
+    let result = tokio::select! {
+        result = read_loop(&mut stream, state, session_id, player_id, domain) => result,
+        _ = &mut writer => Ok(()),
+    };
 
     state
         .game
@@ -211,11 +214,23 @@ async fn write_loop(
         tokio::select! {
             message = outbound.recv() => {
                 let Some(message) = message else { break };
-                let Ok(wire) = encode(&message) else {
-                    tracing::error!("failed to encode an outbound message");
-                    continue;
-                };
-                if sink.send(Message::Text(Utf8Bytes::from(wire))).await.is_err() {
+                let mut pending = vec![message];
+                while pending.len() < OUTBOUND_CAPACITY {
+                    let Ok(next) = outbound.try_recv() else { break };
+                    pending.push(next);
+                }
+                // After a stalled mobile downlink, deliver the current world,
+                // not a replay of stale snapshots. Reliable events keep order.
+                let newest = pending.iter().rposition(|m| matches!(m, ServerMsg::Snapshot { .. }));
+                let sent = tokio::time::timeout(Duration::from_secs(3), async {
+                    for (index, message) in pending.into_iter().enumerate() {
+                        if matches!(&message, ServerMsg::Snapshot { .. }) && Some(index) != newest { continue; }
+                        let Ok(wire) = encode(&message) else { continue };
+                        sink.feed(Message::Text(Utf8Bytes::from(wire))).await?;
+                    }
+                    sink.flush().await
+                }).await;
+                if !matches!(sent, Ok(Ok(()))) {
                     break;
                 }
             }
@@ -223,7 +238,7 @@ async fn write_loop(
                 // The send time travels in the payload, so a late reply is
                 // measured correctly instead of against the newest probe.
                 let now = state.uptime_ms().to_le_bytes().to_vec();
-                if sink.send(Message::Ping(now.into())).await.is_err() {
+                if !matches!(tokio::time::timeout(Duration::from_secs(3), sink.send(Message::Ping(now.into()))).await, Ok(Ok(()))) {
                     break;
                 }
             }

@@ -1268,7 +1268,11 @@ fn everybody_sees_how_everybody_is_dressed_and_nobody_gets_a_skin_there_is_not()
             .skin
     };
     assert_eq!(skin_of(a.player_id), 7);
-    assert_eq!(skin_of(b.player_id), 0, "a skin the game does not have");
+    assert_eq!(
+        skin_of(b.player_id),
+        5,
+        "retired or unknown outfits become Ranger"
+    );
 }
 
 #[test]

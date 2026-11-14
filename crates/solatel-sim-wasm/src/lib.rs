@@ -122,11 +122,21 @@ impl Predictor {
 
     /// Cosmetic prediction and aiming preview use the authoritative flight.
     pub fn grenade_path(&self) -> Vec<f32> {
+        self.grenade_path_ticks((GRENADE_FUSE / TICK_DT).ceil() as usize)
+    }
+
+    /// The aiming arc displays only the first second. Do not simulate the
+    /// entire fuse ten times per second only to discard its last two thirds.
+    pub fn grenade_preview_path(&self) -> Vec<f32> {
+        self.grenade_path_ticks(64)
+    }
+
+    fn grenade_path_ticks(&self, ticks: usize) -> Vec<f32> {
         let mut flight =
             solatel_protocol::sim::grenade::Flight::thrown_by(&self.state, map::active());
-        let mut path = Vec::new();
+        let mut path = Vec::with_capacity((ticks + 1) * 3);
         path.extend_from_slice(&flight.position.to_array());
-        for _ in 0..(GRENADE_FUSE / TICK_DT).ceil() as usize {
+        for _ in 0..ticks {
             flight.step(map::active(), TICK_DT);
             path.extend_from_slice(&flight.position.to_array());
         }
