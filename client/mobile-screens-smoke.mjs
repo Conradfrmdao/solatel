@@ -141,9 +141,11 @@ async function checkCombatControls(page, label, safe) {
 
 async function checkGear(page, label, touch = false) {
   if (touch) {
-    const initialPlay = await safeRect(page, '#menu-quick-join');
+    const initialPlay = await safeRect(page, '#menu-tables [data-stake="1"]');
     check(within(initialPlay.rect, initialPlay.safe), `${label} menu: Play outside first screen`);
-    check(await page.$eval('#menu-quick-join', (e) => !e.disabled), `${label} menu: Play must be ready with the default map`);
+    check(await page.$eval('#menu-tables [data-stake="1"]', (e) => !e.disabled), `${label} menu: Play must be ready with the default map`);
+    check(await page.evaluate(() => !document.querySelector('.needs-keyboard,.menu-quick-play')),
+      `${label} menu: old instructions or duplicate Play remain`);
   }
   await page.click(".map[data-map='yard']");
   await page.$eval('.map.on .fetch .what', (e) => { e.textContent = 'Downloading the map · 44.8 of 46.8 MB'; });
@@ -181,16 +183,29 @@ async function checkGear(page, label, touch = false) {
   for (const problem of problems) check(false, `${label} gear: ${problem}`);
   await page.screenshot({path:`${output}/${label}-gear.png`});
   if (!touch) return;
-  for (const selector of ['#menu-quick-stake', '#menu-quick-join']) {
-    const control = await safeRect(page, selector);
-    check(within(control.rect, control.safe) && control.rect.height >= 44,
-      `${label} gear: ${selector} must be reachable without scrolling`);
-  }
-  await page.$eval('.menu-shell', (e) => { e.scrollTop = e.scrollHeight; });
-  await page.select('#menu-quick-stake', '5');
-  await page.tap('#menu-quick-join');
+  await page.tap('[data-gear-tab="weapon"]');
+  check(await page.$eval('#battle .gear', (e) => e.dataset.active === 'weapon' &&
+    getComputedStyle(e.querySelector('.gear-box.weapon')).display !== 'none'),
+  `${label} gear: Weapon button did not open`);
+  const smg = await reachable(page, '#menu-guns [data-gun="smg"]');
+  await page.screenshot({path:`${output}/${label}-weapon-open.png`});
+  check(smg.hits, `${label} gear: SMG card cannot be tapped`);
+  await page.tap('#menu-guns [data-gun="smg"]');
+  check(await page.evaluate(() => mobileScreens.menu.loadout.primary === 'smg'), `${label} gear: gun selection did not stick`);
+  await page.tap('[data-gear-tab="outfit"]');
+  check(await page.$eval('#battle .gear', (e) => e.dataset.active === 'outfit' &&
+    getComputedStyle(e.querySelector('.gear-box.outfit')).display !== 'none'),
+  `${label} gear: Outfit button did not open`);
+  const ghost = await reachable(page, '#menu-skins [data-skin="8"]');
+  check(ghost.hits, `${label} gear: Ghost card cannot be tapped`);
+  await page.tap('#menu-skins [data-skin="8"]');
+  check(await page.evaluate(() => mobileScreens.menu.skin === 8), `${label} gear: outfit selection did not stick`);
+  await page.tap('[data-gear-tab="stakes"]');
+  const play = await reachable(page, '#menu-tables [data-stake="5"]');
+  check(play.hits, `${label} gear: Play card cannot be tapped`);
+  await page.tap('#menu-tables [data-stake="5"]');
   const queued = await page.evaluate(() => mobileScreens.queues.at(-1)?.slice(0, 2));
-  check(queued?.[0] === 'yard' && queued?.[1] === 5, `${label} gear: footer queued a different map or stake`);
+  check(queued?.[0] === 'yard' && queued?.[1] === 5, `${label} gear: Play queued a different map or stake`);
   await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
 }
 
@@ -245,11 +260,11 @@ try {
           await page.tap(`#menu-tabs [data-pane='${panel}']`);
           const open = await page.$eval('#menu', (e) => ({
             pane: e.dataset.pane,
-            footer: getComputedStyle(e.querySelector('.menu-quick-play')).display,
+            footer: e.querySelector('.menu-quick-play'),
             innerWidth: e.querySelector('.menu-shell').clientWidth,
             scrollWidth: e.querySelector('.menu-shell').scrollWidth,
           }));
-          check(open.pane === panel && open.footer === 'none' && open.scrollWidth <= open.innerWidth + 1,
+          check(open.pane === panel && !open.footer && open.scrollWidth <= open.innerWidth + 1,
             `${width} menu: ${panel} panel overflows or its Play footer stays visible`);
         }
       }

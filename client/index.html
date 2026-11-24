@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Solatel</title>
     <link rel="icon" href="favicon.png" />
@@ -1571,7 +1571,6 @@
       .gear .table:disabled .go { box-shadow: none; }
       .gear .table.on::after { display: none; }
       .gear #menu-carrying { margin-top: auto; }
-      .menu-quick-play { display: none; }
 
       /* What has been won lately, under the maps while they are the choice. */
       .battle > .activity { padding: 12px 18px; gap: 8px; }
@@ -1741,7 +1740,6 @@
         .battle .map .badge { top: 7px; left: 7px; padding: 4px 6px; font-size: 10px; }
         .gear { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
         .gear-box.stakes { grid-column: 1 / -1; }
-        .needs-keyboard { display: none; }
       }
 
       /* The rules, stated before anybody pays. */
@@ -1812,21 +1810,6 @@
       .device .pro::before { content: '+ '; color: #9fe8b4; }
       .device .con::before { content: '\2212  '; color: var(--bad); }
       .device .con b { color: var(--ink); }
-
-      /* Nothing here works on a phone, and it is kinder to say so. */
-      .needs-keyboard {
-        display: none;
-        margin: 0;
-        padding: 10px 12px;
-        border-radius: 8px;
-        font-size: 13px;
-        color: #ffd28a;
-        background: rgba(255, 196, 80, 0.08);
-        border: 1px solid rgba(255, 196, 80, 0.3);
-      }
-      @media (hover: none) and (pointer: coarse) {
-        .needs-keyboard { display: block; }
-      }
 
       #touch-controls { display: none; }
       #touch-editor { display: none; }
@@ -2150,33 +2133,6 @@
         .pane[data-pane='play'], .battle { min-height: auto; flex: none; }
         .battle[data-phase='pick'], .battle[data-phase='gear'] { grid-template-rows: auto; }
         .battle[data-phase='pick'] .map { height: auto; }
-        #menu[data-pane='play'] .menu-quick-play:not([hidden]) {
-          display: block;
-          padding: 7px var(--ui-right) max(7px, var(--ui-safe-bottom)) var(--ui-left);
-          background: #0c1119;
-          border-top: 1px solid #374456;
-          box-shadow: 0 -7px 22px #05080d66;
-        }
-        .menu-quick-inner {
-          width: min(100%, 1240px); margin: 0 auto;
-          display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
-          gap: 10px; align-items: center;
-        }
-        .menu-quick-map { display: grid; gap: 1px; }
-        .menu-quick-map strong { font: 800 20px/1.1 var(--shout); color: var(--chalk); text-transform: uppercase; }
-        .menu-quick-map small { font-size: 11px; line-height: 1.2; color: var(--dim); }
-        .menu-quick-entry { display: flex; align-items: center; gap: 6px; }
-        .menu-quick-entry span { font: 600 13px/1 var(--shout); color: var(--dim); text-transform: uppercase; }
-        #menu-quick-stake, #menu-quick-join {
-          min-height: 44px; border: 1px solid #5b6779; border-radius: 6px;
-          padding: 6px 10px;
-        }
-        #menu-quick-stake { font: 700 16px/1 var(--shout); color: var(--chalk); background: var(--well); }
-        #menu #menu-quick-join {
-          min-width: 94px; font: 800 21px/1 var(--shout); text-transform: uppercase;
-          color: var(--amber-ink); background: linear-gradient(180deg, var(--amber-hot), var(--amber)); border-color: var(--amber);
-        }
-        #menu-quick-join:disabled, #menu-quick-stake:disabled { opacity: .6; }
         .touch-stick { left: var(--ui-left); bottom: max(28px, var(--ui-bottom)); }
         body.running #touch-controls, body.editing-controls #touch-controls {
           padding: var(--ui-top) var(--ui-right) var(--ui-bottom) var(--ui-left);

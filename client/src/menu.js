@@ -153,11 +153,7 @@ export class Menu {
     this.tables = root.querySelector('#menu-tables');
     this.battle = root.querySelector('#battle');
     this.shell = root.querySelector('.menu-shell');
-    this.quickPlay = root.querySelector('.menu-quick-play');
-    this.quickMap = root.querySelector('#menu-quick-map');
-    this.quickStake = root.querySelector('#menu-quick-stake');
-    this.quickJoin = root.querySelector('#menu-quick-join');
-    this.gear = root.querySelector('.gear');
+    this.gear = root.querySelector('#battle .gear');
     this.gear.addEventListener('click', (event) => {
       const tab = event.target.closest('[data-gear-tab]');
       if (!tab) return;
@@ -290,8 +286,6 @@ export class Menu {
       if (!button || button.disabled) return;
       this._playStake(Number(button.dataset.stake));
     });
-    this.quickStake.addEventListener('change', () => this._selectStake(Number(this.quickStake.value)));
-    this.quickJoin.addEventListener('click', () => this._playStake(Number(this.quickStake.value)));
   }
 
   /** What the server said it offers, from the `Welcome`. */
@@ -1091,13 +1085,6 @@ export class Menu {
         );
       })
       .join('');
-    const stakeOptions = stakes.map(({ dollars }) => `<option value="${dollars}">$${dollars}</option>`).join('');
-    if (this._quickStakeOptions !== stakeOptions) {
-      this._quickStakeOptions = stakeOptions;
-      this.quickStake.innerHTML = stakeOptions;
-    }
-    this.quickStake.value = String(stakes.some((tier) => tier.dollars === this.chosenStake)
-      ? this.chosenStake : stakes[0]?.dollars ?? '');
     this._drawPlay();
   }
 
@@ -1116,15 +1103,6 @@ export class Menu {
       if (go.textContent !== text) go.textContent = text;
       button.disabled = !this.chosenMap || Boolean(queued);
     }
-    this.quickPlay.hidden = !this.quickStake.value;
-    this.quickMap.textContent = this.chosenMap ?? 'Choose a map';
-    this.quickStake.disabled = Boolean(queued);
-    this.quickJoin.disabled = !this.chosenMap || Boolean(queued);
-    const quickLabel = queued ? 'In line…' : 'Play';
-    this.quickJoin.textContent = quickLabel;
-    this.quickJoin.setAttribute('aria-label', this.chosenMap
-      ? `${quickLabel} · ${this.chosenMap} · $${this.quickStake.value}`
-      : quickLabel);
     const gun = WEAPONS[this.loadout.primary];
     const carrying = gun
       ? `You carry the ${gun.name.toLowerCase()} with ${this.loadout.optic === 'red_dot' ? 'a red dot' : `a ${OPTIC_NAMES[this.loadout.optic]} scope`}, and a pistol.`
@@ -1301,7 +1279,7 @@ const TEMPLATE = `
 
         <div class="gear" data-active="stakes">
           <div class="gear-nav" role="tablist" aria-label="Choose your gear and entry">
-            <button type="button" role="tab" data-gear-tab="stakes" aria-selected="true">Play</button>
+            <button type="button" role="tab" data-gear-tab="stakes" aria-selected="true">Entry fee</button>
             <button type="button" role="tab" data-gear-tab="weapon" aria-selected="false">Weapon</button>
             <button type="button" role="tab" data-gear-tab="outfit" aria-selected="false">Outfit</button>
           </div>
@@ -1328,7 +1306,6 @@ const TEMPLATE = `
           <ul id="menu-activity" class="feed"><li class="dim">reading the latest wins&hellip;</li></ul>
         </section>
       </div>
-      <p class="needs-keyboard">On a phone, turn it sideways for more room. Move with the left stick, drag the world to look, and use the buttons to fight.</p>
     </section>
 
     <section class="pane hidden" data-pane="board">
@@ -1651,12 +1628,5 @@ const TEMPLATE = `
       </div>
     </section>
 
-  </div>
-  <div class="menu-quick-play" hidden>
-    <div class="menu-quick-inner">
-      <div class="menu-quick-map"><strong id="menu-quick-map"></strong><small>Charged when the match forms</small></div>
-      <label class="menu-quick-entry"><span>Entry fee</span><select id="menu-quick-stake"></select></label>
-      <button id="menu-quick-join" type="button">Play</button>
-    </div>
   </div>
 `;
