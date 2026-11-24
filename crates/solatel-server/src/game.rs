@@ -2029,9 +2029,13 @@ impl Lobby {
             } => {
                 if let Some(connection) = self.connections.get_mut(&player_id)
                     && connection.session_id == session_id
-                    && matches!(connection.at, Whereabouts::Queued { .. })
                 {
-                    connection.at = Whereabouts::Idle;
+                    if matches!(connection.at, Whereabouts::Queued { .. }) {
+                        connection.at = Whereabouts::Idle;
+                    }
+                    connection.send(ServerMsg::QueueLeaveResult {
+                        left: matches!(connection.at, Whereabouts::Idle),
+                    });
                 }
                 self.broadcast_lobby();
             }

@@ -1830,14 +1830,15 @@
 
       #touch-controls { display: none; }
       #touch-editor { display: none; }
-      #match-recovery {
+      #match-recovery, #client-update {
         position: fixed; z-index: 115; left: 50%; top: 20%; transform: translateX(-50%);
         width: min(340px, 80vw); padding: 14px 18px; border: 1px solid #536070;
         border-radius: 8px; background: #101824f5; color: #fff; text-align: center;
         font: 600 15px/1.4 var(--read);
       }
       #match-recovery[hidden], #match-recovery button[hidden] { display: none; }
-      #match-recovery button { display: block; margin: 10px auto 0; min-height: 42px; padding: 8px 18px; background: var(--amber); border: 0; border-radius: 6px; font: 800 15px var(--shout); }
+      #match-recovery button, #client-update button { display: block; margin: 10px auto 0; min-height: 42px; padding: 8px 18px; background: var(--amber); border: 0; border-radius: 6px; font: 800 15px var(--shout); }
+      #client-update { z-index: 120; }
       #mobile-landscape { display: none; }
       .mobile-only { display: none !important; }
       body.installed-app .pwa-settings { display: none !important; }
@@ -2516,6 +2517,67 @@
       @media (pointer: coarse) and (max-width: 560px) {
         #settings label, #menu-profile label { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 8px; }
         #settings label > span { grid-column: 1 / -1; font-size: 12px; }
+      }
+
+      /* Keep map, gear choice and the play action in one viewport. On narrow
+         screens the gear categories share one panel instead of stacking. */
+      .gear-nav { display: none; }
+      @media (max-width: 1000px) {
+        #menu[data-pane='play'] > .menu-shell {
+          flex: 1 1 0; min-height: 0; overflow: hidden;
+          grid-template-rows: minmax(0, 1fr); align-content: stretch;
+        }
+        #menu .pane[data-pane='play'], #menu .battle { flex: 1 1 0; min-height: 0; }
+        #menu .battle[data-phase='gear'] { grid-template-rows: auto minmax(0, 1fr); }
+        #menu .battle #menu-maps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        #menu .battle[data-phase='gear'] #menu-maps { grid-auto-rows: 92px; }
+        #menu .battle[data-phase='gear'] .map { min-height: 0; padding: 9px; }
+        #menu .battle .map .name { font-size: clamp(20px, 3vw, 28px); }
+        #menu .battle .map .seats { display: none; }
+        #menu .gear { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: 40px minmax(0, 1fr); gap: 7px; }
+        #menu .gear-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+        #menu .gear-nav button {
+          min-width: 0; border: 1px solid var(--rule); border-radius: 6px;
+          background: var(--deck); color: var(--dim);
+          font: 800 16px/1 var(--shout); text-transform: uppercase;
+          letter-spacing: .05em; cursor: pointer;
+        }
+        #menu .gear-nav button[aria-selected='true'] { color: var(--amber-hot); border-color: var(--amber); background: #292316; }
+        #menu .gear-box { display: none; grid-column: 1; overflow: auto; }
+        #menu .gear[data-active='weapon'] .gear-box.weapon,
+        #menu .gear[data-active='outfit'] .gear-box.outfit,
+        #menu .gear[data-active='stakes'] .gear-box.stakes { display: flex; }
+        #menu .gear-box.stakes { grid-column: 1; }
+        #menu .gear #menu-tables { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        #menu .gear #menu-skins { grid-template-columns: repeat(4, minmax(0, 110px)); }
+        #menu .gear .skin .art { max-height: 130px; }
+      }
+      @media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+        #menu[data-pane='play'] > .menu-shell { padding-top: 5px; padding-bottom: 5px; }
+        #menu .battle[data-phase='gear'] #menu-maps { grid-auto-rows: 78px; }
+        #menu .battle[data-phase='gear'] .map .name { font-size: clamp(17px, 3vw, 23px); }
+        #menu .battle[data-phase='gear'] .map .busy,
+        #menu .battle[data-phase='gear'] .map .badge { display: none; }
+        #menu .battle[data-phase='gear'] .map .fetch .what { font-size: 9px; }
+        #menu .gear { grid-template-rows: 34px minmax(0, 1fr); }
+        #menu .gear-nav button { font-size: 13px; }
+        #menu .gear-box { padding: 8px 10px; gap: 5px; }
+        #menu .gear-box p.note, #menu #menu-carrying { display: none; }
+        #menu .gear #menu-guns { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+        #menu .gear .gun { padding: 5px; }
+        #menu .gear .gun .art, #menu .gear .gun .stats { display: none; }
+        #menu .gear .gun .name { font-size: 13px; }
+        #menu .gear #menu-optics { gap: 5px; }
+        #menu .gear .optic { padding: 4px 8px; }
+        #menu .gear .optic span { display: none; }
+        #menu .gear #menu-skins { grid-template-columns: repeat(4, minmax(0, 74px)); gap: 6px; }
+        #menu .gear .skin .art { max-height: 85px; }
+        #menu .gear .table { padding: 6px 8px; }
+      }
+      @media (pointer: coarse) and (orientation: portrait) {
+        #menu .battle[data-phase='gear'] #menu-maps { grid-auto-rows: 112px; }
+        #menu .battle[data-phase='gear'] .map .busy { display: none; }
+        #menu .gear #menu-tables { grid-template-columns: minmax(0, 1fr); }
       }
 
       .hidden { display: none !important; }

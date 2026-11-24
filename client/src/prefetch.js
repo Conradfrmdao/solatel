@@ -20,6 +20,7 @@ import { scatterFiles } from './scatter.js';
 import { natureFiles } from './nature.js';
 import { propPhotoSets } from './props.js';
 import { skyFiles } from './world.js';
+import { terminalPropPath } from './mobile-assets.js';
 
 const running = new Map();
 
@@ -65,8 +66,8 @@ class Prefetch {
       ...skyFiles(mapName),
       ...lightFiles(mapName),
       ...(extras.indoor ? [] : scatterFiles(mapName)),
-      ...[...new Set((extras.terminal_props ?? []).map(p => p.model))].map(name => asset(`assets/props/${name}.glb`)),
-      ...(extras.indoor ? [asset('assets/props/smooth_concrete_floor.glb')] : []),
+      ...[...new Set((extras.terminal_props ?? []).map(p => p.model))].map(name => asset(terminalPropPath(name))),
+      ...(extras.indoor ? [asset(terminalPropPath('smooth_concrete_floor'))] : []),
       ...photoFiles(materials),
       ...photoFiles([], propPhotoSets(nodeNames)),
       ...(extras.indoor ? [] : photoFiles([], ['concrete_wall', 'brick'])),

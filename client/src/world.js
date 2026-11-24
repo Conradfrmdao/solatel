@@ -1037,6 +1037,13 @@ export class World {
     );
     cutSun(data, width, height, at);
 
+    // Process the sun in float32 on the CPU, but upload filterable float16.
+    // WebGL2 guarantees half-float filtering; float32 linear filtering needs
+    // an optional extension and can leave mobile IBL black when absent.
+    hdr.image.data = Uint16Array.from(data, value => THREE.DataUtils.toHalfFloat(Math.min(65504, Math.max(0, value))));
+    hdr.type = THREE.HalfFloatType;
+    hdr.needsUpdate = true;
+
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const environment = pmrem.fromEquirectangular(hdr).texture;
     pmrem.dispose();

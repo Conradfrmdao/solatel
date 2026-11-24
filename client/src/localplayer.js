@@ -578,8 +578,8 @@ export class LocalPlayer {
         // The tables, and where this player stands among them. A few times a
         // minute rather than a few times a second.
         this.tables = message.tables ?? [];
-        this.queuedMap = message.queued_map ?? null;
-        this.queuedFor = message.queued_for ?? null;
+        this.queuedMap = this.link.queueLeavePending ? null : message.queued_map ?? null;
+        this.queuedFor = this.link.queueLeavePending ? null : message.queued_for ?? null;
         // Lobby messages only reach players who are not in a match, so one
         // arriving means any match that was being found for this player is
         // not happening.

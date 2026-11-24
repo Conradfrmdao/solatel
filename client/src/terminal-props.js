@@ -6,14 +6,15 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { asset } from './assets.js';
 import { lightMaterial } from './light.js';
-import { applyPhotoFiltering } from './photo.js';
+import { applyPhotoFiltering, ktx2Loader } from './photo.js';
+import { terminalPropPath } from './mobile-assets.js';
 
 // Separate draw bounds let the renderer skip off-camera sections of the
 // terminal. Geometry/materials are still shared, and no props are removed.
 const PROP_CELL = 24;
 
 export async function terminalFloor() {
-  const gltf = await new GLTFLoader().loadAsync(asset('assets/props/smooth_concrete_floor.glb'));
+  const gltf = await new GLTFLoader().setKTX2Loader(ktx2Loader()).loadAsync(asset(terminalPropPath('smooth_concrete_floor')));
   const scan = await gltf.parser.getDependency('material',0);
   const material = new THREE.MeshPhysicalMaterial({
     map: scan.map, normalMap: scan.normalMap, roughnessMap: scan.roughnessMap,
@@ -25,6 +26,11 @@ export async function terminalFloor() {
   material.name = 'terminal_floor';
   // Keep the calibrated mean reflectance used by the offline light bake,
   // while retaining the scan's actual scuffs, scratches and roughness.
+  if (scan.userData.solatelFloorTint) {
+    // Compressed textures cannot be read through a 2D canvas. Their tint is
+    // calibrated from the original photograph in the offline asset pipeline.
+    material.color.fromArray(scan.userData.solatelFloorTint);
+  } else {
   const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
   const context=canvas.getContext('2d',{willReadFrequently:true});
   context.drawImage(material.map.image,0,0,64,64);
@@ -33,6 +39,7 @@ export async function terminalFloor() {
   const linear=v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
   for(let i=0;i<pixels.length;i+=4) for(let c=0;c<3;c++) average[c]+=linear(pixels[i+c]/255)/(64*64);
   material.color.setRGB(.255/average[0],.264/average[1],.23/average[2]);
+  }
   // The reference is sealed, polished concrete. The photographed roughness
   // still varies per scuff; the lower mean lets the HDR skylight read in it.
   material.flatShading=true;
@@ -62,9 +69,11 @@ export async function dressTerminal(map) {
   const placements = map.userData.terminal_props;
   if (!placements?.length) return;
   await MeshoptSimplifier.ready;
-  const loader = new GLTFLoader();
+  const loader = new GLTFLoader().setKTX2Loader(ktx2Loader());
   const kinds = [...new Set(placements.map(p => p.model))];
-  const sources = await Promise.all(kinds.map(name => loader.loadAsync(asset(`assets/props/${name}.glb`))));
+  // Decode one prop set at a time to bound peak decoder/ImageBitmap memory.
+  const sources = [];
+  for (const name of kinds) sources.push(await loader.loadAsync(asset(terminalPropPath(name))));
   const result = new THREE.Group();
   result.name = 'terminal-pbr-props';
   const rotation = new THREE.Quaternion();

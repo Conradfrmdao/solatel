@@ -1097,7 +1097,9 @@ async function boot() {
     /** How far the map's files have come; starts the download if it had not. */
     const fetching = (name) => prefetchMap(name)?.progress() ?? null;
     if (!link.parked) {
-      if (local.searching) {
+      if (link.queueLeavePending && !local.matchId && !local.found) {
+        view = { phase: 'leaving', connected: link.isReady };
+      } else if (local.searching) {
         const dollars = local.queuedFor ?? local.queueRequested?.dollars;
         const mapName = local.queuedMap ?? local.queueRequested?.map;
         const tier = tierOf(dollars);
@@ -1284,6 +1286,17 @@ async function boot() {
 initViewport();
 initMobileLandscape();
 initInstallation();
+
+window.addEventListener('solatel:update-required', () => {
+  if (document.getElementById('client-update')) return;
+  const notice = document.createElement('div');
+  notice.id = 'client-update';
+  notice.setAttribute('role', 'alertdialog');
+  notice.setAttribute('aria-label', 'Game update');
+  notice.innerHTML = '<span>An update is ready. Reload to reconnect.</span><button type="button">RELOAD GAME</button>';
+  notice.querySelector('button').addEventListener('click', () => window.location.reload());
+  document.body.append(notice);
+});
 
 boot().catch((err) => {
   console.error(err);

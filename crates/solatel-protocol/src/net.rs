@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 /// Bumped on any breaking change to [`ClientMsg`] or [`ServerMsg`]. The server
 /// rejects a handshake that does not match, so an old cached wasm bundle fails
 /// loudly instead of misbehaving subtly.
-pub const PROTOCOL_VERSION: u16 = 25;
+pub const PROTOCOL_VERSION: u16 = 26;
 
 /// Server simulation rate. The server is authoritative, so this is the real
 /// clock of the game; the client renders between ticks.
@@ -690,6 +690,10 @@ pub enum ServerMsg {
     /// Sent on joining and whenever it changes, which is a few times a
     /// minute rather than a few times a second. This is the screen a player
     /// is looking at when they are not in a match.
+    QueueLeaveResult {
+        /// False if the queue has already become a match; this never undoes a buy-in.
+        left: bool,
+    },
     Lobby {
         tables: Vec<TableStatus>,
         /// The map this player is queued for, if any.

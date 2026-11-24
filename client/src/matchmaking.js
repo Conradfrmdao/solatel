@@ -72,7 +72,15 @@ export class Matchmaking {
     this.card.dataset.fetching = fetching ? 'yes' : 'no';
     this._set(this.download, phase === 'loading' ? '' : downloadLine(view.download));
 
-    if (phase === 'searching') {
+    if (phase === 'leaving') {
+      this._set(this.title, 'leaving the line');
+      this._set(this.clock, '');
+      this._set(this.table, '');
+      this.fill.style.transform = 'scaleX(0)';
+      this._set(this.seats, '');
+      this._set(this.status, view.connected ? 'Confirming with the server…' : 'Reconnecting to cancel your place…');
+      this._set(this.fine, 'Your cancellation will be retried when the connection returns.');
+    } else if (phase === 'searching') {
       this._set(this.title, 'finding a match');
       this._set(this.clock, clock(view.elapsedMs));
       this._set(this.table, `${place}${stake}`);

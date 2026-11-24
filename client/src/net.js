@@ -22,26 +22,9 @@ const PING_TIMEOUT_MS = 10000;
  *  `TAKEN_OVER` in `game.rs`. */
 const TAKEN_OVER = 'this player was taken over';
 
-/**
- * After a deploy, a tab still running the last build is refused - its
- * protocol, its maps or its files are not the server's - and the only cure
- * is the new page. So it reloads itself, once per version of the server it was refused
- * by: the resume token is in session storage, so a player taken out of a
- * match by the deploy comes back into it. Once, because a server *older* than
- * this page would refuse the reloaded one too, and a page that reloaded
- * every time would never let anybody read why.
- */
-const RELOADED_FOR = 'solatel.reloadedFor';
-function reloadForNewBuild(what) {
-  try {
-    if (window.sessionStorage.getItem(RELOADED_FOR) === what) return false;
-    window.sessionStorage.setItem(RELOADED_FOR, what);
-  } catch {
-    return false; // no storage, so no way to tell a loop from a first try
-  }
-  window.location.reload();
-  return true;
-}
+// A cancellation is safe to retry, unlike a purchase or a new queue request.
+// Keep it until the server confirms it, including across a mobile page restore.
+const LEAVE_PENDING = 'solatel.queueLeavePending';
 
 export const LinkState = Object.freeze({
   Connecting: 'connecting',
@@ -178,6 +161,9 @@ export class Link {
      *  them straight back, and the two would pass one player between them
      *  every couple of seconds. */
     this.parked = false;
+    this.updateRequired = null;
+    this.queueLeavePending = false;
+    try { this.queueLeavePending = window.sessionStorage.getItem(LEAVE_PENDING) === '1'; } catch { /* private mode */ }
     /** Set when the account key this browser sent was not recognised and the
      *  server made a new account instead. */
     this.accountReplaced = false;
@@ -337,6 +323,10 @@ export class Link {
   }
 
   send(message) {
+    if (message.t === 'leave_queue' || message.t === 'queue') {
+      this.setQueueLeavePending(message.t === 'leave_queue');
+    }
+    if (message.t === 'leave_queue' && !this.isReady) return;
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     // Never queue seconds of obsolete movement behind a stalled uplink.
     if (message.t === 'inputs' && this.socket.bufferedAmount > 64 * 1024) {
@@ -347,10 +337,23 @@ export class Link {
   }
 
   recover(why, now) {
-    if (this.parked) return;
+    if (this.parked || this.updateRequired) return;
     this.inbox.length = 0;
     this.dropLink(why, now);
     this.reconnectAt = now;
+  }
+
+  setQueueLeavePending(pending) {
+    this.queueLeavePending = pending;
+    try { window.sessionStorage.setItem(LEAVE_PENDING, pending ? '1' : '0'); } catch { /* private mode */ }
+  }
+
+  requireUpdate(what, now) {
+    if (this.updateRequired) return;
+    this.updateRequired = what;
+    this.dropLink('An update is ready. Reload to reconnect.', now);
+    // Never navigate away from a phone match without an explicit tap.
+    window.dispatchEvent(new Event('solatel:update-required'));
   }
 
   handleServerMessage(raw, now) {
@@ -373,12 +376,7 @@ export class Link {
           // Predicting against different geometry from the server is worse
           // than not playing at all: it means being shot through cover that
           // only one side believes in.
-          if (reloadForNewBuild(`map ${message.map_version}`)) return;
-          this.dropLink(
-            `map mismatch: server has version ${message.map_version}, ` +
-              `this client has ${SIM.mapVersion}. Reload the page.`,
-            now,
-          );
+          this.requireUpdate(`map ${message.map_version}`, now);
           return;
         }
         this.state = LinkState.Ready;
@@ -415,6 +413,7 @@ export class Link {
         /** Every table it runs: a stake and what a kill pays at it. */
         this.tiers = message.tiers ?? [];
         this.note = 'in game';
+        if (this.queueLeavePending) this.send({ t: 'leave_queue' });
         this.inbox.push(message);
         this.settle(null, message);
         break;
@@ -430,10 +429,10 @@ export class Link {
       case 'rejected': {
         console.warn('server rejected this client:', message.reason);
         const speaks = /^protocol version mismatch: server speaks (\d+)/.exec(message.reason ?? '');
-        if (speaks && reloadForNewBuild(`protocol ${speaks[1]}`)) return;
+        if (speaks) { this.requireUpdate(`protocol ${speaks[1]}`, now); return; }
         // A page from another build names files the server no longer has.
         const serves = /^client build mismatch: server serves ([\w/]+)/.exec(message.reason ?? '');
-        if (serves && reloadForNewBuild(`build ${serves[1]}`)) return;
+        if (serves) { this.requireUpdate(`build ${serves[1]}`, now); return; }
         this.dropLink(`rejected: ${message.reason}`, now);
         if (message.reason && message.reason.startsWith(TAKEN_OVER)) {
           this.parked = true;
@@ -442,13 +441,14 @@ export class Link {
         break;
       }
       default:
+        if (message.t === 'queue_leave_result') this.setQueueLeavePending(false);
         this.inbox.push(message);
     }
   }
 
   /** Called once per frame, before anything reads `inbox`. */
   pump(now) {
-    if (document.hidden) return;
+    if (document.hidden || this.updateRequired) return;
     if ((this.state === LinkState.Ready && now - this.lastReceivedAt > 6000) ||
         ((this.state === LinkState.Connecting || this.state === LinkState.Handshaking) && now - this.openedAt > 12000)) {
       this.recover('connection timed out', now);

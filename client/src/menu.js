@@ -157,6 +157,15 @@ export class Menu {
     this.quickMap = root.querySelector('#menu-quick-map');
     this.quickStake = root.querySelector('#menu-quick-stake');
     this.quickJoin = root.querySelector('#menu-quick-join');
+    this.gear = root.querySelector('.gear');
+    this.gear.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-gear-tab]');
+      if (!tab) return;
+      this.gear.dataset.active = tab.dataset.gearTab;
+      for (const button of this.gear.querySelectorAll('[data-gear-tab]')) {
+        button.setAttribute('aria-selected', String(button === tab));
+      }
+    });
     // The whole screen: the button in the top bar, and whether play takes it.
     const fullscreen = root.querySelector('#fullscreen');
     fullscreen.addEventListener('click', () => toggleFullscreen());
@@ -289,9 +298,10 @@ export class Menu {
   setOffer(maps, tiers) {
     this.mapList = maps ?? [];
     this.tiers = tiers ?? [];
-    // No map is picked for the player: the screen opens on the maps, and
-    // picking one is what opens the rest (`chooseMap`).
     if (this.chosenMap && !this.mapList.some((m) => m.name === this.chosenMap)) this.chosenMap = null;
+    // Open with a playable map so Play is visible without an extra step.
+    // The map cards remain available for changing the choice.
+    if (!this.chosenMap) this.chosenMap = this.mapList.find((m) => m.name === 'arena')?.name ?? this.mapList[0]?.name ?? null;
     if (!this.tiers.some((t) => t.dollars === this.chosenStake)) this.chosenStake = this.tiers[0]?.dollars ?? null;
     this._drawMaps();
     this._drawTables();
@@ -1289,7 +1299,12 @@ const TEMPLATE = `
 
         <div id="menu-maps"></div>
 
-        <div class="gear">
+        <div class="gear" data-active="stakes">
+          <div class="gear-nav" role="tablist" aria-label="Choose your gear and entry">
+            <button type="button" role="tab" data-gear-tab="stakes" aria-selected="true">Play</button>
+            <button type="button" role="tab" data-gear-tab="weapon" aria-selected="false">Weapon</button>
+            <button type="button" role="tab" data-gear-tab="outfit" aria-selected="false">Outfit</button>
+          </div>
           <section class="gear-box weapon">
             <h3>Weapon <span class="note">Pistol included <span class="desktop-only">· <kbd>Q</kbd> to swap</span></span></h3>
             <div id="menu-guns"></div>

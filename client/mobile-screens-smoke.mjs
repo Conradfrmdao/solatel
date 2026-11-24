@@ -143,7 +143,7 @@ async function checkGear(page, label, touch = false) {
   if (touch) {
     const initialPlay = await safeRect(page, '#menu-quick-join');
     check(within(initialPlay.rect, initialPlay.safe), `${label} menu: Play outside first screen`);
-    check(await page.$eval('#menu-quick-join', (e) => e.disabled), `${label} menu: Play must require a map`);
+    check(await page.$eval('#menu-quick-join', (e) => !e.disabled), `${label} menu: Play must be ready with the default map`);
   }
   await page.click(".map[data-map='yard']");
   await page.$eval('.map.on .fetch .what', (e) => { e.textContent = 'Downloading the map · 44.8 of 46.8 MB'; });
@@ -304,6 +304,10 @@ try {
   await desktop.goto('http://127.0.0.1:8130/', {waitUntil:'domcontentloaded'});
   await desktop.waitForFunction(() => window.mobileScreens);
   await desktop.evaluate(() => mobileScreens.show('menu'));
+  await desktop.setViewport({width: 1440, height: 900});
+  await settle(desktop);
+  await desktop.screenshot({path: `${output}/1440x900-menu.png`});
+  await desktop.setViewport({width: 1024, height: 768});
   await checkGear(desktop, '1024x768');
   await desktop.close();
   console.log(JSON.stringify({failures,screenshots:output},null,2));
