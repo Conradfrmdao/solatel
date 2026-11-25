@@ -18,7 +18,7 @@ const fixture = await build({
       import { Matchmaking } from './matchmaking.js';
       import { Debrief } from './debrief.js';
       import { initViewport } from './viewport.js';
-      import { loadSim } from './sim.js';
+      import { loadSim, PRIMARIES, WEAPONS } from './sim.js';
       import { asset } from './assets.js';
       initViewport();
       await loadSim(asset('sim/solatel_sim_bg.wasm'));
@@ -26,6 +26,8 @@ const fixture = await build({
       const hud = new Hud(document.querySelector('#hud'));
       hud.stats.hidden = true;
       const menu = new Menu(document.querySelector('#menu'));
+      menu.setGunPictures(new Map(PRIMARIES.map((id) =>
+        [id + ':' + WEAPONS[id].optics[0], asset('assets/menu/guns/' + id + '.webp')])));
       menu.setOffer([{name:'arena',seats:20},{name:'yard',seats:20}], [
         {dollars:1,kill_reward_micro_usd:900000},{dollars:5,kill_reward_micro_usd:4500000},
       ]);
@@ -183,10 +185,29 @@ async function checkGear(page, label, touch = false) {
   for (const problem of problems) check(false, `${label} gear: ${problem}`);
   await page.screenshot({path:`${output}/${label}-gear.png`});
   if (!touch) return;
+  const hitAreas = await page.evaluate(() => {
+    const maps = document.querySelector('#menu-maps').getBoundingClientRect();
+    const tabs = [...document.querySelectorAll('#battle [data-gear-tab]')];
+    return {
+      gap: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().top - maps.bottom)),
+      tabs: tabs.map((tab) => {
+        const rect = tab.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return { height: rect.height, ownHit: hit?.closest('[data-gear-tab]') === tab };
+      }),
+    };
+  });
+  check(hitAreas.gap >= 10 && hitAreas.tabs.every((tab) => tab.height >= 44 && tab.ownHit),
+    `${label} gear: map and loadout buttons have competing hit areas`);
   await page.tap('[data-gear-tab="weapon"]');
   check(await page.$eval('#battle .gear', (e) => e.dataset.active === 'weapon' &&
     getComputedStyle(e.querySelector('.gear-box.weapon')).display !== 'none'),
   `${label} gear: Weapon button did not open`);
+  await page.waitForFunction(() => [...document.querySelectorAll('#menu-guns img.art')]
+    .every((e) => e.complete && e.naturalWidth > 0));
+  check(await page.$eval('#menu-guns img.art', (e) =>
+    getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height >= 30),
+  `${label} gear: weapon image hidden on phone`);
   const smg = await reachable(page, '#menu-guns [data-gun="smg"]');
   await page.screenshot({path:`${output}/${label}-weapon-open.png`});
   check(smg.hits, `${label} gear: SMG card cannot be tapped`);
